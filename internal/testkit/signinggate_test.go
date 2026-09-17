@@ -12,21 +12,8 @@ import (
 	"testing"
 )
 
-// signingOffSetting is the git configuration a test must never pass. It is
-// spelled in two halves so that this file, which has to name it in order to
-// look for it, is not itself a hit.
 const signingOffSetting = "commit." + "gpgsign" + "=false"
 
-// TestNoSuiteAsksGitToTurnSigningOff is the rule [GitInit] states,
-// made a gate: no test in this module hands git a setting that switches
-// commit signing off.
-//
-// The setting buys nothing — a repository a test creates has no configuration
-// file to carry signing, so it is off already — and it costs the whole suite
-// on a machine whose git is wrapped by a signing policy that refuses exactly
-// that argument, which is a machine this repository is developed on. Two
-// suites carried their own git helper with the flag in it for months and could
-// not run there at all; this test is what keeps the third from appearing.
 func TestNoSuiteAsksGitToTurnSigningOff(t *testing.T) {
 	t.Parallel()
 

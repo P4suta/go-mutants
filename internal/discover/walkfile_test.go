@@ -20,25 +20,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/glob"
 )
 
-// Which of a package's syntax trees a walk opens, and what it says about the
-// ones it does not.
-//
-// Every clause is a decision about whether a file is *this module's to mutate*,
-// and the three answers are different: walked, recorded as a skip somebody can
-// look up, and passed over in silence. Silence is right for a file that is not
-// ours — a dependency, the standard library, a test file — because a skip is
-// something a user reads as "go-mutants declined to mutate your code". A skip is
-// right for a file that is ours and was declined. The distinction is invisible
-// in a catalogue and obvious in a `list --explain`, which is why it is stated
-// here rather than inferred from a fixture's counts.
-
-// walkOne builds the loader's half of a discovery by hand and walks one file.
-//
-// The point of doing it by hand is the file *name*: every clause below turns on
-// what the file is called and where it is, and a fixture on disk can only hold
-// names the filesystem allows and paths the loader would really produce. A name
-// is a string here, so "a file the process cannot read" is a path that is not
-// there rather than a permission bit, and it is the same test on every platform.
 func walkOne(t *testing.T, d *discovery, name, src string) error {
 	t.Helper()
 
@@ -46,7 +27,6 @@ func walkOne(t *testing.T, d *discovery, name, src string) error {
 	return d.file(loaded, pkg, pkg.Syntax[0])
 }
 
-// parsed is one file parsed and type-checked under a file set of its own.
 type parsed struct {
 	fset *token.FileSet
 	file *ast.File
@@ -54,13 +34,6 @@ type parsed struct {
 	pkg  *types.Package
 }
 
-// parsedAt parses and type-checks a source under the file name the loader would
-// have reported for it.
-//
-// The name is the point: every clause of the walk turns on what the file is
-// called and where it is, and a name is a string here rather than a file on
-// disk -- so "a file the process cannot read" is a path that is not there
-// rather than a permission bit, and it is the same test on every platform.
 func parsedAt(t *testing.T, name, src string) parsed {
 	t.Helper()
 
@@ -83,8 +56,6 @@ func parsedAt(t *testing.T, name, src string) parsed {
 	return parsed{fset: fset, file: file, info: info, pkg: pkg}
 }
 
-// loadedPackage is the loader's half of a discovery, for a file whose bytes on
-// disk the caller controls separately.
 func loadedPackage(t *testing.T, name, src string) (*loadResult, *packages.Package) {
 	t.Helper()
 
@@ -97,12 +68,9 @@ func loadedPackage(t *testing.T, name, src string) (*loadResult, *packages.Packa
 	}
 }
 
-// walkFixture is a source file holding one candidate of a rule nothing else
-// here depends on.
 const walkFixture = "package pkg\n\n// Widest returns the larger of two numbers.\n" +
 	"func Widest(a, b int) int {\n\tif a <= b {\n\t\treturn b\n\t}\n\treturn a\n}\n"
 
-// newWalkDiscovery is a discovery over a module root, with every rule selected.
 func newWalkDiscovery(t *testing.T, root string) *discovery {
 	t.Helper()
 
@@ -119,7 +87,6 @@ func newWalkDiscovery(t *testing.T, root string) *discovery {
 	}
 }
 
-// TestWhichOfAPackagesFilesAreWalked is the clause list, one row each.
 func TestWhichOfAPackagesFilesAreWalked(t *testing.T) {
 	t.Parallel()
 
@@ -127,13 +94,10 @@ func TestWhichOfAPackagesFilesAreWalked(t *testing.T) {
 	at := func(parts ...string) string { return filepath.Join(append([]string{root}, parts...)...) }
 
 	for _, c := range []struct {
-		name string
-		// file is the absolute path the loader would report for the tree.
-		file string
-		src  string
-		// walked is whether the file's candidates were emitted.
+		name   string
+		file   string
+		src    string
 		walked bool
-		// reason is the skip recorded for it, or empty for silence.
 		reason SkipReason
 	}{
 		{name: "a file of the module", file: at("pkg", "widest.go"), src: walkFixture, walked: true},
@@ -174,7 +138,6 @@ func TestWhichOfAPackagesFilesAreWalked(t *testing.T) {
 	}
 }
 
-// writeSource puts a source file on disk so that the walk's own read finds it.
 func writeSource(t *testing.T, path, src string) error {
 	t.Helper()
 
@@ -184,15 +147,6 @@ func writeSource(t *testing.T, path, src string) error {
 	return os.WriteFile(path, []byte(src), 0o644)
 }
 
-// TestAFileWalkedTwiceIsWalkedOnce is the `seen` set, which exists because the
-// loader hands a package and its test variant over as two packages holding the
-// same non-test files.
-//
-// Without it every such file would be walked twice and every candidate in it
-// emitted twice. The catalogue deduplicates, so the damage would not be visible
-// in a count of mutants -- it would be visible in the skip counts, which
-// aggregate rather than deduplicate, and a user would be told a file holds twice
-// as many suppressed sites as it does.
 func TestAFileWalkedTwiceIsWalkedOnce(t *testing.T) {
 	t.Parallel()
 
@@ -218,19 +172,10 @@ func TestAFileWalkedTwiceIsWalkedOnce(t *testing.T) {
 	}
 }
 
-// TestAFileTheWalkCannotReadStopsTheRun is the one failure a walk over a loaded
-// package can have, and it stops rather than skipping.
-//
-// The file was loaded, so it exists and the loader read it; if this read fails,
-// the tree changed underneath the run or the process lost access to it
-// mid-pass. Either way the catalogue would be a catalogue of a tree nobody has,
-// and spans into a file this run never saw are worse than no catalogue at all.
 func TestAFileTheWalkCannotReadStopsTheRun(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	// Named as a file of the module and never written, which is what a file
-	// that went away between the load and the walk looks like from here.
 	absent := filepath.Join(root, "pkg", "gone.go")
 
 	d := newWalkDiscovery(t, root)
@@ -249,8 +194,6 @@ func TestAFileTheWalkCannotReadStopsTheRun(t *testing.T) {
 	}
 }
 
-// TestASelectionThatExcludesAFileRecordsWhy is the `include`/`exclude` clause,
-// which is the one skip in this list a user wrote themselves.
 func TestASelectionThatExcludesAFileRecordsWhy(t *testing.T) {
 	t.Parallel()
 
@@ -277,13 +220,6 @@ func TestASelectionThatExcludesAFileRecordsWhy(t *testing.T) {
 	}
 }
 
-// TestAWalkWithNoRulesOpensNothing pins the early return that keeps a scan from
-// reading a file it has nothing to say about.
-//
-// It is the one clause that is neither a skip nor a silence about the *file*:
-// with no rule selected there is no candidate anywhere, so the read would be
-// work for an answer that is already known. The digest is what makes it
-// observable -- a file that was opened has one, and this file must not.
 func TestAWalkWithNoRulesOpensNothing(t *testing.T) {
 	t.Parallel()
 
@@ -293,9 +229,6 @@ func TestAWalkWithNoRulesOpensNothing(t *testing.T) {
 		t.Fatalf("writing the source: %v", err)
 	}
 
-	// Built without a matcher set rather than with an empty one: nothing
-	// selected is the zero value, and newMatchers reads an empty rule list as
-	// "every rule" -- which is the opposite of what this test is about.
 	d := &discovery{
 		root:    root,
 		skips:   map[skipKey]int{},
@@ -314,14 +247,6 @@ func TestAWalkWithNoRulesOpensNothing(t *testing.T) {
 	}
 }
 
-// TestASnapshotRootIsADirectoryThisProcessCanSee pins [resolveRoot], which is
-// the first thing a discovery does and the cheapest place to refuse.
-//
-// Each refusal names a different mistake, and the point of separating them is
-// that the remedies differ: an empty root is a caller that forgot to set one, a
-// root that is not there is a snapshot that was cleaned up underneath the run,
-// and a root that is a file is a path somebody pointed at a go.mod rather than
-// at the directory holding it.
 func TestASnapshotRootIsADirectoryThisProcessCanSee(t *testing.T) {
 	t.Parallel()
 
@@ -334,8 +259,6 @@ func TestASnapshotRootIsADirectoryThisProcessCanSee(t *testing.T) {
 	if got, err := resolveRoot(root); err != nil || got != root {
 		t.Errorf("resolveRoot(%q) = (%q, %v), want the directory itself", root, got, err)
 	}
-	// A relative root resolves against the working directory rather than being
-	// refused, which is what lets `--snapshot .` mean anything.
 	if got, err := resolveRoot("."); err != nil || !filepath.IsAbs(got) {
 		t.Errorf("resolveRoot(\".\") = (%q, %v), want an absolute path", got, err)
 	}
@@ -367,13 +290,6 @@ func TestASnapshotRootIsADirectoryThisProcessCanSee(t *testing.T) {
 	}
 }
 
-// TestADiscoveryStopsWhenItsContextDoes is the cancellation check, which is per
-// package rather than per node.
-//
-// The walk is pure computation over syntax already in memory, so a package is
-// the smallest unit where stopping early buys anything -- and a run that was
-// interrupted has to say so rather than return a catalogue of the packages it
-// happened to reach, which would be a catalogue of a scope nobody asked for.
 func TestADiscoveryStopsWhenItsContextDoes(t *testing.T) {
 	t.Parallel()
 
@@ -393,19 +309,11 @@ func TestADiscoveryStopsWhenItsContextDoes(t *testing.T) {
 		t.Errorf("the refusal %q does not say the run was cancelled", err)
 	}
 
-	// And a live context walks the package list to the end.
 	if err := d.run(t.Context(), loaded); err != nil {
 		t.Errorf("a discovery under a live context: %v", err)
 	}
 }
 
-// TestASuppressionCountedZeroTimesIsNotCounted pins [discovery.record]'s guard.
-//
-// The counts and the coordinates are two views of one event, so a count that
-// could be added without a site -- or a site added with a count of zero -- is a
-// place the two can drift. Nothing calls it with a non-positive count today;
-// the guard is what keeps the map from growing a key whose value says the
-// suppression did not happen.
 func TestASuppressionCountedZeroTimesIsNotCounted(t *testing.T) {
 	t.Parallel()
 

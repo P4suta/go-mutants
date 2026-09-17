@@ -12,20 +12,11 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// A precedenceCase pins one setting's whole precedence chain: what it is with
-// nothing set, what the file makes it, and what a flag makes it on top of that
-// file. Every overridable setting has a row, because "defaults, then file,
-// then flags" is a promise per field and a rule that holds for sixteen of
-// seventeen fields is a bug report waiting to be filed.
 type precedenceCase struct {
-	name string
-	// document is a complete configuration file that sets this one setting.
-	document string
-	// flags is the overlay a command line would produce for it.
-	flags Overlay
-	// read pulls the setting out of a resolved configuration.
-	read func(Config) any
-	// The three expected values, one per layer.
+	name        string
+	document    string
+	flags       Overlay
+	read        func(Config) any
 	fromDefault any
 	fromFile    any
 	fromFlag    any
@@ -133,10 +124,6 @@ func precedenceCases() []precedenceCase {
 			fromFlag:    16,
 		},
 		{
-			// The one execution key that is a boolean, and therefore the one
-			// whose file value and flag value have to be different words for
-			// the precedence to be visible at all: `isolate = true` in the file
-			// and `--isolate=false` on the command line.
 			name:        "execution.isolate",
 			document:    "version = 1\n[execution]\nisolate = true\n",
 			flags:       Overlay{Isolate: Explicit(false)},
@@ -170,9 +157,7 @@ func precedenceCases() []precedenceCase {
 			read:        func(c Config) any { return c.Policy.Strict },
 			fromDefault: false,
 			fromFile:    true,
-			// --no-strict has to be able to turn off what the file turned on,
-			// which is exactly the case a presence-free overlay would lose.
-			fromFlag: false,
+			fromFlag:    false,
 		},
 		{
 			name:        "policy.minimum_score",
@@ -208,9 +193,7 @@ func precedenceCases() []precedenceCase {
 			read:        func(c Config) any { return c.Report.Formats },
 			fromDefault: []ReportFormat{FormatJSON, FormatHTML},
 			fromFile:    []ReportFormat{FormatJSON},
-			// An explicitly empty list is a choice, not an absence: `--report
-			// none` turns project reports off and must beat both layers below.
-			fromFlag: []ReportFormat{},
+			fromFlag:    []ReportFormat{},
 		},
 		{
 			name:        "report.high",
@@ -228,8 +211,7 @@ func precedenceCases() []precedenceCase {
 			read:        func(c Config) any { return c.Report.Low },
 			fromDefault: 60,
 			fromFile:    50,
-			// Zero is a legitimate low threshold and has to survive the merge.
-			fromFlag: 0,
+			fromFlag:    0,
 		},
 	}
 }
@@ -267,8 +249,6 @@ func TestPrecedence(t *testing.T) {
 					t.Errorf("(-want +got):\n%s", diff)
 				}
 			})
-			// A layer that set nothing must not disturb the layer below it,
-			// which is the failure mode a plain-struct overlay has.
 			t.Run("empty flags keep the file", func(t *testing.T) {
 				got := test.read(Merge(Defaults(), file, Overlay{}))
 				if diff := cmp.Diff(test.fromFile, got); diff != "" {
@@ -279,9 +259,6 @@ func TestPrecedence(t *testing.T) {
 	}
 }
 
-// The matrix has to cover every field the overlay can carry. Version is the
-// exception: it identifies the schema rather than configuring a run, and no
-// flag sets it.
 func TestPrecedenceCoversEveryOverridableSetting(t *testing.T) {
 	covered := make(map[string]bool, len(precedenceCases()))
 	for _, test := range precedenceCases() {
@@ -305,9 +282,6 @@ func TestPrecedenceCoversEveryOverridableSetting(t *testing.T) {
 	}
 }
 
-// Arrays replace rather than accumulate. Appending would make it impossible to
-// narrow a run from the command line, which is the direction people actually
-// need.
 func TestArraysReplaceRatherThanAppend(t *testing.T) {
 	file, err := Parse(FileName, []byte("version = 1\n[mutation]\ninclude = [\"a/**\", \"b/**\"]\n"))
 	if err != nil {
@@ -319,8 +293,6 @@ func TestArraysReplaceRatherThanAppend(t *testing.T) {
 	}
 }
 
-// Merge copies on the way out: editing the result must not reach back into the
-// overlay, and editing the overlay afterwards must not reach the result.
 func TestMergeSharesNoSlices(t *testing.T) {
 	patterns := []string{"a/**"}
 	flags := Overlay{Include: Explicit(patterns)}

@@ -64,11 +64,6 @@ The next run measures everything, which is the same set of verdicts more slowly.
 The run history filed in the same directories is left exactly as it was; ` + "`report`" + `
 owns that.`
 
-// newCacheCommand builds the `cache` command tree.
-//
-// The parent prints help and succeeds, exactly as `report` and the root command
-// do: somebody typing `go-mutants cache` to find out what it can do has done
-// nothing wrong.
 func newCacheCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cache",
@@ -84,7 +79,6 @@ func newCacheCommand() *cobra.Command {
 	return cmd
 }
 
-// newCacheStatusCommand builds `cache status`.
 func newCacheStatusCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
@@ -95,7 +89,6 @@ func newCacheStatusCommand() *cobra.Command {
 	}
 }
 
-// runCacheStatus is `cache status`'s body.
 func runCacheStatus(cmd *cobra.Command, _ []string) error {
 	root, err := cacheRoot()
 	if err != nil {
@@ -127,12 +120,10 @@ func runCacheStatus(cmd *cobra.Command, _ []string) error {
 	return emit(cmd.OutOrStdout(), b.String())
 }
 
-// gcOptions holds the flag destinations for one `cache gc`.
 type gcOptions struct {
 	days int
 }
 
-// newCacheGCCommand builds `cache gc`.
 func newCacheGCCommand() *cobra.Command {
 	o := &gcOptions{}
 	cmd := &cobra.Command{
@@ -147,13 +138,6 @@ func newCacheGCCommand() *cobra.Command {
 	return cmd
 }
 
-// execute is `cache gc`'s body.
-//
-// The sweep is reported even when it failed part way through, and then the
-// failure is returned. Deleting is the whole of what this command does, so a
-// `gc` that could not delete must not exit 0 — and a `gc` that removed nine
-// entries and then hit a locked tenth should still say so, because the next run
-// of it has nine fewer to do.
 func (o *gcOptions) execute(cmd *cobra.Command, _ []string) error {
 	if o.days < 0 {
 		return usagef("--days %d is not an age: pass the number of days an outcome may sit on disk, as in `go-mutants cache gc --days 7`", o.days)
@@ -182,7 +166,6 @@ func (o *gcOptions) execute(cmd *cobra.Command, _ []string) error {
 	return sweepErr
 }
 
-// newCacheCleanCommand builds `cache clean`.
 func newCacheCleanCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "clean",
@@ -193,7 +176,6 @@ func newCacheCleanCommand() *cobra.Command {
 	}
 }
 
-// runCacheClean is `cache clean`'s body.
 func runCacheClean(cmd *cobra.Command, _ []string) error {
 	root, err := cacheRoot()
 	if err != nil {
@@ -217,14 +199,6 @@ func runCacheClean(cmd *cobra.Command, _ []string) error {
 	return sweepErr
 }
 
-// cacheRoot resolves the directory these commands operate on.
-//
-// The configuration is read from the current directory so that the commands
-// look where a run started here would look: a project that moved its cache with
-// `cache.directory` gets its own cache surveyed and swept, not the default one.
-// A directory with no configuration file is not a mistake — [config.Load]
-// answers with the defaults — so the only failure here is a working directory
-// that cannot be read or a file that cannot be understood.
 func cacheRoot() (string, error) {
 	root, err := os.Getwd()
 	if err != nil {
@@ -241,8 +215,6 @@ func cacheRoot() (string, error) {
 	return cache.Root(cfg.Cache.Directory)
 }
 
-// writeSkipped lists the directories the walk would not touch, and says nothing
-// when there were none.
 func writeSkipped(b *strings.Builder, skipped []cache.Skipped) {
 	if len(skipped) == 0 {
 		return
@@ -253,21 +225,11 @@ func writeSkipped(b *strings.Builder, skipped []cache.Skipped) {
 	}
 }
 
-// emit writes one command's whole output in a single call.
-//
-// Composed in memory and written once, for the reason [RenderError] gives about
-// errors: a half-printed listing is worse than an unprinted one, and a status
-// that stopped in the middle of a workspace would read as a cache with fewer
-// entries in it than it has. The write's failure is returned rather than
-// dropped, because unlike an error report this is the command's whole answer.
 func emit(w io.Writer, text string) error {
 	_, err := io.WriteString(w, text)
 	return err
 }
 
-// formatMoment renders a timestamp the way the run report does: RFC 3339 in
-// UTC, to the second. The zero time is "never", which is what a workspace with
-// no entries has.
 func formatMoment(t time.Time) string {
 	if t.IsZero() {
 		return "never"
@@ -275,12 +237,4 @@ func formatMoment(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// formatBytes renders a size for a human, and is this package's spelling of
-// [console.FormatBytes].
-//
-// The rendering lives in internal/console because a `run -v` prints one too —
-// what a sweep reclaimed before the run started — and a size printed one way by
-// `cache status` and another by a run would be two implementations of the same
-// decision. It cannot live here: internal/console must not import the command
-// layer.
 func formatBytes(n int64) string { return console.FormatBytes(n) }

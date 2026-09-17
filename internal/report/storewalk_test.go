@@ -14,29 +14,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// The two walks over the history store, asked what they do when the store is
-// not the shape they expect.
-//
-// enumerate_test.go proves the listing lists and the clean cleans. This file
-// asks the four rules at the top of enumerate.go about the cases they exist
-// for: a directory that cannot be listed at all, a file that goes away between
-// the listing and the stat, a document that is not one, and a deletion that
-// would land outside the store. Every one of them is a directory in the
-// operating system's cache that some other program on the machine may have
-// written, so none of them is theoretical.
-
-// errListing is what a staged listing failure reports.
 var errListing = errors.New("the directory could not be listed")
 
-// TestListReportsADirectoryItCouldNotList is the one failure to *walk* that is
-// returned rather than reported as a row.
-//
-// The distinction is the whole reason [report.History.List] returns an error at
-// all: a store with nothing in it and a store that could not be read are
-// different answers, and printing "no runs" for the second would tell somebody
-// their history is gone when it is merely unreadable.
-//
-// It cannot be parallel; see [report.FailReadDir].
 func TestListReportsADirectoryItCouldNotList(t *testing.T) {
 	root := t.TempDir()
 	storeRun(t, root, "20260218T091500Z-1111", fixtureDigest, moment(t, "2026-02-18T09:15:42Z"))
@@ -60,11 +39,6 @@ func TestListReportsADirectoryItCouldNotList(t *testing.T) {
 	}
 }
 
-// TestListReportsAWorkspaceItCouldNotRead is the same distinction one level
-// down: a workspace directory whose `runs/` cannot be listed stops the listing
-// rather than becoming an empty workspace in it.
-//
-// It cannot be parallel; see [report.FailReadDir].
 func TestListReportsAWorkspaceItCouldNotRead(t *testing.T) {
 	root := t.TempDir()
 	runPath := storeRun(t, root, "20260218T091500Z-1111", fixtureDigest, moment(t, "2026-02-18T09:15:42Z"))
@@ -85,22 +59,10 @@ func TestListReportsAWorkspaceItCouldNotRead(t *testing.T) {
 	}
 }
 
-// TestTheListingIsOrderedByThisPackageAndNotByTheFilesystem pins the promise
-// the listing makes about its own order.
-//
-// "Ordered by the directory name, which is a hash and so arbitrary — but
-// arbitrary and stable, so two listings of an unchanged store can be diffed" is
-// a promise about this package. [os.ReadDir] happens to sort what it returns,
-// which makes the sorts underneath that promise invisible until something hands
-// the walk an unsorted listing — so the seam does, because a promise that holds
-// only because the standard library keeps a different one is not a promise.
-//
-// It cannot be parallel; see [report.StubReadDir].
 func TestTheListingIsOrderedByThisPackageAndNotByTheFilesystem(t *testing.T) {
 	root := t.TempDir()
 	storeRun(t, root, "20260218T091500Z-1111", fixtureDigest, moment(t, "2026-02-18T09:15:42Z"))
 	storeRun(t, root, "20260218T091600Z-2222", otherDigest, moment(t, "2026-02-18T09:16:42Z"))
-	// Two directories nobody claimed, which become the skipped rows.
 	base := filepath.Join(root, report.WorkspacesDirName)
 	for _, name := range []string{"aaa-not-ours", "zzz-not-ours"} {
 		if err := os.MkdirAll(filepath.Join(base, name), 0o755); err != nil {
@@ -143,13 +105,6 @@ func TestTheListingIsOrderedByThisPackageAndNotByTheFilesystem(t *testing.T) {
 	}
 }
 
-// TestASkippedDirectoryIsGivenAReasonWithoutACode reads the row `report list`
-// prints for a directory it would not look inside.
-//
-// The listing is already a list of things that were not touched, so a code in
-// front of every line of it is noise — and the sentence after the code is the
-// one that says which of the two refusals this is: no marker at all, or a
-// marker this build cannot read.
 func TestASkippedDirectoryIsGivenAReasonWithoutACode(t *testing.T) {
 	t.Parallel()
 
@@ -182,13 +137,6 @@ func TestASkippedDirectoryIsGivenAReasonWithoutACode(t *testing.T) {
 	}
 }
 
-// TestAReasonWithNoCodeInFrontOfItIsLeftAlone is the other half of that
-// rendering, which no caller can reach.
-//
-// [report.ReasonOf] is only ever given this package's own errors, and every one
-// of them begins with a code. What it must not do with anything else is guess:
-// cutting at the first ": " of a sentence that has no code in it would eat the
-// beginning of it.
 func TestAReasonWithNoCodeInFrontOfItIsLeftAlone(t *testing.T) {
 	t.Parallel()
 
@@ -222,13 +170,6 @@ func TestAReasonWithNoCodeInFrontOfItIsLeftAlone(t *testing.T) {
 	}
 }
 
-// TestADamagedDocumentIsARowSayingWhatIsWrongWithIt walks every way a file
-// under `runs/` can fail to be a run report.
-//
-// The reason is the whole value of the row. One truncated file in a directory
-// of fifty runs must not cost a user the other forty-nine, and "this file is
-// not a run report" is exactly the thing they need told — with enough of the
-// why to know whether to delete it or to go and find the build that wrote it.
 func TestADamagedDocumentIsARowSayingWhatIsWrongWithIt(t *testing.T) {
 	t.Parallel()
 
@@ -291,14 +232,6 @@ func TestADamagedDocumentIsARowSayingWhatIsWrongWithIt(t *testing.T) {
 	}
 }
 
-// TestAPointerThatIsNotADocumentIsADamagedRowToo covers the same reading of
-// `latest.json`, and the one failure only it can produce: a pointer that cannot
-// be read at all.
-//
-// A directory standing where the pointer belongs is the shape of that failure
-// every platform go-mutants targets produces, and the row for it has to come
-// first in the listing: `latest.json` sorts before `runs/`, and the damaged rows
-// are ordered by path so that two listings of one store can be diffed.
 func TestAPointerThatIsNotADocumentIsADamagedRowToo(t *testing.T) {
 	t.Parallel()
 
@@ -310,8 +243,6 @@ func TestAPointerThatIsNotADocumentIsADamagedRowToo(t *testing.T) {
 		t.Fatalf("removing the pointer: %v", err)
 	}
 	makeDir(t, latest, "in the way")
-	// A second damaged file, under `runs/`, so that the order of the two rows
-	// is the thing being asserted rather than a single row's position.
 	damaged := filepath.Join(filepath.Dir(runPath), "20260218T091600Z-2222.json")
 	writeFile(t, damaged, "half a document")
 
@@ -335,13 +266,6 @@ func TestAPointerThatIsNotADocumentIsADamagedRowToo(t *testing.T) {
 	}
 }
 
-// TestAPointerToARunNoLongerFiledStillNamesIt is why `latest.json` is a copy
-// rather than a pointer.
-//
-// A history whose `runs/` was partly removed still has the newest document in
-// full, and the listing has to show it — otherwise the one run somebody most
-// wants is the one that disappears. The run under `runs/` wins when both are
-// there, because its path is the one a user can act on.
 func TestAPointerToARunNoLongerFiledStillNamesIt(t *testing.T) {
 	t.Parallel()
 
@@ -375,13 +299,6 @@ func TestAPointerToARunNoLongerFiledStillNamesIt(t *testing.T) {
 	}
 }
 
-// TestNewestFirstAnswersWithASign covers the comparator's two halves directly.
-//
-// A comparator that answered 0 for a pair it should have ordered leaves an
-// unstable sort free to return either, which is how `report latest` came to
-// name a different file on two runs of the same command over one store — a bug
-// no assertion on a *sorted* list catches, because a list of two can come back
-// the right way round by luck.
 func TestNewestFirstAnswersWithASign(t *testing.T) {
 	t.Parallel()
 
@@ -394,8 +311,6 @@ func TestNewestFirstAnswersWithASign(t *testing.T) {
 		t.Errorf("NewestFirst(older, newer) = %d, want a positive number", got)
 	}
 
-	// Same second, different runs: the id decides, and the newer id — which
-	// carries the later start — comes first.
 	early := report.StoredRun{RunID: "20260218T091500Z-1111", Path: "/a", FinishedAt: moment(t, "2026-02-18T09:15:42Z")}
 	late := report.StoredRun{RunID: "20260218T091500Z-9999", Path: "/b", FinishedAt: moment(t, "2026-02-18T09:15:42Z")}
 	if got := report.NewestFirst(late, early); got >= 0 {
@@ -409,13 +324,6 @@ func TestNewestFirstAnswersWithASign(t *testing.T) {
 	}
 }
 
-// TestOnlyRunDocumentsAreListedOrDeleted pins what `runs/` is allowed to hold
-// besides runs.
-//
-// A temporary file from an interrupted write must be neither listed as a run
-// nor counted as one, and a *directory* whose name ends in `.json` is not a
-// document either — both of those would otherwise become damaged rows, which is
-// a listing telling a user that something is wrong when nothing is.
 func TestOnlyRunDocumentsAreListedOrDeleted(t *testing.T) {
 	t.Parallel()
 
@@ -441,23 +349,11 @@ func TestOnlyRunDocumentsAreListedOrDeleted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveRuns: %v", err)
 	}
-	// The run document and the pointer, and neither of the two impostors.
 	if removed.Runs != 2 {
 		t.Errorf("RemoveRuns counted %d documents, want 2", removed.Runs)
 	}
 }
 
-// TestAFileThatWentAwayBetweenTheListingAndTheStat is the race the walk has to
-// tolerate, and the failure beside it that it must not.
-//
-// Another process's `report clean`, or somebody's cache cleaner, can delete a
-// file between the listing that found it and the stat that measures it. That is
-// not an error — the file is not there to list — and treating it as one would
-// make a listing fail because a second listing was running. Any other failure
-// to measure a file *is* an error, because it means the directory is not what
-// the walk thinks it is.
-//
-// It cannot be parallel; see [report.StubReadDir].
 func TestAFileThatWentAwayBetweenTheListingAndTheStat(t *testing.T) {
 	root := t.TempDir()
 	runPath := storeRun(t, root, "20260218T091500Z-1111", fixtureDigest, moment(t, "2026-02-18T09:15:42Z"))
@@ -507,17 +403,6 @@ func TestAFileThatWentAwayBetweenTheListingAndTheStat(t *testing.T) {
 	})
 }
 
-// TestRemoveRunsReportsAMarkerItCouldNotRead is the third answer the marker can
-// give, and the one a reading of only the first two turns into a lie.
-//
-// [report.ReadMarker] answers "this directory is ours", "this directory is not
-// ours", and "something is here that I could not read". RemoveRuns handles the
-// first two by name and the third by passing the failure up, and the shape of
-// that switch is what makes the difference invisible: drop the middle case and
-// an unreadable marker falls through to the digest comparison, where the empty
-// digest a failed read leaves behind does not match any workspace -- so the
-// caller is told the directory belongs to *another workspace*, confidently,
-// about a directory nobody can read at all. The code is what separates them.
 func TestRemoveRunsReportsAMarkerItCouldNotRead(t *testing.T) {
 	t.Parallel()
 
@@ -541,12 +426,6 @@ func TestRemoveRunsReportsAMarkerItCouldNotRead(t *testing.T) {
 	exists(t, filepath.Join(dir, report.RunsDirName, "20260218T091500Z-1111.json"), true)
 }
 
-// TestRemoveRunsRefusesAMarkerThatNamesAnotherWorkspace is the collision the
-// truncated key exists to turn into a diagnosis.
-//
-// Two workspaces landing on one directory name is what the marker is for, and
-// the answer has to be a refusal that says so rather than a deletion of
-// somebody else's history under a name that happens to match.
 func TestRemoveRunsRefusesAMarkerThatNamesAnotherWorkspace(t *testing.T) {
 	t.Parallel()
 
@@ -568,10 +447,6 @@ func TestRemoveRunsRefusesAMarkerThatNamesAnotherWorkspace(t *testing.T) {
 	exists(t, filepath.Join(dir, report.RunsDirName, "20260218T091500Z-1111.json"), true)
 }
 
-// TestRemoveRunsReportsARunDirectoryItCouldNotList is the count before the
-// deletion, which is what `report clean` prints.
-//
-// It cannot be parallel; see [report.FailReadDir].
 func TestRemoveRunsReportsARunDirectoryItCouldNotList(t *testing.T) {
 	root := t.TempDir()
 	runPath := storeRun(t, root, "20260218T091500Z-1111", fixtureDigest, moment(t, "2026-02-18T09:15:42Z"))
@@ -593,13 +468,6 @@ func TestRemoveRunsReportsARunDirectoryItCouldNotList(t *testing.T) {
 	exists(t, runPath, true)
 }
 
-// TestRemoveRunsRefusesAStoreItCannotProveThingsAreInside is the containment
-// check reached through the command that needs it.
-//
-// A store named by a relative path is an ordinary thing to configure, and the
-// two paths a clean compares are then one relative and one absolute — which
-// [filepath.Rel] refuses to compare at all. Not knowing where a deletion would
-// land is the one answer that must not end in a deletion.
 func TestRemoveRunsRefusesAStoreItCannotProveThingsAreInside(t *testing.T) {
 	t.Chdir(t.TempDir())
 
@@ -617,13 +485,6 @@ func TestRemoveRunsRefusesAStoreItCannotProveThingsAreInside(t *testing.T) {
 	exists(t, runPath, true)
 }
 
-// TestRemoveRunsReportsAPointerItCouldNotMeasure is the last step of a clean,
-// where the pointer is there and cannot be stat'ed.
-//
-// A symbolic link to itself is the shape of that failure: it is not "the file
-// is not there", which is the one answer that means there is nothing to delete,
-// so a walk that read the two as the same thing would report a clean that
-// removed a file it never touched.
 func TestRemoveRunsReportsAPointerItCouldNotMeasure(t *testing.T) {
 	t.Parallel()
 
@@ -645,26 +506,17 @@ func TestRemoveRunsReportsAPointerItCouldNotMeasure(t *testing.T) {
 	if want := latest + " could not be measured, so it was not deleted"; !strings.Contains(err.Error(), want) {
 		t.Errorf("the failure does not say %q: %v", want, err)
 	}
-	// The runs it did delete are still reported, so that a user is told what a
-	// half-finished clean removed.
 	if removed.Runs != 1 {
 		t.Errorf("RemoveRuns reported %d documents removed, want the one it did remove", removed.Runs)
 	}
 }
 
-// TestRemoveRunsReportsWhatItCouldNotDelete is the deletion itself refusing.
-//
-// A directory that will not give up its names is the one failure a clean has no
-// way around, and reporting it is the difference between a `report clean` that
-// says what is left and one that says it removed files that are still there.
 func TestRemoveRunsReportsWhatItCouldNotDelete(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
 	runPath := storeRun(t, root, "20260218T091500Z-1111", fixtureDigest, moment(t, "2026-02-18T09:15:42Z"))
 	dir := filepath.Dir(filepath.Dir(runPath))
-	// `runs/` out of the way, so that the clean reaches the pointer: the two
-	// deletions are the same call and this is the second of them.
 	if err := os.RemoveAll(filepath.Join(dir, report.RunsDirName)); err != nil {
 		t.Fatalf("staging: %v", err)
 	}
@@ -684,14 +536,6 @@ func TestRemoveRunsReportsWhatItCouldNotDelete(t *testing.T) {
 	exists(t, latest, true)
 }
 
-// TestWithinIsAboutWhereAPathResolvesRatherThanHowItIsSpelled covers the
-// containment rule directly, including the two answers that stop a deletion
-// before it happens.
-//
-// It is asked here rather than through `report clean` because the caller can
-// only ever hand it a store root and a workspace directory it has just opened a
-// file under — so the interesting arguments, the ones a workspace directory
-// somebody replaced with a link would produce, are unreachable from outside.
 func TestWithinIsAboutWhereAPathResolvesRatherThanHowItIsSpelled(t *testing.T) {
 	t.Parallel()
 
@@ -720,8 +564,6 @@ func TestWithinIsAboutWhereAPathResolvesRatherThanHowItIsSpelled(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			if tc.wantErr != "" {
-				// Both refusing cases stage a regular file where a directory
-				// has to be; see the probe.
 				requireRefusalUnderAFile(t, file)
 			}
 			got, err := report.Within(tc.path, tc.root)
@@ -748,14 +590,6 @@ func TestWithinIsAboutWhereAPathResolvesRatherThanHowItIsSpelled(t *testing.T) {
 	}
 }
 
-// TestWithinFollowsALinkOutOfTheStore is the reason the comparison resolves the
-// path rather than reading it.
-//
-// A workspace directory replaced by a link to somewhere else is lexically
-// inside the store and physically wherever it points, and [os.RemoveAll] walks
-// the directories leading to a path. Nothing go-mutants writes creates such a
-// link, which is exactly why it is worth checking: the store is a directory in
-// the operating system's cache that anything on the machine can write to.
 func TestWithinFollowsALinkOutOfTheStore(t *testing.T) {
 	t.Parallel()
 
@@ -777,9 +611,6 @@ func TestWithinFollowsALinkOutOfTheStore(t *testing.T) {
 		t.Error("a path that resolves outside the store was reported as inside it")
 	}
 
-	// The leaf is deliberately left unresolved: RemoveAll unlinks a link rather
-	// than walking through it, so a linked leaf deletes the link and nothing
-	// else.
 	linked := filepath.Join(root, "linked-leaf")
 	if err = os.Symlink(outside, linked); err != nil {
 		t.Skipf("this platform will not let the test create a symbolic link: %v", err)
@@ -789,8 +620,6 @@ func TestWithinFollowsALinkOutOfTheStore(t *testing.T) {
 	}
 }
 
-// TestRemoveInsideRefusesToDeleteWhatItCannotPlace is the deletion's own guard,
-// and the two answers that stop it.
 func TestRemoveInsideRefusesToDeleteWhatItCannotPlace(t *testing.T) {
 	t.Parallel()
 
@@ -831,15 +660,6 @@ func TestRemoveInsideRefusesToDeleteWhatItCannotPlace(t *testing.T) {
 	})
 }
 
-// TestResolvePathAnswersForNamesThatAreNotAllThere covers the resolution the
-// containment check is built on.
-//
-// [filepath.EvalSymlinks] needs the whole path to exist and the paths this is
-// asked about routinely do not — a workspace directory that was never created,
-// a `runs/` a previous clean already emptied — so a missing name is resolved as
-// far as the filesystem goes and the rest is appended verbatim. That is an
-// answer about where a deletion *would* land, which is what the caller is
-// deciding; any other failure is returned, and refuses the deletion.
 func TestResolvePathAnswersForNamesThatAreNotAllThere(t *testing.T) {
 	t.Parallel()
 
@@ -878,17 +698,6 @@ func TestResolvePathAnswersForNamesThatAreNotAllThere(t *testing.T) {
 
 	t.Run("names that are not there under a link this test made", func(t *testing.T) {
 		t.Parallel()
-		// The subtest above resolves nothing on a platform whose temporary
-		// directory is not itself a symlink: `resolvedRoot` equals `root`
-		// there, so "the part that resolves, then the rest verbatim" and "the
-		// path unchanged" are the same string and the assertion holds against a
-		// resolver that does nothing at all. macOS happens to put /var behind a
-		// link to /private/var and Linux happens not to, which is not a
-		// difference this behaviour should be pinned by.
-		//
-		// So the link is made here. Every platform then has something to
-		// resolve, and the walk up through two names that were never created
-		// has to come back through it.
 		link := filepath.Join(root, "link")
 		if err := os.Symlink(real, link); err != nil {
 			t.Skipf("this filesystem does not make symlinks: %v", err)
@@ -917,8 +726,6 @@ func TestResolvePathAnswersForNamesThatAreNotAllThere(t *testing.T) {
 	})
 }
 
-// TestResolveParentLeavesTheLastElementAlone is the half of the resolution that
-// makes deleting a link delete the link.
 func TestResolveParentLeavesTheLastElementAlone(t *testing.T) {
 	t.Parallel()
 
@@ -947,15 +754,6 @@ func TestResolveParentLeavesTheLastElementAlone(t *testing.T) {
 	}
 }
 
-// requireRefusalUnderAFile skips a case that stages "a path under a regular
-// file" where the platform cannot tell one from a path that is simply not
-// there. Linux and macOS answer ENOTDIR for a name under a file, which the
-// resolution treats as a hard failure; Windows answers ERROR_PATH_NOT_FOUND,
-// which is fs.ErrNotExist — the same answer a missing directory gets — so the
-// walk up to the first existing ancestor lands on the file and resolves it,
-// and the refusal the case is about cannot be produced. Pretending otherwise
-// would be asserting the platform rather than the code, so the case probes
-// for the distinction rather than naming the platform.
 func requireRefusalUnderAFile(t *testing.T, file string) {
 	t.Helper()
 	_, err := os.Stat(filepath.Join(file, "deeper", "runs"))
@@ -964,14 +762,6 @@ func requireRefusalUnderAFile(t *testing.T, file string) {
 	}
 }
 
-// TestTrimExtendedPrefixDropsWhatWindowsAdds pins the one spelling rule that no
-// other platform can reach.
-//
-// A resolved path and a resolved root are compared as strings, so the two have
-// to arrive in one spelling whichever of them the operating system chose to
-// hand back — and a path that escaped the traditional length limit comes back
-// with `\\?\` in front of it. Nothing outside Windows can be affected, which is
-// exactly why nothing outside this test would notice it being wrong.
 func TestTrimExtendedPrefixDropsWhatWindowsAdds(t *testing.T) {
 	t.Parallel()
 
@@ -996,8 +786,6 @@ func TestTrimExtendedPrefixDropsWhatWindowsAdds(t *testing.T) {
 	}
 }
 
-// onlyWorkspace returns the one workspace a listing holds, failing the test
-// when it holds any other number.
 func onlyWorkspace(t *testing.T, listing report.Listing) report.StoredWorkspace {
 	t.Helper()
 	if len(listing.Workspaces) != 1 {
@@ -1006,7 +794,6 @@ func onlyWorkspace(t *testing.T, listing report.Listing) report.StoredWorkspace 
 	return listing.Workspaces[0]
 }
 
-// sortedStrings reports whether values are in ascending order.
 func sortedStrings(values []string) bool {
 	for i := 1; i < len(values); i++ {
 		if values[i-1] > values[i] {
@@ -1016,14 +803,6 @@ func sortedStrings(values []string) bool {
 	return true
 }
 
-// denyWrites makes dir refuse new names for the rest of the test, and skips
-// where that is not a thing the operating system enforces.
-//
-// The probe is the whole of the portability story and is a behaviour rather
-// than a platform name: Windows keeps no write permission on a directory, and a
-// process running as root is not stopped by one either. Asking the filesystem
-// is the only answer that is right in both cases and stays right in a container
-// somebody has configured differently.
 func denyWrites(t *testing.T, dir string) {
 	t.Helper()
 	before, err := os.Stat(dir)
@@ -1043,13 +822,6 @@ func denyWrites(t *testing.T, dir string) {
 	}
 }
 
-// TestListReportsAPointerItCouldNotMeasure is the listing's own version of the
-// pointer that cannot be stat'ed.
-//
-// It is a failure rather than a damaged row, and the difference matters: a
-// damaged row says "this file is not a run report", which is a fact about a
-// file that was read, and this is a file that could not be looked at. A symbolic
-// link to itself is the shape of that failure on every platform that has links.
 func TestListReportsAPointerItCouldNotMeasure(t *testing.T) {
 	t.Parallel()
 

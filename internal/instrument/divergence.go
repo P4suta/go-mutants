@@ -11,65 +11,23 @@ import (
 	"strings"
 )
 
-// LoopFileSuffix is what a module's loop census and limit table are named
-// with, after the path the environment gives.
-//
-// The two environment variables name one path, and a workspace run has one
-// generated runtime per module, each with a numbering of its own: without a
-// suffix every module of a workspace would append its counts to one file and
-// read another module's ceilings back out of it. The suffix is a digest of the
-// module path rather than the path itself, because an import path holds
-// slashes and a file name may not.
-//
-// It is computed here and nowhere else: the generated runtime bakes it in as a
-// constant and the engine builds the same name to read and write, so the two
-// ends cannot drift.
 func LoopFileSuffix(modulePath string) string {
 	sum := sha256.Sum256([]byte(modulePath))
 	return "." + hex.EncodeToString(sum[:4])
 }
 
-// censusFormat opens the header line of every loop census and names the format
-// itself, for [infectionFormat]'s reason: the file outlives the process that
-// wrote it and is read by a different program than the one that generated the
-// runtime.
 const censusFormat = "gomutants-loop-census-v1"
 
-// limitsFormat is the same for the table a run hands back to its mutants.
 const limitsFormat = "gomutants-loop-limits-v1"
 
-// censusHeader renders the line a counting runtime writes before its first
-// count: the format and how many loop sites the tree it was generated for
-// holds.
-//
-// The generator and the reader both go through this function, which is the only
-// reason they cannot drift.
 func censusHeader(loops int) string {
 	return censusFormat + " " + strconv.Itoa(loops)
 }
 
-// limitsHeader is the same for a limit table.
 func limitsHeader(loops int) string {
 	return limitsFormat + " " + strconv.Itoa(loops)
 }
 
-// ReadLoopCensus returns, per loop site, the largest iteration count the census
-// records for it, and zero for a site the census never names.
-//
-// The census is what an instrumented tree's runtime appended to while the test
-// command ran with nothing activated: one line per site per time that site's
-// running maximum rose, several processes appending to one file, so the header
-// may appear more than once and every occurrence has to be this tree's.
-//
-// The reader is fail-closed for [ReadInfectionLog]'s reason turned around. A
-// census is what every ceiling is derived from, so a file that has been
-// truncated, mixed with another tree's, or written by a runtime built from a
-// different set of loops must yield nothing at all rather than the part of
-// itself that still parses: the part that still parses is a set of ceilings
-// that are too low for the loops it forgot, and a ceiling that is too low is a
-// mutant reported as diverged that terminates perfectly well. The caller has one
-// safe reading of an error — "this run took no census, so every ceiling is the
-// floor" — and no safe reading of a partial one.
 func ReadLoopCensus(r io.Reader, loops int) ([]uint64, error) {
 	if loops < 0 {
 		return nil, &Error{
@@ -112,7 +70,6 @@ func ReadLoopCensus(r io.Reader, loops int) ([]uint64, error) {
 	return out, nil
 }
 
-// readCensusLine reads one "<site> <count>" line of a census.
 func readCensusLine(line string, loops int) (site int, count uint64, err error) {
 	refuse := func(why string) error {
 		return &Error{
@@ -135,11 +92,6 @@ func readCensusLine(line string, loops int) (site int, count uint64, err error) 
 	return site, count, nil
 }
 
-// WriteLoopLimits renders the table a run hands its mutant processes: one
-// ceiling per loop site, in site order.
-//
-// It is written by the engine and read by the generated runtime, so the format
-// is stated once, here, and both ends go through this file.
 func WriteLoopLimits(w io.Writer, limits []uint64) error {
 	var b strings.Builder
 	b.WriteString(limitsHeader(len(limits)))

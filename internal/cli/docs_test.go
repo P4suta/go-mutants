@@ -17,24 +17,10 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// exitCodePages are the pages that print the exit-code table.
-//
-// The release checklist asks that the README's table and exitCodeHelp be equal
-// verbatim, and until this test existed the only way to know was to diff two
-// differently-shaped documents by eye. They are equal by construction now: the
-// Meaning cell of each row is the help's own words for that code.
 var exitCodePages = []string{"README.md", commandLineDoc}
 
-// exitCodeHeading opens the table on each of them.
 const exitCodeHeading = "## Exit codes"
 
-// TestEveryExitCodeTableSaysWhatTheHelpSays keeps four statements of one
-// contract equal: the constants, the help every command prints, and the table
-// on each page that documents it.
-//
-// The first direction is the one nothing checked at all. exitCodeHelp is a
-// string constant, so a sixth ExitCode could be added, returned, and branched
-// on by a CI configuration without the help ever mentioning it.
 func TestEveryExitCodeTableSaysWhatTheHelpSays(t *testing.T) {
 	t.Parallel()
 
@@ -85,14 +71,11 @@ func TestEveryExitCodeTableSaysWhatTheHelpSays(t *testing.T) {
 	}
 }
 
-// An exitCodeRow is one code and the words beside it.
 type exitCodeRow struct {
 	code    int
 	meaning string
 }
 
-// exitCodeRows reads the rows of exitCodeHelp: the lines after the heading,
-// each opening with a number.
 func exitCodeRows(t *testing.T, help string) []exitCodeRow {
 	t.Helper()
 
@@ -119,9 +102,6 @@ func exitCodeRows(t *testing.T, help string) []exitCodeRow {
 	return rows
 }
 
-// exitCodeTableRows reads the rows of a page's exit-code table, stripping the
-// backticks a Markdown table puts round the number and round any flag in the
-// meaning -- so that what is compared is the words and not their markup.
 func exitCodeTableRows(section string) []exitCodeRow {
 	var rows []exitCodeRow
 	for _, line := range strings.Split(section, "\n") {
@@ -144,8 +124,6 @@ func exitCodeTableRows(section string) []exitCodeRow {
 	return rows
 }
 
-// headingSection is the body under one Markdown heading, up to the next of the
-// same level or shallower.
 func headingSection(body, heading string) (string, bool) {
 	lines := strings.Split(body, "\n")
 	depth := len(heading) - len(strings.TrimLeft(heading, "#"))
@@ -167,35 +145,12 @@ func headingSection(body, heading string) (string, bool) {
 	return "", false
 }
 
-// commandLineDoc is the reference this repository holds to its own help.
 const commandLineDoc = "docs/command-line.md"
 
-// commandsHeading opens the table that names every command.
 const commandsHeading = "## The commands"
 
-// cobraCommands are the top-level commands cobra adds that this repository did
-// not write.
-//
-// They are not in the tree NewRootCommand returns -- cobra attaches them when a
-// command is executed -- so they are checked where a user meets them: in the
-// list the root's help prints. Both directions, so a cobra release that adds a
-// third appears here as a failure rather than in a user's `--help` unreviewed.
-//
-// Their own help is cobra's to change, and a golden of it would be a diff to
-// approve on every dependency bump, for output nobody in this repository
-// writes.
 var cobraCommands = []string{"completion", "help"}
 
-// TestEveryCommandsHelpMatchesItsGolden pins what every command prints.
-//
-// A help text is a contract: it is where a user learns which flags exist and
-// what they default to, and it is the first thing a release note is written
-// from. Nothing pinned it, so a flag could lose its description, a command its
-// summary, or the tree a whole subcommand, and every test would still pass.
-//
-// The goldens are recorded with `mise run golden-update` and the diff is the
-// review, which is the point: a change to what a user reads should be a change
-// somebody read first.
 func TestEveryCommandsHelpMatchesItsGolden(t *testing.T) {
 	t.Parallel()
 
@@ -212,8 +167,6 @@ func TestEveryCommandsHelpMatchesItsGolden(t *testing.T) {
 	}
 }
 
-// TestTheCommandListAUserSeesIsTheOneThisRepositoryWrote pins the root's
-// command list, cobra's own additions included, in both directions.
 func TestTheCommandListAUserSeesIsTheOneThisRepositoryWrote(t *testing.T) {
 	t.Parallel()
 
@@ -246,8 +199,6 @@ func TestTheCommandListAUserSeesIsTheOneThisRepositoryWrote(t *testing.T) {
 	}
 }
 
-// helpSection is the indented block under one heading of a cobra help, up to
-// the next unindented line.
 func helpSection(help, heading string) (string, bool) {
 	lines := strings.Split(help, "\n")
 	for i, line := range lines {
@@ -269,7 +220,6 @@ func helpSection(help, heading string) (string, bool) {
 	return "", false
 }
 
-// TestCommandLineDocNamesEveryCommand keeps the reference equal to the tree.
 func TestCommandLineDocNamesEveryCommand(t *testing.T) {
 	t.Parallel()
 
@@ -313,13 +263,6 @@ func TestCommandLineDocNamesEveryCommand(t *testing.T) {
 	}
 }
 
-// TestEveryCommandsHelpCarriesTheExitCodeTable holds the whole tree to what the
-// root's help template promises.
-//
-// exitCodeHelp is appended to the root's template and cobra resolves a template
-// up the parent chain, so every command inherits it -- but "every" was asserted
-// over two commands, and a subcommand that set a template of its own would have
-// dropped the table without a test noticing.
 func TestEveryCommandsHelpCarriesTheExitCodeTable(t *testing.T) {
 	t.Parallel()
 
@@ -334,23 +277,6 @@ func TestEveryCommandsHelpCarriesTheExitCodeTable(t *testing.T) {
 	}
 }
 
-// TestNoCommandsHelpDependsOnTheMachine is what makes the goldens above safe to
-// commit.
-//
-// A help text that says something different on a laptop and on a runner is a
-// golden that fails on every machine but the one that recorded it. Two shapes
-// of that, and only two, have ever been possible here.
-//
-// The first is an absolute path. A default naming the user's home, the module
-// root, or a temporary directory is a different sentence for every reader, and
-// no help may print one.
-//
-// The second is a default computed from the machine. `--jobs` is min(NumCPU, 8),
-// and printing it through pflag would make `run --help` say a different number
-// on every host -- so it is described in words instead, and this test holds both
-// halves of that: `run --help` prints no pflag default, and it says what the
-// default is. A fixed literal default like `cache gc --days` is not this shape:
-// 30 is 30 everywhere, and printing it is the help doing its job.
 func TestNoCommandsHelpDependsOnTheMachine(t *testing.T) {
 	t.Parallel()
 
@@ -382,8 +308,6 @@ func TestNoCommandsHelpDependsOnTheMachine(t *testing.T) {
 	}
 }
 
-// allCommands is every command path in the tree, cobra's own included, in path
-// order.
 func allCommands(t *testing.T) []string {
 	t.Helper()
 
@@ -400,19 +324,12 @@ func allCommands(t *testing.T) []string {
 	return paths
 }
 
-// firstPartyCommands is every command path this repository wrote, in path
-// order, the root included.
 func firstPartyCommands(t *testing.T) []string {
 	t.Helper()
 
-	// The tree NewRootCommand returns holds only what this repository wrote:
-	// cobra attaches `help` and `completion` when a command is executed, which
-	// is why they are checked against the rendered help instead.
 	return allCommands(t)
 }
 
-// goldenName is the file one command's help is recorded in: the path minus the
-// program, spaces turned into dashes, and `root` for the program itself.
 func goldenName(path string) string {
 	name := strings.TrimPrefix(path, "go-mutants")
 	name = strings.TrimSpace(name)

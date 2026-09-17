@@ -3,15 +3,6 @@
 
 //go:build integration
 
-// The toolchain-backed half of this package's tests. It builds a real
-// two-package module with `go test -c -cover`, runs both binaries, renders the
-// data with `go tool covdata textfmt`, and reads the result back — which is the
-// only way to know that the parser reads what the toolchain writes rather than
-// what this package believes it writes.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/coverage/...
 package coverage_test
 
 import (
@@ -30,21 +21,10 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// commandCap bounds each toolchain command and each profiling run. Generous,
-// because the point is to stop a hung toolchain rather than to measure one.
 const commandCap = 5 * time.Minute
 
-// recordPattern is the block-record grammar the committed sample and every
-// freshly generated profile both have to satisfy.
-//
-// It is written out here rather than reused from the parser on purpose: a
-// grammar that came from the code under test would agree with it by
-// construction, and what this file is for is noticing the day the toolchain
-// stops writing what the parser expects.
 var recordPattern = regexp.MustCompile(`^.+:[0-9]+\.[0-9]+,[0-9]+\.[0-9]+ [0-9]+ [0-9]+$`)
 
-// The fixture module. Package `dependency` holds three functions with
-// deliberately different fates, and `caller` reaches exactly one of them.
 const (
 	fixtureModule = "cov.example/exp"
 
@@ -99,7 +79,6 @@ func TestUse(t *testing.T) {
 `
 )
 
-// TestParsesWhatTheToolchainWrites is the round trip: build, run, render, read.
 func TestParsesWhatTheToolchainWrites(t *testing.T) {
 	t.Parallel()
 
@@ -122,13 +101,6 @@ func TestParsesWhatTheToolchainWrites(t *testing.T) {
 		}
 	}
 
-	// The three facts the mapping is built on, read off real toolchain output.
-	//
-	// Clamp is reached by the dependency package's own tests. OnlyCaller is not,
-	// and is reached by the caller package's tests instead — which is what makes
-	// per-binary profiles worth collecting at all. Orphan is reached by neither,
-	// and its blocks are present with a zero count rather than absent, which is
-	// what lets an uncovered mutant be told apart from an unlinked package.
 	dependencyFile := fixtureModule + "/dependency/dependency.go"
 	assertCovered(t, dependencyProfile, dependencyFile, clampLine, true, "Clamp under its own tests")
 	assertCovered(t, dependencyProfile, dependencyFile, onlyCallerLine, false, "OnlyCaller under the dependency tests")
@@ -136,8 +108,6 @@ func TestParsesWhatTheToolchainWrites(t *testing.T) {
 	assertCovered(t, dependencyProfile, dependencyFile, orphanLine, false, "Orphan under any test")
 	assertCovered(t, callerProfile, dependencyFile, orphanLine, false, "Orphan under any test")
 
-	// And the absence the mapping reads as "this binary never linked that
-	// package": the caller's file is nowhere in the dependency's profile.
 	callerFile := fixtureModule + "/caller/caller.go"
 	if named(dependencyProfile, callerFile) {
 		t.Errorf("the dependency test binary's profile names %s, which it does not link", callerFile)
@@ -147,26 +117,12 @@ func TestParsesWhatTheToolchainWrites(t *testing.T) {
 	}
 }
 
-// The lines of dependency.go the assertions above are about, counted from the
-// source constant. They are named rather than written as numbers at the call
-// site so that editing the fixture moves one constant instead of five.
-// The three are counted from the top of the written file, which is the SPDX
-// header the harness puts on every Go file it writes into a module plus the
-// source constant below it.
 const (
-	clampLine      = 8  // `if v > lo` inside Clamp, reached by TestClamp
-	onlyCallerLine = 16 // `return a != b` in OnlyCaller
-	orphanLine     = 20 // `return a == b` in Orphan
+	clampLine      = 8
+	onlyCallerLine = 16
+	orphanLine     = 20
 )
 
-// TestCommittedSampleStillDescribesTheFormat holds the checked-in fixture
-// against freshly generated output.
-//
-// The unit tests read the sample on every machine, toolchain or not; this is
-// what stops the sample from quietly becoming a description of a format Go no
-// longer writes. It compares grammar rather than content — the sample is from a
-// different module and would never match line for line — because the grammar is
-// the part the parser depends on.
 func TestCommittedSampleStillDescribesTheFormat(t *testing.T) {
 	t.Parallel()
 
@@ -193,8 +149,6 @@ func TestCommittedSampleStillDescribesTheFormat(t *testing.T) {
 			}
 		}
 	}
-	// And the parser agrees with the grammar on the fresh bytes, which is the
-	// assertion the unit tests can only make about the committed ones.
 	profile, err := coverage.ParseTextfmt(strings.NewReader(string(fresh)))
 	if err != nil {
 		t.Fatalf("ParseTextfmt over fresh toolchain output: %v", err)
@@ -204,8 +158,6 @@ func TestCommittedSampleStillDescribesTheFormat(t *testing.T) {
 	}
 }
 
-// writeFixtureModule writes the two-package module into a directory of the
-// test's own and returns its root.
 func writeFixtureModule(t *testing.T) string {
 	t.Helper()
 	return testkit.NewModule(t).Module(fixtureModule).
@@ -216,17 +168,12 @@ func writeFixtureModule(t *testing.T) string {
 		Root()
 }
 
-// render builds one package's test binary with coverage, runs it, and returns
-// the textfmt document the toolchain wrote.
 func render(t *testing.T, toolchain gocmd.Toolchain, root string, env []string, pkg string) []byte {
 	t.Helper()
 	work := t.TempDir()
 	binary := filepath.Join(work, pkg+".test")
 	coverDir := filepath.Join(work, "cover")
 	profilePath := filepath.Join(work, pkg+".txt")
-	// Created and left empty: this is the directory the test binary is told to
-	// emit its coverage data into, and a file the test put there would be a file
-	// `go tool covdata` is asked to read as a profile.
 	if err := os.MkdirAll(coverDir, 0o755); err != nil {
 		t.Fatalf("creating %s: %v", coverDir, err)
 	}
@@ -238,10 +185,6 @@ func render(t *testing.T, toolchain gocmd.Toolchain, root string, env []string, 
 	build.Timeout = commandCap
 	mustRun(t, build, "building the "+pkg+" test binary")
 
-	// `-test.gocoverdir` and never the GOCOVERDIR environment variable: a test
-	// binary emits through testing's coverTearDown, which is handed only the
-	// flag, and setting the variable produces a run that prints a coverage
-	// percentage and writes nothing at all. See internal/execute's coverDirFlag.
 	run := runner.Spec{
 		Argv:    []string{binary, "-test.gocoverdir=" + coverDir},
 		Dir:     filepath.Join(root, pkg),
@@ -259,7 +202,6 @@ func render(t *testing.T, toolchain gocmd.Toolchain, root string, env []string, 
 	return testkit.ReadFile(t, profilePath)
 }
 
-// collect is [render] followed by the parser.
 func collect(t *testing.T, toolchain gocmd.Toolchain, root string, env []string, pkg string) coverage.Profile {
 	t.Helper()
 	profile, err := coverage.ParseTextfmt(strings.NewReader(string(render(t, toolchain, root, env, pkg))))
@@ -269,7 +211,6 @@ func collect(t *testing.T, toolchain gocmd.Toolchain, root string, env []string,
 	return profile
 }
 
-// mustRun runs one command and ends the test if it did not succeed.
 func mustRun(t *testing.T, spec runner.Spec, what string) {
 	t.Helper()
 	result := runner.Run(context.WithoutCancel(t.Context()), spec)
@@ -283,8 +224,6 @@ func mustRun(t *testing.T, spec runner.Spec, what string) {
 	}
 }
 
-// assertCovered checks whether any block of the profile covering a line was
-// reached, and says which fact was expected when it was not.
 func assertCovered(t *testing.T, profile coverage.Profile, file string, line int, want bool, what string) {
 	t.Helper()
 	got := false
@@ -298,7 +237,6 @@ func assertCovered(t *testing.T, profile coverage.Profile, file string, line int
 	}
 }
 
-// named reports whether the profile mentions a file at all, covered or not.
 func named(profile coverage.Profile, file string) bool {
 	for _, b := range profile.Blocks {
 		if b.File == file {
@@ -308,8 +246,6 @@ func named(profile coverage.Profile, file string) bool {
 	return false
 }
 
-// documentLines splits a document into its non-empty lines, with carriage
-// returns removed.
 func documentLines(document string) []string {
 	var out []string
 	for _, line := range strings.Split(document, "\n") {

@@ -16,9 +16,6 @@ import (
 
 func TestPrepareTraceReportsSuccessFailureAndSkip(t *testing.T) {
 	const measuredDuration = 17 * time.Millisecond
-	// A ticking clock rather than a scripted pair of instants: what this test is
-	// about is that a span lasts exactly one measured duration, and it says so
-	// once for every phase below instead of once per clock read.
 	clock := testkit.NewClock(time.Unix(0, 0))
 	clock.Tick(measuredDuration)
 	var events []PrepareEvent
@@ -82,9 +79,6 @@ func TestPreparePhaseSpanCanFinishAfterAnotherPhase(t *testing.T) {
 	probeStarted := mainStarted.Add(time.Millisecond)
 	probeFinished := probeStarted.Add(time.Millisecond)
 	mainFinished := probeFinished.Add(time.Millisecond)
-	// A script rather than a tick: this test's subject is the *gaps*, so each
-	// instant is named in the assertion below and the clock hands them out in
-	// the order the code reads them.
 	clock := testkit.NewClock(time.Time{})
 	clock.Sequence(mainStarted, probeStarted, probeFinished, mainFinished)
 	var events []PrepareEvent
@@ -120,21 +114,6 @@ func TestPreparePhaseSpanCanFinishAfterAnotherPhase(t *testing.T) {
 	}
 }
 
-// TestPrepareOptionsTraceCallbackStillReceivesEveryPhaseEvent is the fan-out.
-//
-// A preparation now has two audiences and they are not the same audience. The
-// callback is [PrepareOptions.Trace]: a consumer driving a progress display off
-// it was there first, and its contract does not move — one start and one finish
-// per phase, in phase order, synchronously, with the same durations. The
-// recorder is where the same timeline reaches somebody joining two recordings
-// afterwards, and it has to see every one of those events too, because a
-// timeline missing the phase a preparation died in is exactly the timeline
-// somebody is reading.
-//
-// The nine phases are driven here rather than by a real preparation, and one of
-// each shape: a phase that succeeded, one that failed, and one that was skipped
-// — a skip being a started/finished pair with a zero duration, which is what
-// lets a reader tell an intentional omission from an event that was lost.
 func TestPrepareOptionsTraceCallbackStillReceivesEveryPhaseEvent(t *testing.T) {
 	const measuredDuration = 3 * time.Millisecond
 	clock := testkit.NewClock(time.Unix(0, 0))
@@ -162,10 +141,6 @@ func TestPrepareOptionsTraceCallbackStillReceivesEveryPhaseEvent(t *testing.T) {
 		}
 	}
 
-	// Every phase this build emits, a start and a finish each: the number a
-	// consumer's own timeline is built out of, and the number the recording has
-	// to agree with. Derived from the list rather than written down, so that a
-	// phase added to the engine moves both sides of the comparison at once.
 	wantEvents := 2 * len(KnownPreparePhases())
 	if len(callback) != wantEvents {
 		t.Fatalf("the callback saw %d events, want %d: %+v", len(callback), wantEvents, callback)
@@ -204,14 +179,6 @@ func TestPrepareOptionsTraceCallbackStillReceivesEveryPhaseEvent(t *testing.T) {
 	}
 }
 
-// TestPrepareTraceRecordsWithoutACallback is the other half of the fan-out: a
-// caller that asked for no phase events still records them.
-//
-// It is the case a consumer of the recording is in — nothing is watching the
-// preparation live, and the whole account of it is read afterwards — so a
-// fan-out that only fired when somebody had supplied a callback would produce
-// recordings whose contents depended on an option that has nothing to do with
-// them.
 func TestPrepareTraceRecordsWithoutACallback(t *testing.T) {
 	sink := trace.NewMemorySink(0)
 	recorder := trace.New(sink, time.Now, trace.StartRecord{Kind: trace.StartKindWorkspace})
@@ -235,16 +202,6 @@ func TestPrepareTraceRecordsWithoutACallback(t *testing.T) {
 	}
 }
 
-// TestAPanickingPrepareCallbackDoesNotLoseTheRecordersEvent is why the fan-out
-// records with a defer.
-//
-// [PrepareOptions.Trace] is a consumer's own code, and ordinary Go code panics.
-// A fan-out that recorded after calling it would lose exactly one event to such
-// a panic: the one the consumer died on, which is the event somebody debugging
-// that panic opens the recording to find. Recording it first would be the
-// mirror-image bug — the callback's contract is that it is called
-// synchronously, and a recorder that ran ahead of it would reorder the two for
-// every consumer that reads both.
 func TestAPanickingPrepareCallbackDoesNotLoseTheRecordersEvent(t *testing.T) {
 	sink := trace.NewMemorySink(0)
 	recorder := trace.New(sink, time.Now, trace.StartRecord{Kind: trace.StartKindWorkspace})
@@ -281,27 +238,13 @@ func TestAPanickingPrepareCallbackDoesNotLoseTheRecordersEvent(t *testing.T) {
 	}
 }
 
-// TestTheNoteNamesThePhaseOfTheErrorItCarries is the rule a concurrent
-// preparation makes necessary.
-//
-// The binary build and the probe tree's three phases run at once, and either
-// one's failure cancels the other — so the cancelled side also finishes as a
-// failure, and in the general case it finishes *later*. A note that named the
-// last phase to report a failure would therefore name the phase that was merely
-// collateral while quoting the error from the phase that actually broke: one
-// sentence, two subjects, and a reader sent to the wrong half of the run.
-//
-// The phase is taken from the error the caller was handed instead, which is the
-// only value that carries the two halves together.
 func TestTheNoteNamesThePhaseOfTheErrorItCarries(t *testing.T) {
 	sink := trace.NewMemorySink(0)
 	recorder := trace.New(sink, time.Now, trace.StartRecord{Kind: trace.StartKindWorkspace})
 	phases := newPrepareTrace(nil, recorder)
 
-	// The main build fails…
 	failure := errors.New("gomutants: prepare test binaries: no such package")
 	returned := inPhase(PreparePhaseBinaryBuild, failure)
-	// …and the probe phase it cancelled reports its own failure afterwards.
 	phases.finish(PrepareEvent{
 		Phase:  PreparePhaseProbeCoverageBuild,
 		State:  PrepareEventFinished,
@@ -317,8 +260,6 @@ func TestTheNoteNamesThePhaseOfTheErrorItCarries(t *testing.T) {
 		t.Errorf("the note says %q and the error says %q", detail, failure)
 	}
 
-	// The tag is invisible to everything else: the message is unchanged, and a
-	// consumer's errors.Is still reaches the cause through it.
 	if returned.Error() != failure.Error() {
 		t.Errorf("tagging changed the message to %q, want %q", returned.Error(), failure)
 	}
@@ -326,7 +267,6 @@ func TestTheNoteNamesThePhaseOfTheErrorItCarries(t *testing.T) {
 		t.Error("a tagged error no longer unwraps to its cause")
 	}
 
-	// An error from outside every phase names none rather than inventing one.
 	loose := errors.New("gomutants: prepare profile \"nope\": expected balanced, strong, or all")
 	if got := prepareFailedDetail(loose); got != loose.Error() {
 		t.Errorf("an untagged error produced %q, want %q", got, loose)

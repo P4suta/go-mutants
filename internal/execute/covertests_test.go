@@ -17,10 +17,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// TestParseTestListKeepsWhatARunWouldExecute pins the reading of
-// `-test.list`: tests, examples and fuzz targets are units a run can select;
-// benchmarks are not run by `go test` and are dropped; the trailing status
-// line a binary prints is not a name.
 func TestParseTestListKeepsWhatARunWouldExecute(t *testing.T) {
 	t.Parallel()
 
@@ -33,16 +29,10 @@ func TestParseTestListKeepsWhatARunWouldExecute(t *testing.T) {
 	}
 }
 
-// isTestList reports whether a call is the `-test.list` run.
 func isTestList(c call) bool {
 	return slices.ContainsFunc(c.Argv, func(a string) bool { return strings.HasPrefix(a, "-test.list=") })
 }
 
-// selectedTest is the name a `-test.run=^Name$` argument selects, or "" when
-// there is none. Both anchors are required: a selector missing either would
-// also select every test whose name has the selected one as a prefix or a
-// suffix, and a test that accepted such a selector would pass for a pass that
-// profiles the wrong tests.
 func selectedTest(c call) string {
 	for _, a := range c.Argv {
 		if selector, ok := strings.CutPrefix(a, "-test.run="); ok {
@@ -57,12 +47,6 @@ func selectedTest(c call) string {
 	return ""
 }
 
-// TestCollectTestCoverageRunsEachTestAloneIntoItsOwnDirectory is the
-// per-test twin of the binary collection: one `-test.list` per binary, then
-// one run per name it printed, each selected by an anchored `-test.run` and
-// writing into a directory of its own, and each recorded with whether it
-// passed on its own — a test that fails alone is a fact the caller needs,
-// not an error.
 func TestCollectTestCoverageRunsEachTestAloneIntoItsOwnDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -128,9 +112,6 @@ func TestCollectTestCoverageRunsEachTestAloneIntoItsOwnDirectory(t *testing.T) {
 	}
 }
 
-// TestCollectTestCoverageLabelsEveryRun pins the recording: the listing is
-// its own kind, and every per-test run is a coverage run whose subject names
-// the binary and the test it ran.
 func TestCollectTestCoverageLabelsEveryRun(t *testing.T) {
 	t.Parallel()
 
@@ -160,10 +141,6 @@ func TestCollectTestCoverageLabelsEveryRun(t *testing.T) {
 	}
 }
 
-// TestCollectTestCoverageReportsAListingThatFails: a binary that cannot even
-// list its tests is a broken binary, and that is an error rather than an empty
-// answer, because an empty answer would quietly leave every mutant it covers
-// uncovered.
 func TestCollectTestCoverageReportsAListingThatFails(t *testing.T) {
 	t.Parallel()
 
@@ -184,21 +161,6 @@ func TestCollectTestCoverageReportsAListingThatFails(t *testing.T) {
 	}
 }
 
-// TestCollectTestCoverageProfilesTheTestsConcurrently is the pass whose cost
-// grows with the *suite* rather than with the catalogue.
-//
-// There is one process per test here, so a project with four hundred tests pays
-// four hundred process starts before a single mutant is measured -- the one
-// place a run's cost is a function of somebody's test count. Each of those runs
-// is a separate process writing a profile of its own under a scratch directory
-// of its own, and nothing is shared but the package directory the binaries
-// already read from, so serialising them bought only that they did not overlap.
-// Mutant runs of the same binaries already overlap.
-//
-// The proof is a barrier rather than a clock: every run blocks until as many
-// runs as there are jobs have arrived, which a serial pass could never satisfy.
-// A serial implementation does not fail this test slowly, it deadlocks -- and
-// the context the test carries is what turns that into a failure.
 func TestCollectTestCoverageProfilesTheTestsConcurrently(t *testing.T) {
 	t.Parallel()
 
@@ -231,9 +193,6 @@ func TestCollectTestCoverageProfilesTheTestsConcurrently(t *testing.T) {
 		t.Fatalf("CollectTestCoverage: %v", err)
 	}
 
-	// And the order is the plan's rather than the order the workers finished
-	// in: a coverage set that came out differently on two runs of one tree
-	// would make the narrowing depend on scheduling.
 	var names []string
 	for _, data := range collected {
 		names = append(names, data.Name)

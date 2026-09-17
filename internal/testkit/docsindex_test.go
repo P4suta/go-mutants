@@ -13,32 +13,15 @@ import (
 )
 
 const (
-	// docsDir is the directory every page below lives in.
-	docsDir = "docs"
-	// docsIndex is the page that names the others.
-	docsIndex = "docs/README.md"
-	// adrIndexLink is the one target under docsDir the index links to that is
-	// not a page: it is the index of another ledger, which is what joins the
-	// two.
-	adrIndexLink = "adr/README.md"
-	// statusPrefix opens the line every page carries under its title.
-	statusPrefix = "**Status:"
-	// adrStatusHeading is how a record states the same thing. An ADR is not
-	// revised when the code changes -- a record whose consequences no longer
-	// hold is superseded by a new one -- so its status is a section rather than
-	// a line, and it says which.
+	docsDir          = "docs"
+	docsIndex        = "docs/README.md"
+	adrIndexLink     = "adr/README.md"
+	statusPrefix     = "**Status:"
 	adrStatusHeading = "## Status"
 )
 
-// relativeLink finds the target of a Markdown link that names a file.
 var relativeLink = regexp.MustCompile(`\]\(([A-Za-z0-9._/-]+\.md)(?:#[A-Za-z0-9-]*)?\)`)
 
-// TestDocsIndexLinksEveryPage keeps the index and the directory equal.
-//
-// `docs/adr/` is deliberately out of scope: it has an index of its own, which
-// TestADRIndexListsEveryADRFile keeps honest. What is in scope is the link to
-// that index, because a reader who cannot find the records from here has to
-// know they exist to look for them.
 func TestDocsIndexLinksEveryPage(t *testing.T) {
 	t.Parallel()
 
@@ -66,12 +49,6 @@ func TestDocsIndexLinksEveryPage(t *testing.T) {
 	}
 }
 
-// TestEveryDocumentationPageDeclaresItsStatus is one claim with two spellings.
-//
-// A page says how much of what it describes is built, so that a reader knows
-// whether they are reading a description or a plan. A page carries that as a
-// line under its title; a record carries it as a section, because a record is
-// superseded rather than revised and the section says by what.
 func TestEveryDocumentationPageDeclaresItsStatus(t *testing.T) {
 	t.Parallel()
 
@@ -102,18 +79,6 @@ func TestEveryDocumentationPageDeclaresItsStatus(t *testing.T) {
 	}
 }
 
-// TestTheReadmeDocumentationListAndTheDocsIndexAgree keeps the two views of one
-// set equal.
-//
-// The README's list is what somebody arriving at the repository reads; the
-// index is what somebody already in `docs/` reads. They are the same set seen
-// from two places, and a page added to one and not the other is a page half the
-// readers cannot find.
-//
-// Both sides are normalised against the directory they are written from -- the
-// README says `docs/errors.md` and the index says `errors.md` for the same
-// page, and `CONTRIBUTING.md` against `../CONTRIBUTING.md` for the same file --
-// so what is compared is the set of files and not the spelling of the paths.
 func TestTheReadmeDocumentationListAndTheDocsIndexAgree(t *testing.T) {
 	t.Parallel()
 
@@ -145,8 +110,6 @@ func TestTheReadmeDocumentationListAndTheDocsIndexAgree(t *testing.T) {
 	}
 }
 
-// documentationPages is every page under `docs/`, index excluded, in name
-// order.
 func documentationPages(t *testing.T, root string) []string {
 	t.Helper()
 
@@ -166,7 +129,6 @@ func documentationPages(t *testing.T, root string) []string {
 	return pages
 }
 
-// recordPages is every architecture decision record, index excluded.
 func recordPages(t *testing.T, root string) []string {
 	t.Helper()
 
@@ -186,8 +148,6 @@ func recordPages(t *testing.T, root string) []string {
 	return records
 }
 
-// linksIn is every relative Markdown link one page makes, deduplicated and in
-// name order.
 func linksIn(t *testing.T, path string) []string {
 	t.Helper()
 
@@ -199,7 +159,6 @@ func linksIn(t *testing.T, path string) []string {
 	return slices.Compact(targets)
 }
 
-// readPage reads one Markdown file.
 func readPage(t *testing.T, path string) string {
 	t.Helper()
 
@@ -210,11 +169,6 @@ func readPage(t *testing.T, path string) string {
 	return string(source)
 }
 
-// declaresStatus reports whether a page states how much of it is built, within
-// three non-blank lines of its title.
-//
-// Three rather than one, because the line is prose and wraps, and because a
-// page may carry an HTML comment between the title and it.
 func declaresStatus(body string) bool {
 	lines := strings.Split(body, "\n")
 	for i, line := range lines {
@@ -238,8 +192,6 @@ func declaresStatus(body string) bool {
 	return false
 }
 
-// sectionOf is the body under one heading, up to the next heading of the same
-// level or shallower.
 func sectionOf(body, heading string) (string, bool) {
 	lines := strings.Split(body, "\n")
 	depth := len(heading) - len(strings.TrimLeft(heading, "#"))

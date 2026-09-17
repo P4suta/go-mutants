@@ -16,7 +16,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// cacheCandidate is one mutant to build a one-row report around.
 func cacheCandidate(outcome mutation.Outcome, cached bool) candidate {
 	c := candidate{
 		path: alphaFile, pkg: alphaPackage, rule: "eq-to-neq",
@@ -31,7 +30,6 @@ func cacheCandidate(outcome mutation.Outcome, cached bool) candidate {
 	return c
 }
 
-// buildCache builds a one-mutant report with the given cache block.
 func buildCache(t *testing.T, c candidate, mode report.CacheMode, misses, writes int) (*report.Report, error) {
 	t.Helper()
 	rows, catalog := located(t, []candidate{c})
@@ -76,8 +74,6 @@ func buildCache(t *testing.T, c candidate, mode report.CacheMode, misses, writes
 	})
 }
 
-// coverageModeFor is `package` only for the one candidate that needs it, since
-// `uncovered` may only be stated by a coverage-guided run.
 func coverageModeFor(c candidate) report.CoverageMode {
 	if c.uncovered {
 		return report.CoveragePackage
@@ -85,9 +81,6 @@ func coverageModeFor(c candidate) report.CoverageMode {
 	return report.CoverageOff
 }
 
-// TestCacheHitsAreCountedFromTheRows is the same discipline
-// `mutants_uncovered` gets: the number in the summary and the rows a reader
-// would count by hand are the same number by construction.
 func TestCacheHitsAreCountedFromTheRows(t *testing.T) {
 	t.Parallel()
 
@@ -112,9 +105,6 @@ func TestCacheHitsAreCountedFromTheRows(t *testing.T) {
 	}
 }
 
-// TestACacheThatWasOffStatesNoNumbersItDidNotMeasure. "The cache was off" and
-// "the cache was empty" are different statements, and this is what makes them
-// distinguishable in the document.
 func TestACacheThatWasOffStatesNoNumbersItDidNotMeasure(t *testing.T) {
 	t.Parallel()
 
@@ -133,10 +123,6 @@ func TestACacheThatWasOffStatesNoNumbersItDidNotMeasure(t *testing.T) {
 	}
 }
 
-// TestBuildRefusesACacheBlockTheMutantsContradict. A report is the artefact
-// every other output is derived from, so it is worth failing at the last step
-// rather than publishing a document that contradicts itself about where a
-// verdict came from.
 func TestBuildRefusesACacheBlockTheMutantsContradict(t *testing.T) {
 	t.Parallel()
 
@@ -213,13 +199,6 @@ func TestBuildRefusesACacheBlockTheMutantsContradict(t *testing.T) {
 	}
 }
 
-// TestTheDocumentAndTheStoreAgreeAboutWhatIsReusable holds the two lists
-// together.
-//
-// internal/report has its own copy of "which outcomes the cache stores",
-// because a document validator must not import the store it is validating. This
-// is the test that copy is kept honest by: a `cached` row is accepted by
-// [report.Build] exactly when [cache.Cacheable] would have stored it.
 func TestTheDocumentAndTheStoreAgreeAboutWhatIsReusable(t *testing.T) {
 	t.Parallel()
 
@@ -237,8 +216,6 @@ func TestTheDocumentAndTheStoreAgreeAboutWhatIsReusable(t *testing.T) {
 	}
 }
 
-// TestTheCacheBlockIsInTheSchemaAndTheModel guards the drift the schema, the
-// model, and the golden are edited together to avoid.
 func TestTheCacheBlockIsInTheSchemaAndTheModel(t *testing.T) {
 	t.Parallel()
 
@@ -252,8 +229,6 @@ func TestTheCacheBlockIsInTheSchemaAndTheModel(t *testing.T) {
 			t.Errorf("the document does not carry %s", want)
 		}
 	}
-	// Round-tripped through the reader `report merge` uses, so that a field the
-	// writer emits and the reader drops is caught here rather than at a merge.
 	parsed, err := report.Parse(data)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -268,15 +243,6 @@ func TestTheCacheBlockIsInTheSchemaAndTheModel(t *testing.T) {
 	}
 }
 
-// TestEveryCacheModeIsInTheSchema is this enum's half of the drift guard
-// TestEveryEnumeratedValueIsInTheSchema performs for the others: a mode added
-// to the model and not to the schema is a document this build writes and its
-// own validator refuses.
-//
-// It builds a real document per mode rather than editing a valid one, because
-// the cache block's counters have to agree with the mode — a document with
-// `off` and a miss in it is refused by [report.Build] before the schema ever
-// sees it — so the two have to be varied together.
 func TestEveryCacheModeIsInTheSchema(t *testing.T) {
 	t.Parallel()
 
@@ -294,8 +260,6 @@ func TestEveryCacheModeIsInTheSchema(t *testing.T) {
 	}
 }
 
-// missesFor is a believable miss count for a mode: an `on` run looked its one
-// mutant up, and an `off` run looked nothing up at all.
 func missesFor(mode report.CacheMode) int {
 	if mode == report.CacheOn {
 		return 1

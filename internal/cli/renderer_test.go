@@ -20,9 +20,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/tui"
 )
 
-// probing returns a probe that answers a fixed way, which is how these tests
-// exercise the branch a test process can never reach for real: `go test` does
-// not hand its output a terminal.
 func probing(isTerminal bool, profile colorprofile.Profile) terminalProbe {
 	return func(io.Writer) (bool, colorprofile.Profile) { return isTerminal, profile }
 }
@@ -96,9 +93,6 @@ func TestTheDashboardIsChosenOnlyWhenItWouldWork(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// Both are cleared first: the machine running the tests may have
-			// either of them set, and the matrix is about what the flags and
-			// the environment say, not about where it runs.
 			t.Setenv("CI", "")
 			t.Setenv("NO_COLOR", "")
 			for k, v := range tc.env {
@@ -113,9 +107,6 @@ func TestTheDashboardIsChosenOnlyWhenItWouldWork(t *testing.T) {
 }
 
 func TestDetectTerminalRefusesWhatIsNotAFile(t *testing.T) {
-	// A bytes.Buffer has no file descriptor to ask about, and answering
-	// anything but "not a terminal" would put escape sequences into whatever
-	// it is standing in for.
 	isTerminal, profile := detectTerminal(&bytes.Buffer{})
 	if isTerminal {
 		t.Error("a bytes.Buffer was reported as a terminal")
@@ -135,8 +126,6 @@ func TestDetectTerminalRefusesWhatIsNotAFile(t *testing.T) {
 }
 
 func TestOnlyATerminalIsHandedToTheDashboardAsInput(t *testing.T) {
-	// Anything that is not a keyboard is refused, so that bubbletea never puts
-	// somebody's redirected data into raw mode and reads it.
 	if got := dashboardInput(&bytes.Buffer{}); got != nil {
 		t.Errorf("dashboardInput(&bytes.Buffer{}) = %v, want nil", got)
 	}
@@ -153,7 +142,6 @@ func TestOnlyATerminalIsHandedToTheDashboardAsInput(t *testing.T) {
 	}
 }
 
-// A synthetic run, as both renderers see it.
 func syntheticRun() []engine.Event {
 	survivor := engine.MutantResult{
 		ID:          strings.Repeat("9f8e7d6c", 8),
@@ -189,7 +177,6 @@ func syntheticRun() []engine.Event {
 	}
 }
 
-// renderPlain renders a whole run the way a run without a terminal does.
 func renderPlain(t *testing.T, events []engine.Event) string {
 	t.Helper()
 	stream := make(chan engine.Event, len(events))
@@ -207,14 +194,8 @@ func renderPlain(t *testing.T, events []engine.Event) string {
 func TestTheDashboardsScrollbackIsThePlainRunsClosingBlock(t *testing.T) {
 	events := syntheticRun()
 
-	// What a plain run leaves in the scrollback.
 	plain := renderPlain(t, events)
 
-	// What a dashboard run leaves in it: the events the dashboard kept, put
-	// back through the same renderer once the alternate screen is gone. The
-	// dashboard here is the real one, drawing into a writer that is not a
-	// terminal and reading from no input at all, which is as close to a run
-	// under a terminal as a test process can get.
 	dashboard := tui.New(io.Discard, nil, Version, func() {})
 	stream := make(chan engine.Event, len(events))
 	for _, e := range events {
@@ -237,8 +218,6 @@ func TestTheDashboardsScrollbackIsThePlainRunsClosingBlock(t *testing.T) {
 		t.Fatalf("replayFinal: %v", err)
 	}
 
-	// The closing block — from the report's paths to the exit line — has to be
-	// the same bytes in both. It is the part a user reads, greps, and pastes.
 	const marker = "report run: "
 	plainTail := plain[strings.LastIndex(plain, marker):]
 	replayedTail := replayed.String()[strings.LastIndex(replayed.String(), marker):]
@@ -246,7 +225,6 @@ func TestTheDashboardsScrollbackIsThePlainRunsClosingBlock(t *testing.T) {
 		t.Errorf("the closing block differs between the renderers\n--- plain ---\n%s\n--- dashboard ---\n%s", plainTail, replayedTail)
 	}
 
-	// And the warning, whose text the alternate screen took with it, is back.
 	warning := "warning GOM7301: a package was skipped"
 	if !strings.Contains(replayed.String(), warning) {
 		t.Errorf("the replayed scrollback lost %q:\n%s", warning, replayed.String())

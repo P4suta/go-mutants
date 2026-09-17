@@ -14,14 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// TestStartFailureCarriesTheInvocation is why [runner.Invocation] exists.
-//
-// [runner.Result] deliberately says nothing about what was run, so a failure
-// that travelled up three layers arrived as "could not start
-// /tmp/x/go-build123/b001/pkg.test" with no working directory, no argument
-// vector, and nothing to reproduce it with. The command is attached where it is
-// still known — here — rather than reconstructed by a renderer that would have
-// to guess.
 func TestStartFailureCarriesTheInvocation(t *testing.T) {
 	t.Parallel()
 
@@ -61,22 +53,16 @@ func TestStartFailureCarriesTheInvocation(t *testing.T) {
 			invocation.TraceSeq, event.Seq, result.TraceSeq)
 	}
 
-	// The message is the user-facing contract and does not change because the
-	// error grew a field.
 	if want := "GOM7202: could not start " + missing + ": "; !strings.HasPrefix(failure.Error(), want) {
 		t.Errorf("Error() = %q, want it to begin %q", failure.Error(), want)
 	}
 
-	// A caller reusing its argument buffer for the next command must not be
-	// able to rewrite the invocation an error already carries.
 	argv[1] = "-test.run=Rewritten"
 	if invocation.Argv[1] != "-test.run" {
 		t.Errorf("Argv[1] = %q after the caller reused its buffer, want %q", invocation.Argv[1], "-test.run")
 	}
 }
 
-// TestInvocationClonesArgv pins the copy in both directions, and the empty
-// answer a failure that never named a command gives.
 func TestInvocationClonesArgv(t *testing.T) {
 	t.Parallel()
 
@@ -97,9 +83,6 @@ func TestInvocationClonesArgv(t *testing.T) {
 		t.Errorf("the caller's argv[0] = %q, want %q: the invocation shares its backing array", argv[0], "go")
 	}
 
-	// An error built by hand — every runner.Error in a test, and every one a
-	// future caller constructs — has no command, and says so rather than
-	// panicking.
 	if got := (&runner.Error{Code: runner.CodeSpecInvalid, Message: "no argument vector"}).Command(); got != nil {
 		t.Errorf("Command() = %+v on an error that named no command, want nil", got)
 	}

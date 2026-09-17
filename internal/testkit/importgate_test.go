@@ -15,56 +15,17 @@ import (
 	"testing"
 )
 
-// The two import paths no production file may reach.
-//
-// The second is not a second harness: internal/testsupport is test-only support
-// in its entirety, and its one exported helper is now a forwarder into this
-// package. It has to be forbidden explicitly because the scan reads *direct*
-// imports — a production file that imported the forwarder would pull the
-// harness, and `testing` with it, one hop further along, and a gate that watched
-// only for the harness would report nothing at all.
 const (
 	TestkitImportPath     = ModulePath + "/internal/testkit"
 	TestSupportImportPath = ModulePath + "/internal/testsupport"
 )
 
-// skippedDirectories are the trees that hold Go files which are not this
-// module's production code: the corpus is a set of modules of their own, the
-// golden and helper trees under testdata/ are inputs rather than programs, and
-// vendor-assets holds somebody else's code.
 var skippedDirectories = []string{"testdata", FixturesDir, "vendor-assets", ".git"}
 
-// ForwarderException is the one file that may import the harness without being a
-// _test.go.
-//
-// internal/testsupport/cache.go is test-only support whose exported helper is a
-// forwarder into this package, kept so that its fourteen call sites go on
-// compiling while the suites move over; it disappears when they have, and this
-// constant with it.
-//
-// It is one *file* rather than its package, and the difference is the whole
-// point of the exception. Written as a package prefix, it silently extends the
-// permission to every file anybody adds beside it — so a new production package
-// linking `testing` would be admitted by a rule that was written about a file on
-// its way out, and nobody would be told.
 const ForwarderException = "internal/testsupport/cache.go"
 
-// HarnessDir is the harness's own tree, relative to the module root, spelled
-// with forward slashes.
-//
-// Nothing under it is production code — it is the harness — so the files in it
-// are the one tree that may import the harness. internal/testkit/mutantkit is
-// why: it is the half that holds go-mutants' own types, it is imported only
-// from external test packages, and every helper in it composes an environment
-// or copies a fixture from the package above.
 const HarnessDir = "internal/testkit"
 
-// TestImportGateAllowsTheHarnessToImportItself is that exemption, and the proof
-// that it is scoped to the harness's own tree rather than to the import path.
-//
-// A gate that read mutantkit's files as production code would report the harness
-// for being the harness; one that exempted the *import* would stop naming the
-// production package that reached the engine's test types through it.
 func TestImportGateAllowsTheHarnessToImportItself(t *testing.T) {
 	t.Parallel()
 
@@ -82,18 +43,6 @@ func TestImportGateAllowsTheHarnessToImportItself(t *testing.T) {
 	}
 }
 
-// TestProductionCodeDoesNotImportTestkit is the layering rule as a test.
-//
-// A production package that imported testkit would link `testing` into
-// `go-mutants`: the testing package registers flags in its init, so a released
-// binary would grow `-test.v` and friends, and a public API would be able to
-// fail a test that does not exist. `.golangci.yml` has no depguard, and this
-// repository's precedent for a rule like this is a go/ast scan in a test, so
-// that is what this is.
-//
-// The scan is over files rather than over the import graph on purpose: `go list`
-// would need a toolchain, which the unit tier does not require, and a parse of
-// every non-test file needs nothing but the standard library.
 func TestProductionCodeDoesNotImportTestkit(t *testing.T) {
 	t.Parallel()
 
@@ -108,14 +57,6 @@ func TestProductionCodeDoesNotImportTestkit(t *testing.T) {
 	}
 }
 
-// TestImportGateNamesTheOffendingFile proves the gate can fail, and that its
-// failure is actionable.
-//
-// A gate that only ever passes is indistinguishable from a gate that cannot see
-// anything, and the way this one would break is by skipping too much — a walk
-// that ignored a directory it should not, or an import list read from a parse
-// that failed silently. So the scan is pointed at a module built to offend, and
-// the assertion is the path in the report rather than the count.
 func TestImportGateNamesTheOffendingFile(t *testing.T) {
 	t.Parallel()
 
@@ -135,9 +76,6 @@ func TestImportGateNamesTheOffendingFile(t *testing.T) {
 	}
 }
 
-// TestImportGateNamesADeeperImportOfTheHarness covers the sub-package: the rule
-// is about the tree, so internal/testkit/mutantkit — which imports the engine —
-// is just as forbidden, and matching the exact path would have missed it.
 func TestImportGateNamesADeeperImportOfTheHarness(t *testing.T) {
 	t.Parallel()
 
@@ -153,15 +91,6 @@ func TestImportGateNamesADeeperImportOfTheHarness(t *testing.T) {
 	}
 }
 
-// TestImportGateNamesASecondFileInTheForwardersPackage is the difference between
-// an exception and a hole.
-//
-// One file is allowed to import the harness — internal/testsupport/cache.go, the
-// forwarder that keeps its fourteen call sites compiling until they migrate — and
-// an exception written as a package prefix quietly extends that permission to
-// every file anybody adds beside it. A second file there would be a new
-// production package importing `testing`, admitted by a rule that was written
-// about a file that is on its way out.
 func TestImportGateNamesASecondFileInTheForwardersPackage(t *testing.T) {
 	t.Parallel()
 
@@ -179,15 +108,6 @@ func TestImportGateNamesASecondFileInTheForwardersPackage(t *testing.T) {
 	}
 }
 
-// TestImportGateNamesAProductionImportOfTheForwarder closes the way round the
-// gate.
-//
-// The scan reads direct imports, so exempting the forwarder for importing the
-// harness would let any production file reach the harness — and `testing`, and
-// its flag registrations — one hop further along by importing the forwarder
-// instead. internal/testsupport is test-only support in its entirety, so no
-// production file may import it either, and the exception stays what it says it
-// is: one file, on its way out.
 func TestImportGateNamesAProductionImportOfTheForwarder(t *testing.T) {
 	t.Parallel()
 
@@ -205,18 +125,6 @@ func TestImportGateNamesAProductionImportOfTheForwarder(t *testing.T) {
 	}
 }
 
-// offendingImports returns every non-test Go file under root that imports the
-// test harness or its forwarder, as `<path> imports <import path>` lines
-// relative to root, sorted.
-//
-// The import is named as well as the file, because there are two rules and a
-// reader has to know which one was broken: importing the harness links `testing`
-// directly, and importing the forwarder links it one hop further along.
-//
-// Only the import declarations are parsed, which is both the cheapest read of a
-// Go file and the one that cannot be wrong about anything else: a file that does
-// not compile still has an import list, and a rule about imports should not
-// depend on the rest of the file being valid.
 func offendingImports(root string) ([]string, error) {
 	var offenders []string
 	fset := token.NewFileSet()
@@ -266,12 +174,6 @@ func offendingImports(root string) ([]string, error) {
 	return offenders, nil
 }
 
-// forbiddenImport reports whether a production file may not import a path.
-//
-// Both trees are matched rather than both exact paths, because the rule is about
-// the tree: internal/testkit/mutantkit imports the engine and is just as
-// forbidden as its parent, and a sub-package of the forwarder would be no more
-// importable than the forwarder.
 func forbiddenImport(path string) bool {
 	for _, forbidden := range []string{TestkitImportPath, TestSupportImportPath} {
 		if path == forbidden || strings.HasPrefix(path, forbidden+"/") {

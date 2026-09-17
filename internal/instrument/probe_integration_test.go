@@ -3,20 +3,6 @@
 
 //go:build integration
 
-// The probe tree end to end, against a real toolchain and a real test suite.
-//
-// The unit tests in this package prove the rewrite byte for byte and prove that
-// it compiles. Neither can answer the question a probe tree exists to answer,
-// which is whether the tree still *is* the program: the whole licence a probe
-// gives a run — "this test never saw a value that mutant would have changed, so
-// it cannot kill it" — rests on the measured program being the measured
-// program. So the fixture's own suite is run against the probe tree twice, once
-// with nothing in the environment and once recording, and both have to pass
-// exactly as they pass in the tree the user wrote.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/instrument/...
 package instrument_test
 
 import (
@@ -35,21 +21,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// TestProbeTreeIsSemanticsPreserving runs the killable fixture's suite against
-// its probe tree and watches it behave exactly as the fixture does.
-//
-// Three claims, in the order they have to be established. The tree builds. Its
-// suite passes with nothing in the environment, printing the same per-test
-// lines the pristine tree prints — which is what "the original semantics run"
-// means where anybody can check it, and it is measured against the pristine run
-// rather than against a list written here, so a fixture that grows a test
-// cannot quietly stop being compared. And with the log variable set the suite
-// still passes and the log is readable against the catalogue that generated it.
-//
-// The last step is the drift gate, run last so that it covers the builds and
-// both suite runs as well as the rewrite: nothing outside the probed files and
-// the generated runtime may have changed, or a probe pass would be measuring a
-// tree it had itself disturbed.
 func TestProbeTreeIsSemanticsPreserving(t *testing.T) {
 	t.Parallel()
 
@@ -57,9 +28,6 @@ func TestProbeTreeIsSemanticsPreserving(t *testing.T) {
 	env := testkit.Compose(t, testkit.Scratch(t))
 	snap := mutantkit.Snapshot(t, "killable")
 
-	// The pristine suite first, because it is the thing the probe tree has to
-	// agree with. Nothing is written by it: the fixture's tests assert and
-	// return, and the drift gate at the end is what says so.
 	pristine := mutantkit.RunSuite(t, toolchain, snap.Root, env)
 	mutantkit.RequireExit(t, pristine, 0, "the pristine fixture's suite")
 	wantLines := verdictLines(pristine)
@@ -82,18 +50,6 @@ func TestProbeTreeIsSemanticsPreserving(t *testing.T) {
 		t.Fatalf("instrumenting the snapshot as a probe tree: %v", instrumentErr)
 	}
 
-	// Every file of the fixture, and that is the boolean form showing through:
-	// ready.go's only mutant is `true-to-false` on a literal, which no return
-	// form can compare and which the boolean form measures where it stands.
-	// Before that form existed this file was the unprobed one, and it was
-	// unprobed for a reason a reader would have called a limitation.
-	//
-	// The counts are sites rather than mutants, and the two differ here in both
-	// directions: clamp.go's seven are its two `return` statements, the three
-	// boolean expressions nested inside and beside them, and the two numeric
-	// operands the value form measures where they stand, while untested.go's
-	// two are one `return` and the comparison inside it — which carries the two
-	// `return-bool` mutants *and* the comparison's own, in one site each.
 	if want := []string{"clamp.go", "ready.go", "untested.go"}; !slices.Equal(instrumented.FilesInstrumented, want) {
 		t.Errorf("probed %q, want %q", instrumented.FilesInstrumented, want)
 	}
@@ -107,11 +63,6 @@ func TestProbeTreeIsSemanticsPreserving(t *testing.T) {
 	})
 
 	t.Run("the probe tree's suite passes unprobed", func(t *testing.T) {
-		// No variable in the environment: the runtime is linked in, Infect
-		// costs a nil check, and the program is the program. The per-test
-		// verdicts are compared with the pristine run's rather than merely
-		// counted, because a rewrite that changed one answer would still exit 0
-		// if the fixture happened to have a test that tolerated it.
 		quiet := runProbeSuite(t, toolchain, snap.Root, env, "")
 		mutantkit.RequireExit(t, quiet, 0, "the probe tree's suite with no log")
 		if got := verdictLines(quiet); !slices.Equal(got, wantLines) {
@@ -134,10 +85,6 @@ func TestProbeTreeIsSemanticsPreserving(t *testing.T) {
 		if parseErr != nil {
 			t.Fatalf("reading the infection log against the catalogue: %v\n%s", parseErr, data)
 		}
-		// At least one, because Clamp is exercised and every one of its
-		// returned values is something other than zero at some input. Which
-		// ones exactly is the fixture's business rather than this test's; that
-		// a probe pass records anything at all is this one's.
 		if len(infected) == 0 {
 			t.Errorf("the probe recorded nothing, although the suite exercises every return in clamp.go:\n%s", data)
 		}
@@ -174,13 +121,6 @@ func TestProbeTreeIsSemanticsPreserving(t *testing.T) {
 	})
 }
 
-// runProbeSuite runs the fixture's whole suite in the snapshot, recording into
-// log when it is not empty.
-//
-// It is [mutantkit.RunSuite] with the other variable, over the environment the
-// caller composed for the same reason every child here gets one: a developer
-// with GO_MUTANTS_PROBE exported in their shell must not turn the unprobed run
-// into a probed one, and the composed environment is what strips it.
 func runProbeSuite(t *testing.T, toolchain gocmd.Toolchain, root string, env []string, log string) runner.Result {
 	t.Helper()
 
@@ -190,15 +130,6 @@ func runProbeSuite(t *testing.T, toolchain gocmd.Toolchain, root string, env []s
 	return mutantkit.RunSuite(t, toolchain, root, env)
 }
 
-// verdictLines returns every per-test verdict `go test -v` printed, in order,
-// without the duration each one ends in.
-//
-// It is the comparable form of "the suite behaved the same": exit 0 alone would
-// be satisfied by a tree with no tests left in it, and the whole output carries
-// timings that differ between runs. The duration on the verdict line itself is
-// one of those timings: a verdict is a fact about the program, its duration a
-// fact about the machine, and on a slow runner the same test rounds to 0.01s
-// in one run and 0.00s in the next.
 func verdictLines(result runner.Result) []string {
 	var out []string
 	for _, line := range strings.Split(string(result.Output), "\n") {
@@ -211,8 +142,6 @@ func verdictLines(result runner.Result) []string {
 	return out
 }
 
-// withoutDuration strips the trailing " (1.23s)" of a verdict line, and leaves
-// a line that does not end in one alone.
 func withoutDuration(verdict string) string {
 	open := strings.LastIndex(verdict, " (")
 	if open < 0 || !strings.HasSuffix(verdict, "s)") {

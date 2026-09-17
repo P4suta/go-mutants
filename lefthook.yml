@@ -2,8 +2,6 @@
 # SPDX-FileCopyrightText: 2026 go-mutants contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# Fast gates only. The slow ones (build, tests, golangci-lint, gitleaks) stay
-# in `mise run check` and CI so a commit never waits on a full compile.
 pre-commit:
   parallel: true
   commands:

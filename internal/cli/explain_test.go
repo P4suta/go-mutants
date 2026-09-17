@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// The half of `--explain` that needs no toolchain: how the two commands render
-// what discovery decided, given rows to render.
 package cli
 
 import (
@@ -18,15 +16,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// TestRunExplainSaysWhereCoordinatesLive is the one line that keeps the two
-// commands honest about the difference between them.
-//
-// A run report carries the aggregate and nothing else — that is a deliberate
-// decision about a document other tools read, argued in internal/discover — so
-// `run --explain` can only name the file. Leaving it at that would read as "the
-// coordinates do not exist", which stopped being true: `list --explain` over
-// the same workspace prints every one of them, and this is where a reader is
-// told so.
 func TestRunExplainSaysWhereCoordinatesLive(t *testing.T) {
 	var out bytes.Buffer
 	r := &report.Report{Skips: []report.Skip{
@@ -40,8 +29,6 @@ func TestRunExplainSaysWhereCoordinatesLive(t *testing.T) {
 	if !strings.Contains(text, "list --explain") {
 		t.Errorf("`run --explain` does not say where the coordinates are:\n%s", text)
 	}
-	// The rows themselves stay per file: the report has no sites in it, and a
-	// coordinate invented here would be a coordinate nothing measured.
 	if !strings.Contains(text, "internal/scan/scan.go  4 sites") {
 		t.Errorf("`run --explain` no longer names the file and its count:\n%s", text)
 	}
@@ -50,13 +37,6 @@ func TestRunExplainSaysWhereCoordinatesLive(t *testing.T) {
 	}
 }
 
-// TestListExplainPrintsAWholeFileSkipWithoutACoordinate pins the shape of the
-// row a file that was never opened gets.
-//
-// `path:0:0` would be a position, and there is no position: the file was
-// excluded, generated or cgo, so discovery never looked inside it. The bare
-// path is the honest row, and the count line above it already says how many
-// files a reason accounted for.
 func TestListExplainPrintsAWholeFileSkipWithoutACoordinate(t *testing.T) {
 	var out bytes.Buffer
 	skips := []catalogSkip{
@@ -83,28 +63,6 @@ func TestListExplainPrintsAWholeFileSkipWithoutACoordinate(t *testing.T) {
 	}
 }
 
-// wantSkipDetail is every row `list --explain` writes underneath a listing of
-// fixtures/discovery, byte for byte.
-//
-// It is spelled out here rather than kept as a golden file for one reason: the
-// repository's golden ledger names the packages `mise run golden-update` can
-// regenerate, and the run that produces this output needs a real toolchain
-// behind the integration tag, which that task does not carry. A literal is the
-// same pin — an exact comparison of the whole section — read in the file that
-// asserts it. TestListExplainPrintsSkipCoordinates compares a real run against
-// it; the test below proves the rows name what they claim to.
-//
-// The coordinates are the fixture's own and can be checked with an editor,
-// which is the point: line 33 holds two suppressed expressions inside one array
-// length, line 49 holds two inside one package-level initialiser — a comparison
-// and the one constant a return there could be rewritten to — and the generated
-// file has no coordinate at all, because it was never opened.
-//
-// Each row names the rule that was declined, which is what makes line 49
-// readable. It would carry `return-false` as well, except that `1 == 2` is a
-// constant the checker folded to false: settling it false is the program
-// itself, not a mutant, and discovery refuses it before there is a suppression
-// to record. A site that is not an edit is not a declined edit either.
 const wantSkipDetail = `
 suppressed sites (16)
 discovery passed these over; they are never candidates, so they are in no score
@@ -141,20 +99,6 @@ type-param 5 sites
   generics/generics.go:55:51 false-to-true
 `
 
-// TestListExplainCoordinatesLandOnTheirOwnFixtureLines reads the fixture back
-// and checks that every coordinate in [wantSkipDetail] names an expression in
-// it.
-//
-// The literal pins the rows; this pins that they are true. The byte at the
-// column is what does it: a bound on the line's width would be satisfied by
-// every coordinate one to the right of where discovery meant, which is exactly
-// the drift a table of numbers cannot see on its own. A suppressed edit starts
-// at an operator or at the first byte of an expression, so whitespace there is
-// a coordinate that has stopped naming a site.
-//
-// It needs no toolchain and reads the fixture where it lies, so it stays in the
-// fast tier: this is the guard that would catch a coordinate change, and it
-// should not wait for the integration run to say so.
 func TestListExplainCoordinatesLandOnTheirOwnFixtureLines(t *testing.T) {
 	root := testkit.Fixture(t, "discovery")
 
@@ -175,9 +119,6 @@ func TestListExplainCoordinatesLandOnTheirOwnFixtureLines(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%q does not carry a line number: %v", row, err)
 		}
-		// A row is `path:line:col rule`, so the column runs to the space.
-		// Splitting rather than parsing the whole tail keeps this test about
-		// coordinates: the rule name is checked by the ledger that produced it.
 		column, rule, hasRule := strings.Cut(rest, " ")
 		if !hasRule || rule == "" {
 			t.Errorf("%q names no rule, so a reader cannot tell it from the row beside it", row)

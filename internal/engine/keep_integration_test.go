@@ -3,16 +3,6 @@
 
 //go:build integration
 
-// The toolchain-backed half of `--keep-temp`: what a real run leaves behind,
-// and what it does not change by having been asked to.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/engine/...
-//
-// The comment above is deliberately not a package doc — integration_test.go
-// carries this package's — which is what the blank line below is for.
-
 package engine
 
 import (
@@ -26,26 +16,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// TestADeadlineIsAFailureWorthKeepingAndDiagnosing settles what a run whose
-// context expired is.
-//
-// A cancellation and a deadline arrive at the same place and mean opposite
-// things. Somebody pressed Ctrl-C, or an embedder called cancel: nothing went
-// wrong, they asked for it, and leaving a module-sized directory behind every
-// time somebody changes their mind is what would make `on-failure` unusable. A
-// deadline expiring is the run failing to finish in the time it was given —
-// nobody decided it at the moment it happened, and it is exactly the failure
-// somebody needs the tree and the bundle for, because "it was too slow" is a
-// question about where the time went.
-//
-// So [Interrupted] asks for [context.Canceled] and nothing else, and the run's
-// status is decided by that same predicate rather than by a second one that
-// could come to answer differently.
-//
-// The deadline is made to land inside the baseline by holding the event stream
-// until it fires: the engine's sends block, so a consumer that stops draining
-// stops the run where it stands — which is after the snapshot and the scratch
-// directory exist and before anything has been measured.
 func TestADeadlineIsAFailureWorthKeepingAndDiagnosing(t *testing.T) {
 	t.Parallel()
 
@@ -85,13 +55,6 @@ func TestADeadlineIsAFailureWorthKeepingAndDiagnosing(t *testing.T) {
 	}
 }
 
-// TestACancelledRunIsStillAnInterruptionAndKeepsNothing is the other half of
-// the same decision, and the half that must not have moved.
-//
-// Narrowing [Interrupted] to [context.Canceled] is only safe if every real
-// cancellation still carries it — and each of them does, because internal/engine,
-// internal/validate and internal/execute all wrap the context's own cause rather
-// than inventing one.
 func TestACancelledRunIsStillAnInterruptionAndKeepsNothing(t *testing.T) {
 	t.Parallel()
 
@@ -118,17 +81,6 @@ func TestACancelledRunIsStillAnInterruptionAndKeepsNothing(t *testing.T) {
 	}
 }
 
-// TestKeepTempTakesNoPartInTheCacheKey is the invariant that would fail
-// silently.
-//
-// A keep is a decision about a directory on the way out of a run, taken after
-// every mutant has been measured. If it reached [cache.Context] it would give
-// every run that ever asked to keep its temporaries a context of its own and an
-// empty cache directory: correct results, no reuse, and nothing anywhere saying
-// why the run that was supposed to be fast was not. Two runs over one workspace
-// and one cache — the first keeping nothing, the second keeping everything —
-// settle it: if the second finds every outcome the first stored, the key did
-// not move.
 func TestKeepTempTakesNoPartInTheCacheKey(t *testing.T) {
 	t.Parallel()
 
@@ -162,14 +114,6 @@ func TestKeepTempTakesNoPartInTheCacheKey(t *testing.T) {
 	}
 }
 
-// TestAKeepingRunLeavesItsTemporariesAndAnOrdinaryOneDoesNot is the same two
-// runs seen from the temporary parent, which is where the price of the option
-// is paid.
-//
-// The directories a keep leaves behind are the whole cost of the feature — a
-// kept snapshot is a full copy of the module and nothing will ever remove it —
-// so "off by default, and off means gone" is the claim worth checking against a
-// real pipeline rather than against a hand-built pair of directories.
 func TestAKeepingRunLeavesItsTemporariesAndAnOrdinaryOneDoesNot(t *testing.T) {
 	t.Parallel()
 

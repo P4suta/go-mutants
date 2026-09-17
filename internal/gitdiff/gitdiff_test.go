@@ -17,31 +17,12 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// The tests in this file drive a real git against a repository they script into
-// a temporary directory, because every interesting thing about this package is
-// what git actually prints: which commit a merge base resolves to, how a hunk
-// header is spelled, what a missing upstream says. A fake git would be a second
-// implementation of the thing under test.
-//
-// They skip rather than fail when git is absent, and the skip goes through
-// [testkit.GitBinary] rather than through a bare lookup. `--changed` is the one
-// feature that needs a tool go-mutants does not ship, and a developer without
-// git installed should still be able to run the suite — but a *runner* without
-// git must fail the job rather than retire eighteen tests and report green,
-// which is what GO_MUTANTS_TEST_REQUIRE_TOOLS decides and what a bare
-// exec.LookPath cannot be told.
-
-// The repository's fixed identity. Nothing here is read from the machine: the
-// global and system configurations are pointed at files that do not exist, so a
-// developer's own `~/.gitconfig` — a signing key, a commit template, a
-// `diff.noprefix` — cannot change what these tests observe.
 const (
 	testAuthor    = "go-mutants tests"
 	testEmail     = "tests@go-mutants.invalid"
 	testTimestamp = "2026-02-18T09:15:00+00:00"
 )
 
-// A repo is one scripted git repository.
 type repo struct {
 	t      *testing.T
 	binary string
@@ -49,8 +30,6 @@ type repo struct {
 	env    []string
 }
 
-// newRepo initialises an empty repository in a temporary directory, or skips
-// the test when git cannot be found.
 func newRepo(t *testing.T) *repo {
 	t.Helper()
 	git := testkit.GitBinary(t)
@@ -74,14 +53,6 @@ func newRepo(t *testing.T) *repo {
 	return r
 }
 
-// git runs one command in the repository and returns its trimmed standard
-// output, failing the test if it does not succeed.
-//
-// It passes no setting that turns signing off: the repository has no
-// configuration file to carry signing, so it is off already, and asking git
-// to switch it off is what a signing-policy wrapper refuses — see
-// [testkit.GitInit] for the rule and internal/testkit's gate for what enforces
-// it.
 func (r *repo) git(args ...string) string {
 	r.t.Helper()
 	argv := append([]string{"-C", r.dir}, args...)
@@ -94,7 +65,6 @@ func (r *repo) git(args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// write creates or replaces a file, creating the directories above it.
 func (r *repo) write(rel, content string) {
 	r.t.Helper()
 	path := filepath.Join(r.dir, filepath.FromSlash(rel))
@@ -106,7 +76,6 @@ func (r *repo) write(rel, content string) {
 	}
 }
 
-// remove deletes a file from the working tree.
 func (r *repo) remove(rel string) {
 	r.t.Helper()
 	if err := os.Remove(filepath.Join(r.dir, filepath.FromSlash(rel))); err != nil {
@@ -114,7 +83,6 @@ func (r *repo) remove(rel string) {
 	}
 }
 
-// commit stages everything and commits it, returning the new commit's hash.
 func (r *repo) commit(message string) string {
 	r.t.Helper()
 	r.git("add", "--all")
@@ -122,7 +90,6 @@ func (r *repo) commit(message string) string {
 	return r.git("rev-parse", "HEAD")
 }
 
-// resolve runs the package against the repository, or a subdirectory of it.
 func (r *repo) resolve(sub, ref string) (gitdiff.Changed, error) {
 	r.t.Helper()
 	root := r.dir
@@ -136,16 +103,12 @@ func (r *repo) resolve(sub, ref string) (gitdiff.Changed, error) {
 	})
 }
 
-// The two fixture sources. Both are ordinary Go so that the line numbers in the
-// assertions can be counted by hand from the text.
 const (
 	alphaV1 = "package alpha\n\nfunc Add(a, b int) int {\n\treturn a + b\n}\n"
 	alphaV2 = "package alpha\n\nfunc Add(a, b int) int {\n\treturn a - b\n}\n"
 	betaSrc = "package beta\n\nfunc Ok() bool {\n\treturn true\n}\n"
 )
 
-// TestChangedLinesOfACommittedEdit is the ordinary case: one line rewritten and
-// one file added, both committed, diffed against the commit before them.
 func TestChangedLinesOfACommittedEdit(t *testing.T) {
 	t.Parallel()
 
@@ -164,7 +127,6 @@ func TestChangedLinesOfACommittedEdit(t *testing.T) {
 	if got := changed.Paths(); !slices.Equal(got, []string{"alpha.go", "beta.go"}) {
 		t.Fatalf("Paths() = %v, want alpha.go and beta.go", got)
 	}
-	// `return a + b` is the fourth line, and it is the only one that moved.
 	if got := changed.Lines("alpha.go"); !slices.Equal(got, []gitdiff.Range{{First: 4, Last: 4}}) {
 		t.Errorf("alpha.go = %v, want line 4 alone", got)
 	}
@@ -182,11 +144,6 @@ func TestChangedLinesOfACommittedEdit(t *testing.T) {
 	}
 }
 
-// TestUncommittedWorkCounts proves the diff is taken against the working tree.
-//
-// It is the case `--changed` is most often reached for: somebody has just
-// written something and wants to know whether their tests notice it being
-// broken, and they have not committed it yet.
 func TestUncommittedWorkCounts(t *testing.T) {
 	t.Parallel()
 
@@ -204,8 +161,6 @@ func TestUncommittedWorkCounts(t *testing.T) {
 	}
 }
 
-// TestDeletedFilesTouchNothing proves a removal contributes no changed lines:
-// there is nothing left in that file to mutate.
 func TestDeletedFilesTouchNothing(t *testing.T) {
 	t.Parallel()
 
@@ -224,13 +179,6 @@ func TestDeletedFilesTouchNothing(t *testing.T) {
 	}
 }
 
-// TestTheBaseIsTheForkPointRatherThanTheTip is the whole reason a merge base is
-// taken at all.
-//
-// The branch is diffed against the commit it left, so work pushed to the target
-// branch afterwards is somebody else's and does not select mutants here. Diffing
-// against the tip would make `--changed origin/main` mean "everything anybody
-// has changed this week" on a branch that is a few days old.
 func TestTheBaseIsTheForkPointRatherThanTheTip(t *testing.T) {
 	t.Parallel()
 
@@ -243,7 +191,6 @@ func TestTheBaseIsTheForkPointRatherThanTheTip(t *testing.T) {
 	r.write("alpha.go", alphaV2)
 	r.commit("mine")
 
-	// Somebody else's work, landed on the trunk after this branch was cut.
 	r.git("checkout", "--quiet", trunk)
 	r.write("theirs.go", betaSrc)
 	r.commit("theirs")
@@ -258,8 +205,6 @@ func TestTheBaseIsTheForkPointRatherThanTheTip(t *testing.T) {
 	}
 }
 
-// TestPathsAreRelativeToTheWorkspaceRoot covers a module inside a larger
-// repository, which is what a monorepo looks like.
 func TestPathsAreRelativeToTheWorkspaceRoot(t *testing.T) {
 	t.Parallel()
 
@@ -282,16 +227,6 @@ func TestPathsAreRelativeToTheWorkspaceRoot(t *testing.T) {
 	}
 }
 
-// upstreamSpellings is every way of asking for the upstream of HEAD: silence,
-// which is what [gitdiff.Options.Ref] holds when a caller named nothing, and
-// git's own notation, which is what internal/cli gives the bare `--changed`
-// flag and what a user writing it out longhand types.
-//
-// The two are one request and are tested as one, in the same bodies, because
-// the two drifting apart is the bug this list exists to prevent: a test of
-// silence alone once passed while every invocation the CLI could produce went
-// down the other path, recording `@{upstream}` in reports and making
-// [gitdiff.CodeNoUpstream] unreachable.
 var upstreamSpellings = []struct {
 	name string
 	ref  string
@@ -300,9 +235,6 @@ var upstreamSpellings = []struct {
 	{name: "longhand", ref: gitdiff.UpstreamRef},
 }
 
-// TestBareChangedFollowsTheUpstream proves that a `--changed` with no ref of its
-// own resolves the upstream branch, and records it by name rather than by the
-// notation that found it.
 func TestBareChangedFollowsTheUpstream(t *testing.T) {
 	t.Parallel()
 
@@ -334,19 +266,6 @@ func TestBareChangedFollowsTheUpstream(t *testing.T) {
 	}
 }
 
-// TestUntrackedFilesAreWhollyChanged is the file `git diff` cannot see: written,
-// never added, and every line of it new.
-//
-// Each case is asserted twice — once while the file is untracked and once after
-// it is committed — because the property is not "some range is recorded" but
-// that `git add` changes nothing about which mutants a run selects. A selection
-// that moved when somebody staged a file would measure a different thing on a
-// laptop than in CI.
-//
-// The two spellings of the same five lines are what makes the count git's own.
-// A final line with nothing after it is still a line — git says so, with `\ No
-// newline at end of file` — so a count that dropped it would take the last line
-// of every new file out of the selection.
 func TestUntrackedFilesAreWhollyChanged(t *testing.T) {
 	t.Parallel()
 
@@ -373,7 +292,6 @@ func TestUntrackedFilesAreWhollyChanged(t *testing.T) {
 			if got := untracked.Paths(); !slices.Equal(got, []string{"beta.go"}) {
 				t.Fatalf("Paths() = %v, want the untracked beta.go", got)
 			}
-			// betaSrc is five lines, and all five of them are new.
 			if got := untracked.Lines("beta.go"); !slices.Equal(got, []gitdiff.Range{{First: 1, Last: 5}}) {
 				t.Errorf("beta.go = %v, want the whole file", got)
 			}
@@ -390,12 +308,6 @@ func TestUntrackedFilesAreWhollyChanged(t *testing.T) {
 	}
 }
 
-// TestIgnoredAndEmptyUntrackedFilesTouchNothing covers the two untracked files
-// that are not work.
-//
-// An ignored file is one the repository's owner has said is not source, and a
-// file with no lines has nothing in it to mutate — so neither belongs in a
-// changed set, and an empty range list is never stored.
 func TestIgnoredAndEmptyUntrackedFilesTouchNothing(t *testing.T) {
 	t.Parallel()
 
@@ -415,13 +327,6 @@ func TestIgnoredAndEmptyUntrackedFilesTouchNothing(t *testing.T) {
 	}
 }
 
-// TestUntrackedPathsAreRelativeToTheWorkspaceRoot proves the untracked half of
-// the set is mapped exactly as the diff's half is.
-//
-// A module inside a larger repository asks git for its own subtree and speaks
-// module-relative paths, so an untracked file above the module is not this
-// run's business and one inside it has to arrive under the name the catalogue
-// uses.
 func TestUntrackedPathsAreRelativeToTheWorkspaceRoot(t *testing.T) {
 	t.Parallel()
 
@@ -440,9 +345,6 @@ func TestUntrackedPathsAreRelativeToTheWorkspaceRoot(t *testing.T) {
 	}
 }
 
-// TestFailures covers every way resolving can fail, and pins the code each one
-// carries: they are what internal/cli turns into an exit status and what a user
-// searches for.
 func TestFailures(t *testing.T) {
 	t.Parallel()
 
@@ -496,9 +398,6 @@ func TestFailures(t *testing.T) {
 			says: "needs git on PATH",
 		},
 	}
-	// The branch with nothing to follow, generated from [upstreamSpellings]
-	// rather than written out, so that a way of asking for the upstream can
-	// never be covered here for one spelling and forgotten for the other.
 	for _, spelling := range upstreamSpellings {
 		cases = append(cases, failure{
 			name: "with no upstream, asked for by " + spelling.name,
@@ -536,9 +435,6 @@ func TestFailures(t *testing.T) {
 	}
 }
 
-// TestCancellationIsNotABrokenGit proves a cancelled context comes back as a
-// cancellation rather than as a missing tool, so that Ctrl-C during the
-// selection stage exits 130 like every other interruption.
 func TestCancellationIsNotABrokenGit(t *testing.T) {
 	t.Parallel()
 
@@ -555,8 +451,6 @@ func TestCancellationIsNotABrokenGit(t *testing.T) {
 	if !strings.Contains(err.Error(), "interrupted") {
 		t.Errorf("the failure does not report an interruption: %v", err)
 	}
-	// The sentinel stays reachable, which is what internal/engine and
-	// internal/cli recognise a cancelled run by.
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("context.Canceled is not reachable through the failure: %v", err)
 	}

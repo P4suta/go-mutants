@@ -13,10 +13,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/cache"
 )
 
-// TestCodesAreCompleteUniqueAndInThisPackagesBlock is the guard against a code
-// that two conditions share or that belongs to somebody else. The numbers are
-// part of the command line contract — CI configurations and bug reports quote
-// them — so they are checked rather than trusted.
 func TestCodesAreCompleteUniqueAndInThisPackagesBlock(t *testing.T) {
 	t.Parallel()
 
@@ -43,8 +39,6 @@ func TestCodesAreCompleteUniqueAndInThisPackagesBlock(t *testing.T) {
 	}
 }
 
-// TestAnErrorRendersItsCodeAndKeepsItsCause: one greppable line, and the cause
-// still reachable through errors.Is.
 func TestAnErrorRendersItsCodeAndKeepsItsCause(t *testing.T) {
 	t.Parallel()
 

@@ -110,12 +110,6 @@ run-report v1 can rely on.
 Exits 0 when the document is valid, and 2 with the first violation and its JSON
 pointer when it is not.`
 
-// newReportCommand builds the `report` command tree.
-//
-// The parent has no behaviour of its own beyond printing help, exactly as the
-// root command does: somebody typing `go-mutants report` to find out what it
-// can do has done nothing wrong, and a non-zero status there breaks a shell
-// script that tests the tool is present.
 func newReportCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "report",
@@ -133,7 +127,6 @@ func newReportCommand() *cobra.Command {
 	return cmd
 }
 
-// newReportListCommand builds `report list`.
 func newReportListCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
@@ -144,7 +137,6 @@ func newReportListCommand() *cobra.Command {
 	}
 }
 
-// runReportList is `report list`'s body.
 func runReportList(cmd *cobra.Command, _ []string) error {
 	found, err := readHistory()
 	if err != nil {
@@ -175,12 +167,10 @@ func runReportList(cmd *cobra.Command, _ []string) error {
 	return emit(cmd.OutOrStdout(), b.String())
 }
 
-// latestOptions holds the flag destinations for one `report latest`.
 type latestOptions struct {
 	json bool
 }
 
-// newReportLatestCommand builds `report latest`.
 func newReportLatestCommand() *cobra.Command {
 	o := &latestOptions{}
 	cmd := &cobra.Command{
@@ -194,7 +184,6 @@ func newReportLatestCommand() *cobra.Command {
 	return cmd
 }
 
-// execute is `report latest`'s body.
 func (o *latestOptions) execute(cmd *cobra.Command, _ []string) error {
 	found, err := readHistory()
 	if err != nil {
@@ -230,7 +219,6 @@ func (o *latestOptions) execute(cmd *cobra.Command, _ []string) error {
 	return emit(cmd.OutOrStdout(), b.String())
 }
 
-// newReportCleanCommand builds `report clean`.
 func newReportCleanCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "clean",
@@ -241,13 +229,6 @@ func newReportCleanCommand() *cobra.Command {
 	}
 }
 
-// runReportClean is `report clean`'s body.
-//
-// What was deleted is reported even when the sweep stopped part way through,
-// and then the failure is returned — the shape `cache gc` uses, for the same
-// reason: deleting is the whole of what this command does, so one that could
-// not delete must not exit 0, and one that removed two histories before hitting
-// a locked third should still say so.
 func runReportClean(cmd *cobra.Command, _ []string) error {
 	found, err := readHistory()
 	if err != nil {
@@ -276,18 +257,10 @@ func runReportClean(cmd *cobra.Command, _ []string) error {
 	if documents == 0 {
 		fmt.Fprintf(&b, "nothing to remove: no run is recorded for %s\n", found.module)
 	} else {
-		// The count is of documents removed rather than of runs listed, and the
-		// two differ by exactly the unreadable ones: a truncated file in a
-		// directory this module owns is go-mutants' own leftover, and leaving it
-		// behind would mean `clean` never finishing the job.
 		fmt.Fprintf(&b, "removed %s (%s) of %s from %s\n",
 			countNoun(documents, "stored document"), formatBytes(removedBytes), found.module,
 			countNoun(directories, "workspace directory"))
 	}
-	// The documents that were *not* deleted, and why. A clean that says
-	// "nothing to remove" while history sits on the disk would be the worst
-	// answer this command can give, so the directories it could not attribute
-	// are named here rather than only by `report list`.
 	writeDamaged(&b, found.orphaned, leftAloneNote)
 	writeHistorySkipped(&b, found.skipped)
 	if err = emit(cmd.OutOrStdout(), b.String()); err != nil && sweepErr == nil {
@@ -296,56 +269,22 @@ func runReportClean(cmd *cobra.Command, _ []string) error {
 	return sweepErr
 }
 
-// The column widths of the `report list` table.
-//
-// They are constants rather than measurements of the data, exactly as the run
-// console and the mutant listing are: every value in the first three columns
-// has a fixed shape — a run id is a stamp and four hex digits, a moment is RFC
-// 3339 to the second, a score is at most "100.0%" — so a listing of one run and
-// a listing of a hundred line up with each other, and two listings a week apart
-// can be diffed.
 const (
 	runIDWidth    = len("20260818T101500Z-3f2a")
 	finishedWidth = len("2026-08-18T10:15:00Z")
 	scoreWidth    = len("100.0%")
 )
 
-// A history is one module's run history, gathered out of the store.
 type history struct {
-	// root is the store that was read.
-	root string
-	// module is the module path the runs were matched by.
-	module string
-	// workspaces are the workspace directories holding this module's runs.
+	root       string
+	module     string
 	workspaces []report.StoredWorkspace
-	// runs are every run of this module, newest first, across all of them.
-	runs []report.StoredRun
-	// damaged are the unreadable documents in this module's own directories.
-	// They are go-mutants' own leftovers — a run killed half way through a
-	// write — and `report clean` removes them with the runs beside them.
-	damaged []report.Damaged
-	// orphaned are the unreadable documents in directories that hold no run
-	// anybody could attribute. Nothing there can prove whose they are, so they
-	// are reported and never deleted.
-	orphaned []report.Damaged
-	// skipped are the directories in the store that are not go-mutants'.
-	skipped []report.Skipped
+	runs       []report.StoredRun
+	damaged    []report.Damaged
+	orphaned   []report.Damaged
+	skipped    []report.Skipped
 }
 
-// readHistory reads the store and keeps what belongs to the module in this
-// directory.
-//
-// The module path is what joins one project's runs back together. A history
-// directory is named after a digest of the workspace's contents — so an edit
-// between two runs files them apart, by design, since a workspace digest is
-// what makes a mutant id mean something — and the module path in each document
-// is the only thing in the store that says which project a run was about.
-//
-// A document that cannot be read is attributed to nobody, so a directory whose
-// documents are all unreadable is reported and never cleaned: nothing in it can
-// prove whose it is. An unreadable file in a directory that also holds this
-// module's runs is a different thing — go-mutants' own leftover from an
-// interrupted write — and goes with them.
 func readHistory() (history, error) {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -382,11 +321,6 @@ func readHistory() (history, error) {
 			}
 		}
 		if len(mine) == 0 {
-			// A directory whose documents could not be read at all belongs to
-			// nobody this command can name. Its unreadable files are still
-			// reported — an unreadable history is worth knowing about wherever
-			// it is, and silence would make it indistinguishable from an empty
-			// store — but nothing in it is ever deleted.
 			if len(workspace.Runs) == 0 {
 				found.orphaned = append(found.orphaned, workspace.Damaged...)
 			}
@@ -397,30 +331,15 @@ func readHistory() (history, error) {
 		found.workspaces = append(found.workspaces, workspace)
 		found.runs = append(found.runs, mine...)
 	}
-	// The store's own comparator, not a copy of it: the runs being ordered here
-	// come from several workspace directories rather than one, and that is
-	// exactly the case where a second implementation of "newest" could disagree
-	// with the one `report list` inside a directory used. See [report.NewestFirst].
 	slices.SortFunc(found.runs, report.NewestFirst)
 	return found, nil
 }
 
-// A project is what "this directory's history" means: one module, or the set of
-// modules a `go.work` joins.
-//
-// The two are different projects to the history store, and deliberately so: a
-// mutant measured in a workspace and the same mutant measured alone have
-// different identities, so a listing that mixed the two would be offering runs
-// whose ids do not mean the same thing. See ADR 0012.
 type project struct {
-	// module is the module path, for a directory that is one module.
-	module string
-	// modules are the module paths a `go.work` joins, in `use` order, and
-	// empty for a directory that is one module.
+	module  string
 	modules []string
 }
 
-// projectAt reads what the directory is: a module, or a workspace of them.
 func projectAt(dir string) (project, error) {
 	workspace, err := discover.DetectWorkspace(dir)
 	if err != nil {
@@ -440,7 +359,6 @@ func projectAt(dir string) (project, error) {
 	return project{module: module}, nil
 }
 
-// name is what a message calls this project.
 func (p project) name() string {
 	if p.module != "" {
 		return p.module
@@ -448,12 +366,6 @@ func (p project) name() string {
 	return "the workspace of " + strings.Join(p.modules, ", ")
 }
 
-// holds reports whether a stored run measured this project.
-//
-// A workspace run names its modules and no module path; a single-module run
-// names a module path and no modules. So the two never match each other, which
-// is the answer: a run of `app` alone is not a run of the workspace `app`
-// belongs to, and its mutant ids say so.
 func (p project) holds(run report.StoredRun) bool {
 	if p.module != "" {
 		return run.ModulePath == p.module
@@ -461,9 +373,6 @@ func (p project) holds(run report.StoredRun) bool {
 	return slices.Equal(run.Modules, p.modules)
 }
 
-// formatScore renders a run's score for a column, and says so when there is
-// none. A run that measured nothing has no percentage, and both plausible
-// sentinels are lies; see [report.Summary].
 func formatScore(run report.StoredRun) string {
 	score, ok := run.Score()
 	if !ok {
@@ -472,15 +381,6 @@ func formatScore(run report.StoredRun) string {
 	return strconv.FormatFloat(score, 'f', 1, 64) + "%"
 }
 
-// writeDamaged names the stored documents that could not be read, and says
-// nothing when they all could.
-//
-// The note is what the caller adds to the headline: `report clean` says that
-// the directories holding these were left alone, because "nothing to remove"
-// while history sits on the disk would be the worst answer that command can
-// give. `report list` has nothing to add, since a listing removes nothing. The
-// rows themselves are the same either way, and they are the part that must not
-// drift between the two commands: a user comparing them is comparing paths.
 func writeDamaged(b *strings.Builder, damaged []report.Damaged, note string) {
 	if len(damaged) == 0 {
 		return
@@ -491,12 +391,8 @@ func writeDamaged(b *strings.Builder, damaged []report.Damaged, note string) {
 	}
 }
 
-// leftAloneNote is `report clean`'s addition to the headline [writeDamaged]
-// prints. See there.
 const leftAloneNote = ", so the directories holding them were left alone"
 
-// writeHistorySkipped lists the directories in the store the walk would not
-// look inside, and says nothing when there were none.
 func writeHistorySkipped(b *strings.Builder, skipped []report.Skipped) {
 	if len(skipped) == 0 {
 		return
@@ -507,12 +403,10 @@ func writeHistorySkipped(b *strings.Builder, skipped []report.Skipped) {
 	}
 }
 
-// mergeOptions holds the flag destinations for one `report merge`.
 type mergeOptions struct {
 	output string
 }
 
-// newReportMergeCommand builds `report merge`.
 func newReportMergeCommand() *cobra.Command {
 	o := &mergeOptions{}
 	cmd := &cobra.Command{
@@ -527,14 +421,10 @@ func newReportMergeCommand() *cobra.Command {
 	return cmd
 }
 
-// execute is `report merge`'s body.
 func (o *mergeOptions) execute(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return usagef("report merge takes the shard reports to merge, as in `go-mutants report merge shard-1.json shard-2.json`")
 	}
-	// Minted here rather than inside internal/report: a run id is a run's
-	// identity, and that package files documents rather than starting anything.
-	// The merged document is a new artefact and deserves its own.
 	runID := engine.NewRunID(time.Now())
 	merged, documentType, err := mergeDocuments(args, runID)
 	if err != nil {
@@ -544,9 +434,6 @@ func (o *mergeOptions) execute(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Checked before it is written, not after. A merged document is what a CI
-	// job publishes, and publishing one that does not satisfy the schema
-	// go-mutants itself defines would be worse than refusing to publish at all.
 	if err = schemas.Validate(documentType, data); err != nil {
 		return err
 	}
@@ -558,14 +445,11 @@ func (o *mergeOptions) execute(cmd *cobra.Command, args []string) error {
 	if err = writeMergedFile(o.output, data); err != nil {
 		return err
 	}
-	// To standard error, so that the path is visible when somebody is watching
-	// and out of the way of anything reading standard output.
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "merged %s into %s\n",
 		countNoun(len(args), "shard report"), o.output)
 	return nil
 }
 
-// newReportValidateCommand builds `report validate`.
 func newReportValidateCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "validate FILE",
@@ -577,7 +461,6 @@ func newReportValidateCommand() *cobra.Command {
 	return cmd
 }
 
-// runReportValidate is `report validate`'s body.
 func runReportValidate(cmd *cobra.Command, args []string) error {
 	if len(args) != 1 {
 		return usagef("report validate takes exactly one file, as in `go-mutants report validate reports/mutation/mutation.json` (got %d)", len(args))
@@ -587,12 +470,6 @@ func runReportValidate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	// The document's own discriminator decides which schema it is checked
-	// against. A run over a `go.work` publishes a workspace report rather than
-	// a run report, and a command that assumed one kind would tell the user
-	// their valid document is invalid -- naming the fields of the *other* type
-	// as the ones it is missing, which is the least useful true sentence
-	// available.
 	documentType, err := report.DocumentTypeOf(data)
 	if err != nil {
 		return err
@@ -600,10 +477,6 @@ func runReportValidate(cmd *cobra.Command, args []string) error {
 	if err = schemas.Validate(documentType, data); err != nil {
 		return err
 	}
-	// Decoded as well as validated, because the two catch different things: the
-	// schema is what a consumer relies on, and this build's own reader is what
-	// `report merge` will use on the same file. A document that satisfies one
-	// and not the other is worth knowing about now rather than at the merge.
 	summary, err := validatedSummary(documentType, data)
 	if err != nil {
 		return err
@@ -612,7 +485,6 @@ func runReportValidate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// validatedSummary decodes a document of either kind and says what it is.
 func validatedSummary(documentType string, data []byte) (string, error) {
 	if documentType == report.WorkspaceDocumentType {
 		w, err := report.ParseWorkspace(data)
@@ -635,19 +507,8 @@ func validatedSummary(documentType string, data []byte) (string, error) {
 		r.DocumentType, r.SchemaVersion, r.RunID, countNoun(len(r.Mutants), "mutant")), nil
 }
 
-// A marshalable is a document that can be written back out, which is the only
-// thing `report merge` needs of the two kinds it merges.
 type marshalable interface{ Marshal() ([]byte, error) }
 
-// mergeDocuments merges the shard documents at the given paths, whichever kind
-// they are, and says which kind it produced.
-//
-// A workspace run's shards are workspace documents, each holding its share of
-// every module — so merging them is merging each module's reports and putting
-// the results back in the same order, which is what [report.MergeWorkspaces]
-// does. The kind is read from the first document and every other one has to
-// agree: a run report and a workspace report are not shards of one run, and a
-// merge that took one for the other would be describing two runs.
 func mergeDocuments(paths []string, runID string) (marshalable, string, error) {
 	documentType, err := documentTypeAt(paths[0])
 	if err != nil {
@@ -680,7 +541,6 @@ func mergeDocuments(paths []string, runID string) (marshalable, string, error) {
 	return merged, schemas.RunReportV1, mergeErr
 }
 
-// documentTypeAt is what the document at a path says it is.
 func documentTypeAt(path string) (string, error) {
 	data, err := readFile(path)
 	if err != nil {
@@ -693,8 +553,6 @@ func documentTypeAt(path string) (string, error) {
 	return documentType, nil
 }
 
-// readWorkspaceReport is [readReport] for the other document type, with the
-// same order: the schema first, then this build's own reader.
 func readWorkspaceReport(path string) (*report.WorkspaceReport, error) {
 	data, err := readFile(path)
 	if err != nil {
@@ -710,20 +568,10 @@ func readWorkspaceReport(path string) (*report.WorkspaceReport, error) {
 	return w, nil
 }
 
-// writeMergedFile writes the merged document atomically, the way the history
-// store writes its own: a crash leaves either the previous file or the new one
-// and never a correctly named file full of nothing.
 func writeMergedFile(path string, data []byte) error {
 	return report.WriteBytes(path, data)
 }
 
-// readReport reads one document and decodes it, validating it against the
-// published schema on the way through.
-//
-// The schema check comes first, and it is what makes the decoder's job small: a
-// document that has been proven to have the right shape can be read into this
-// build's own types without every field needing a second opinion about whether
-// it is plausible.
 func readReport(path string) (*report.Report, error) {
 	data, err := readFile(path)
 	if err != nil {
@@ -739,20 +587,6 @@ func readReport(path string) (*report.Report, error) {
 	return r, nil
 }
 
-// notAReport names the file a failure was about, and what the caller wanted to
-// do with it.
-//
-// The cause keeps its own code — this package does not re-code the failures of
-// the packages it drives — and gains one of its own in front, because `report
-// merge` is handed several files and "which one" is the first thing its user
-// needs to know. `report validate` is given exactly one and reports the failure
-// unwrapped, since the path is the command line the user has just typed.
-//
-// The verb is the caller's because the refusals are not the same statement. A
-// document `report merge` will not touch may be a perfectly good report of the
-// wrong shard set, while one `explain` cannot read is not a report at all — and
-// telling somebody who typed `explain` that their file "cannot be merged" sends
-// them looking for a merge they never asked for.
 func notAReport(path, action string, cause error) error {
 	return &Error{
 		Code:    CodeInvalidReportDocument,
@@ -761,11 +595,6 @@ func notAReport(path, action string, cause error) error {
 	}
 }
 
-// readFile reads a document a user named on the command line.
-//
-// A missing or unreadable file is a usage error rather than an infrastructure
-// one: the mistake is in the command line, and the remedy is to name a
-// different path.
 func readFile(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

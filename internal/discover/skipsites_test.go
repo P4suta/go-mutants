@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// The coordinates half of the skip record. [Skip] says how much of a file was
-// passed over and why; [SkipSite] says which of it, and these are the tests
-// that hold the two together.
 package discover
 
 import (
@@ -22,12 +19,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/gocmd"
 )
 
-// wholeMainmod is the one discovery of testdata/mainmod with nothing selected.
-//
-// Four tests below ask exactly that question, and a loader pass over the whole
-// fixture module is the most expensive thing in this package's suite: running
-// it once took the package from twenty seconds back to thirteen. The result is
-// read and never written, which is what makes sharing it safe.
 var wholeMainmod = sync.OnceValues(func() (Result, error) {
 	located, err := gocmd.Locate(gocmd.Options{})
 	if err != nil {
@@ -40,11 +31,6 @@ var wholeMainmod = sync.OnceValues(func() (Result, error) {
 	return Discover(context.Background(), Options{SnapshotRoot: root, Toolchain: located})
 })
 
-// wholeFixture returns that shared pass.
-//
-// [toolchain] is called for its skip and not for its answer: a machine with no
-// Go on it cannot load anything, and this has to report that the same way
-// [discoverFixture] does rather than as a discovery failure.
 func wholeFixture(t *testing.T) Result {
 	t.Helper()
 	toolchain(t)
@@ -55,26 +41,8 @@ func wholeFixture(t *testing.T) Result {
 	return result
 }
 
-// siteSnippetWidth is how many bytes of the fixture a rendered site quotes.
-//
-// Enough to reach past the operator or the literal a coordinate points at, and
-// short enough that a table of them stays one line each. It is a fixed width
-// rather than the length of whatever was expected, so that the quoted text is a
-// reading of the file and not a restatement of the expectation.
 const siteSnippetWidth = 6
 
-// describeSite renders one site as `path:line:col reason "text"`, with the text
-// read out of the fixture at the coordinate the site names.
-//
-// Quoting the source is the whole point. A table of bare coordinates agrees
-// with any consistent miscount — `Column+1` everywhere passes it, and passes a
-// bounds check too, because a column one to the right of an operator is still a
-// column on the line. The six bytes found there are what tie the number to the
-// file: they change the moment the coordinate stops naming the expression.
-//
-// A coordinate that is out of range renders as a sentence rather than panicking
-// or returning an error, so that a table comparison reports it as the row it is
-// instead of ending the test somewhere else.
 func describeSite(t *testing.T, root string, site SkipSite) string {
 	t.Helper()
 	where := site.Path + ":" + strconv.Itoa(site.Line) + ":" + strconv.Itoa(site.Column) +
@@ -104,7 +72,6 @@ func describeSite(t *testing.T, root string, site SkipSite) string {
 	return where + " " + strconv.Quote(rest)
 }
 
-// describeSitesIn renders every site of one file.
 func describeSitesIn(t *testing.T, root string, sites []SkipSite, path string) []string {
 	t.Helper()
 	var out []string
@@ -116,18 +83,6 @@ func describeSitesIn(t *testing.T, root string, sites []SkipSite, path string) [
 	return out
 }
 
-// TestSuppressedSitesCarryTheirCoordinates is the whole point of the record: a
-// user reading "four const-decl sites in this file" can now be told which four.
-//
-// The four packages named here are the ones whose coordinates can be read
-// straight off the fixture with an eye, which is what makes the table an
-// independent statement rather than a transcription of whatever the walk
-// happened to produce. Each row carries the bytes the fixture holds at the
-// coordinate, so the columns are pinned against the source rather than against
-// this implementation's arithmetic. forms/forms.go contributes twelve more
-// refusals and is left to TestSkipSitesSumToTheAggregateCounts, because its
-// sites are the ones the guard forms decline rather than ones a reader can
-// point at.
 func TestSuppressedSitesCarryTheirCoordinates(t *testing.T) {
 	root := fixture(t, "mainmod")
 	result := wholeFixture(t)
@@ -137,12 +92,6 @@ func TestSuppressedSitesCarryTheirCoordinates(t *testing.T) {
 		sites []string
 	}{
 		{
-			// Every suppressed context of the fixture package written for
-			// them, in source order: the const block and the two lone const
-			// declarations, both expressions hiding in one array length, the
-			// three package-level initialisers — the last of which is a
-			// function literal holding a comparison and a return, so it is
-			// two sites on one line — and the four case labels.
 			path: "suppressed/suppressed.go",
 			sites: []string{
 				`suppressed/suppressed.go:18:12 const-decl true-to-false "true"`,
@@ -152,21 +101,12 @@ func TestSuppressedSitesCarryTheirCoordinates(t *testing.T) {
 				`suppressed/suppressed.go:33:33 array-length true-to-false "true})"`,
 				`suppressed/suppressed.go:36:19 package-var-init lt-to-le "< 5"`,
 				`suppressed/suppressed.go:39:15 package-var-init true-to-false "true"`,
-				// One coordinate and one rule, where both return replacements
-				// could have stood: `1 == 2` is a constant the checker folded
-				// to false, so `return-false` is not a mutation to decline --
-				// it is the program itself -- and the refusal is made before
-				// the suppression is recorded. A site that is not an edit is
-				// not a declined edit either.
 				`suppressed/suppressed.go:50:33 package-var-init return-true "1 == 2"`,
 				`suppressed/suppressed.go:50:35 package-var-init eq-to-neq "== 2 }"`,
 				`suppressed/suppressed.go:58:18 const-decl gt-to-ge "> 2"`,
 			},
 		},
 		{
-			// The generic function's constraint, the single explicit type
-			// argument, the generic type's constraint, and both members of the
-			// type argument list.
 			path: "generics/generics.go",
 			sites: []string{
 				`generics/generics.go:29:27 type-param true-to-false "true})"`,
@@ -177,22 +117,10 @@ func TestSuppressedSitesCarryTheirCoordinates(t *testing.T) {
 			},
 		},
 		{
-			// The condition of a named boolean type, which three rules want and
-			// which every one of them used to be refused at. Form C' converts
-			// the selector back to the named type, so the file now records
-			// nothing at all -- and the empty list here is the assertion,
-			// because a refusal that came back would otherwise show up only as
-			// three mutants quietly missing.
 			path:  "negate/negate.go",
 			sites: nil,
 		},
 		{
-			// The one refusal left in the corpus, and the coordinate is the
-			// edit's own. Arithmetic over an unexported numeric type from
-			// another package has that type, a `switch` tag has no statement
-			// around it for any statement form to stand in, and it is not
-			// boolean — so the search walks outward, finds nothing it can
-			// name, and declines at the operator itself.
 			path:  "unnameable/unnameable.go",
 			sites: []string{`unnameable/unnameable.go:42:23 unnameable-decl-type add-to-sub "+ hidd"`},
 		},
@@ -201,14 +129,6 @@ func TestSuppressedSitesCarryTheirCoordinates(t *testing.T) {
 	}
 }
 
-// TestEverySuppressedSitePointsIntoItsFile is the check the table above cannot
-// make for the sites nobody can read off the source: forms/forms.go's twelve
-// refusals, which are the shapes the guard forms decline.
-//
-// It is deliberately weaker than the table and deliberately not nothing. A
-// coordinate is only worth printing if it names a place that exists, and the
-// place a suppressed edit sits at is the first byte of an expression or an
-// operator — never whitespace, and never past the end of the line.
 func TestEverySuppressedSitePointsIntoItsFile(t *testing.T) {
 	root := fixture(t, "mainmod")
 	result := wholeFixture(t)
@@ -243,13 +163,6 @@ func TestEverySuppressedSitePointsIntoItsFile(t *testing.T) {
 	}
 }
 
-// linedModule is a module whose suppressed const and live candidate both sit
-// under a `//line` directive claiming to be somewhere else entirely.
-//
-// The claimed line is far past the end of the real file, so an adjusted
-// coordinate cannot be mistaken for a real one — and the directive is above
-// both the const declaration and the function, so the skip site and the
-// candidate are the two halves of one question.
 var linedModule = map[string]string{
 	"go.mod": "module example.com/lined\n\ngo 1.26\n",
 	"lined.go": "// SPDX-FileCopyrightText: 2026 go-mutants contributors\n" +
@@ -268,30 +181,11 @@ var linedModule = map[string]string{
 		"}\n",
 }
 
-// The coordinates of linedModule, counted off the fixture above: the constant's
-// literal is on the ninth line of the real file and the comparison on the
-// thirteenth. `//line fake.go:100` on line 7 renumbers everything under it, so
-// the adjusted answers are 101 and 105 — numbers this file has no lines for.
 const (
 	linedSkipLine      = 9
 	linedCandidateLine = 13
 )
 
-// TestSkipSitesIgnoreLineDirectivesExactlyAsCandidatesDo pins the one policy
-// the coordinates have.
-//
-// A `//line` directive relocates a compiler diagnostic on purpose: generated
-// code says where its own input was, so that a `go build` failure points at the
-// template rather than at the output. A skip site is not a diagnostic. It is a
-// place in the snapshot's own copy of the file, printed beside mutants whose
-// coordinates are that file's, and `list --explain` output where the skips had
-// been renumbered and the mutants had not would be two halves of one listing
-// disagreeing about where they are.
-//
-// Both halves are asserted together for that reason, and the directive is
-// proved live first: a test that only checked the real line numbers would pass
-// just as well against a parser that had ignored the directive, which is the
-// one way this could be green while saying nothing.
 func TestSkipSitesIgnoreLineDirectivesExactlyAsCandidatesDo(t *testing.T) {
 	root := writeModule(t, linedModule)
 	assertLineDirectiveMoves(t, filepath.Join(root, "lined.go"))
@@ -313,13 +207,6 @@ func TestSkipSitesIgnoreLineDirectivesExactlyAsCandidatesDo(t *testing.T) {
 	}
 }
 
-// assertLineDirectiveMoves proves the fixture's directive is one a Go parser
-// acts on, by asking go/parser for both readings of the same position.
-//
-// Without this the test above would be satisfied by a toolchain that had
-// stopped honouring `//line` at all — and by the mutation it exists to catch,
-// since an adjusted position and an unadjusted one are the same number when
-// nothing adjusts them.
 func assertLineDirectiveMoves(t *testing.T, path string) {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -349,8 +236,6 @@ func assertLineDirectiveMoves(t *testing.T, path string) {
 	}
 }
 
-// summarizeSites renders sites without their columns, for the cases where the
-// line is the whole of what is being said.
 func summarizeSites(sites []SkipSite) []string {
 	out := make([]string, 0, len(sites))
 	for _, s := range sites {
@@ -359,12 +244,6 @@ func summarizeSites(sites []SkipSite) []string {
 	return out
 }
 
-// TestWholeFileSkipsCarryLineZero pins the other half of the record.
-//
-// A generated file, a cgo package's file and an excluded file are never opened,
-// so there is no site in them to point at and inventing one — line 1, say —
-// would be a coordinate that reads as a fact. Zero is the answer, and
-// `list --explain` prints such a row as the bare path.
 func TestWholeFileSkipsCarryLineZero(t *testing.T) {
 	result := discoverFixture(t, "mainmod", Options{
 		Exclude: patterns(t, "legacy/**"),
@@ -393,16 +272,6 @@ func TestWholeFileSkipsCarryLineZero(t *testing.T) {
 	}
 }
 
-// TestSkipSitesSumToTheAggregateCounts is the invariant the report rests on.
-//
-// [Result.Skips] is what the catalogue document and the run report carry, and
-// this phase must not have changed it: the sites are a second view of the same
-// events, so grouping them by file and reason has to reproduce the aggregate
-// exactly — not approximately, and not with the whole-file rows left out.
-//
-// It runs over every selection the fixture module has a distinct answer for,
-// because the two records are built at different call sites and a reason that
-// is only reachable through one selection is exactly where they would drift.
 func TestSkipSitesSumToTheAggregateCounts(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -435,13 +304,6 @@ func TestSkipSitesSumToTheAggregateCounts(t *testing.T) {
 	}
 }
 
-// TestSkipSitesAreOrderedByPathLineColumnAndReason keeps the record diffable.
-//
-// Two discoveries over the same bytes produce identical results field for
-// field, and a slice built by appending as a walk goes would be in whatever
-// order the walk visited — which is stable today and is not a promise the
-// package makes. The order is sorted for the same reason the candidates and the
-// skips are: `list --explain` is output people diff between two runs.
 func TestSkipSitesAreOrderedByPathLineColumnAndReason(t *testing.T) {
 	result := wholeFixture(t)
 	for i := 1; i < len(result.SkipSites); i++ {

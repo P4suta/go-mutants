@@ -11,16 +11,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/config"
 )
 
-// TestTestScopeReadsGoTestOverPatternsAndNothingElse pins the rule two
-// optimisations switch on.
-//
-// It is not a preference and there is nothing to configure. Recognising a
-// command buys the run two things it cannot take back — the test binaries are
-// built for the named packages only, and coverage-guided selection is on — and
-// both rest on go-mutants being able to state in full what the command does. So
-// the table is mostly refusals: every row that is not `go`, then `test`, then
-// package patterns is a command whose meaning go-mutants has not been taught,
-// and the safe answer for one of those is the slow one.
 func TestTestScopeReadsGoTestOverPatternsAndNothingElse(t *testing.T) {
 	t.Parallel()
 
@@ -31,8 +21,6 @@ func TestTestScopeReadsGoTestOverPatternsAndNothingElse(t *testing.T) {
 	}{
 		{name: "the built-in default", command: config.DefaultTestCommand(), want: []string{"./..."}},
 		{
-			// The same argv written out by hand, which is what a project that
-			// pins `test.command` in its configuration file most often has.
 			name:    "the default spelled out",
 			command: []string{"go", "test", "./..."},
 			want:    []string{"./..."},
@@ -54,24 +42,14 @@ func TestTestScopeReadsGoTestOverPatternsAndNothingElse(t *testing.T) {
 		},
 		{name: "the current directory", command: []string{"go", "test", "."}, want: []string{"."}},
 		{
-			// The `..` rows below are refused by reading path elements, not by
-			// looking for two dots anywhere in the string: the wildcard is three
-			// dots, and a directory may legitimately be named with a leading one.
-			// This row and every `./...` above are what hold the two apart.
 			name:    "a wildcard under a dot directory",
 			command: []string{"go", "test", "./.config/..."},
 			want:    []string{"./.config/..."},
 		},
 
-		// Every refusal below is one shape, and each is here because it is a
-		// shape somebody's `test.command` really has.
 		{name: "one extra flag", command: []string{"go", "test", "-count=1", "./..."}},
 		{name: "a flag after the patterns", command: []string{"go", "test", "./...", "-race"}},
 		{
-			// The dangerous one, and the reason this reader has no shortlist of
-			// harmless flags: `-run` makes the command a fraction of the suite,
-			// and coverage attributed to the whole of it would skip mutants a
-			// test does cover.
 			name:    "a run filter",
 			command: []string{"go", "test", "-run", "TestFast", "./..."},
 		},
@@ -81,36 +59,21 @@ func TestTestScopeReadsGoTestOverPatternsAndNothingElse(t *testing.T) {
 		{name: "a wrapper that ends in go test", command: []string{"mise", "exec", "--", "go", "test", "./..."}},
 		{name: "a subcommand that is not test", command: []string{"go", "run", "./cmd/tests"}},
 		{
-			// An import path is a package pattern to the go command and is
-			// deliberately not one here: `go list` would resolve it through the
-			// module cache rather than from the snapshot, so the binaries built
-			// need not be the tree being measured.
 			name:    "a bare import path",
 			command: []string{"go", "test", "github.com/P4suta/go-mutants/internal/glob"},
 		},
 		{name: "a pattern that climbs out of the module", command: []string{"go", "test", "../sibling/..."}},
 		{
-			// The spelling the missing-`./` rule above does *not* catch, and the
-			// one this refusal exists for: `./../sibling/...` is rooted in `./`
-			// and still resolves somewhere else entirely.
 			name:    "a climb wearing the `./` prefix",
 			command: []string{"go", "test", "./../sibling/..."},
 		},
 		{
-			// Refused even though the go command would resolve it to a package in
-			// the workspace. The run resolves patterns against the snapshot, which
-			// is a temporary copy under a name of its own, so a pattern that climbs
-			// out and back in by the module's directory name finds nothing there —
-			// and sorting that from a true escape would be a second rule to get
-			// wrong.
 			name:    "a climb that lands back inside the module",
 			command: []string{"go", "test", "./../project/internal/..."},
 		},
 		{name: "a climb in the middle of a pattern", command: []string{"go", "test", "./internal/../cmd/..."}},
 		{name: "the parent directory itself", command: []string{"go", "test", "./.."}},
 		{
-			// A climb spelled with the Windows separator, which `.\internal\...`
-			// below is refused for lacking and this one is not.
 			name:    "a climb with the Windows separator",
 			command: []string{"go", "test", `./..\sibling`},
 		},
@@ -137,12 +100,6 @@ func TestTestScopeReadsGoTestOverPatternsAndNothingElse(t *testing.T) {
 	}
 }
 
-// TestNarrowedIsFalseForAScopeThatHoldsTheWholeModule pins the distinction the
-// empty-scope refusal rests on.
-//
-// `./...` is every package there is, so a scope containing it is not a claim
-// about which suites matter — and a module with no test files at all is a fact
-// about the project that the score already states, not a mistake in a command.
 func TestNarrowedIsFalseForAScopeThatHoldsTheWholeModule(t *testing.T) {
 	t.Parallel()
 
@@ -169,14 +126,6 @@ func TestNarrowedIsFalseForAScopeThatHoldsTheWholeModule(t *testing.T) {
 	}
 }
 
-// TestResolvedPackagesCountsOnlyMarkedRowsWithADirectory covers the two things
-// a `go list` capture can hold that are not a package.
-//
-// internal/runner merges stdout and stderr, so a "matched no packages" warning
-// arrives in the same bytes as the rows; and `go list -e` answers a pattern that
-// names no directory with a record whose Dir is empty. Counting either as a
-// package would make the scope check pass for exactly the mistakes it exists to
-// catch.
 func TestResolvedPackagesCountsOnlyMarkedRowsWithADirectory(t *testing.T) {
 	t.Parallel()
 
@@ -196,9 +145,6 @@ func TestResolvedPackagesCountsOnlyMarkedRowsWithADirectory(t *testing.T) {
 			output: "go: warning: \"./docs/...\" matched no packages\n",
 		},
 		{
-			// `go list -e ./nope/...` prints a synthetic record for a pattern
-			// that names no directory: the marker is there and the directory is
-			// not.
 			name:   "a pattern the go command invented a record for",
 			output: scopeMarker + "\n",
 		},
@@ -208,8 +154,6 @@ func TestResolvedPackagesCountsOnlyMarkedRowsWithADirectory(t *testing.T) {
 			want:   1,
 		},
 		{
-			// A Windows child writes CRLF, and a row whose directory survived
-			// only as "\r" would be a scope check that passed on whitespace.
 			name:   "carriage returns",
 			output: scopeMarker + "/snap/a\r\n" + scopeMarker + "\r\n",
 			want:   1,
@@ -227,8 +171,6 @@ func TestResolvedPackagesCountsOnlyMarkedRowsWithADirectory(t *testing.T) {
 	}
 }
 
-// TestScopedBinariesRefusesOnlyANarrowedScopeThatBuiltNothing pins the
-// asymmetry, which is the whole of the rule.
 func TestScopedBinariesRefusesOnlyANarrowedScopeThatBuiltNothing(t *testing.T) {
 	t.Parallel()
 
@@ -241,9 +183,6 @@ func TestScopedBinariesRefusesOnlyANarrowedScopeThatBuiltNothing(t *testing.T) {
 		{name: "a narrowed scope with binaries", patterns: []string{"./internal/..."}, built: 3},
 		{name: "a narrowed scope with none", patterns: []string{"./internal/..."}, built: 0, wantErr: true},
 		{
-			// A module with no test files anywhere is a fact about the project,
-			// and the score, the survivor list and `policy.require_mutants` all
-			// say so already.
 			name:     "the whole module with none",
 			patterns: []string{"./..."},
 			built:    0,
@@ -273,12 +212,6 @@ func TestScopedBinariesRefusesOnlyANarrowedScopeThatBuiltNothing(t *testing.T) {
 	}
 }
 
-// TestCustomTestCommandWarningNamesBothCommands is what makes the recognition
-// rule diagnosable.
-//
-// A user who has just set `test.command` and noticed the run got slower needs
-// three things in one line: which command they wrote, which shape would have
-// been understood, and what the run is doing instead.
 func TestCustomTestCommandWarningNamesBothCommands(t *testing.T) {
 	t.Parallel()
 

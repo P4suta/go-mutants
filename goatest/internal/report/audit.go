@@ -345,14 +345,13 @@ func validateReuse(disposition MutantDisposition) error {
 	if !disposition.Reused {
 		return nil
 	}
-	//exhaustive:total The dispositions no run executes share the refusal the default writes,
-	// and the message names whichever one it was.
 	switch disposition.Status {
 	case MutantKilled, MutantSurvived, MutantInconclusive, MutantAccepted:
 		return nil
-	default:
+	case MutantCompileRejected, MutantOutOfScope, MutantUnknown:
 		return fmt.Errorf("goatest: mutant %s reused a %q disposition, which no run executes", disposition.ID, disposition.Status)
 	}
+	return fmt.Errorf("goatest: mutant %s reused a %q disposition, which no run executes", disposition.ID, disposition.Status)
 }
 
 func validateVerdictScope(input Report) error {
@@ -360,8 +359,6 @@ func validateVerdictScope(input Report) error {
 		return nil
 	}
 	resolved := input.Scope.Resolved.Kind
-	//exhaustive:total Only the verdicts that constrain the run kind are checked here. A verdict
-	// that constrains nothing has nothing for this to check.
 	switch input.Verdict {
 	case VerdictAssured:
 		if resolved != string(RunFull) {
@@ -383,6 +380,7 @@ func validateVerdictScope(input Report) error {
 		if input.RunKind != RunOperation {
 			return errors.New("goatest: COMPLETED is reserved for non-assurance operations")
 		}
+	case VerdictDefect, VerdictError, VerdictInsufficient:
 	}
 	return nil
 }

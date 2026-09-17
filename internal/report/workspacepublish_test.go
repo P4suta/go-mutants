@@ -17,14 +17,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// TestPublishingAWorkspaceWritesOnePageForTheWholeTree is what the artefacts of
-// a workspace run are, and why they are one pair rather than N.
-//
-// The viewer's question is about the project: a reader opening the HTML report
-// wants the tree, and a directory of N pages would make them open N of them to
-// find out whether anything survived. Every path in the document is relative to
-// the workspace root, which is what a mutation-testing-report's paths mean --
-// and what keeps two modules' `app.go` from being one entry.
 func TestPublishingAWorkspaceWritesOnePageForTheWholeTree(t *testing.T) {
 	t.Parallel()
 
@@ -56,12 +48,6 @@ func TestPublishingAWorkspaceWritesOnePageForTheWholeTree(t *testing.T) {
 	}
 }
 
-// TestProjectingAWorkspaceRefusesWhatItHasNoDocumentFor is the fail-closed half
-// of both entry points.
-//
-// A projection with no report at all is a document about nothing, and one whose
-// module carries no report is a document that lost one — and a viewer handed
-// either would show a tree with a module silently missing from it.
 func TestProjectingAWorkspaceRefusesWhatItHasNoDocumentFor(t *testing.T) {
 	t.Parallel()
 
@@ -86,9 +72,6 @@ func TestProjectingAWorkspaceRefusesWhatItHasNoDocumentFor(t *testing.T) {
 		t.Error("ProjectWorkspace projected a module with no report")
 	}
 
-	// And the artefacts, which is the same refusal one level up: neither kind
-	// of document given is a run that published nothing, and the message names
-	// the directory the caller asked to publish into.
 	_, err := report.WriteArtifacts(report.ArtifactOptions{
 		WorkspaceRoot: root,
 		Directory:     "reports/mutation",
@@ -102,13 +85,6 @@ func TestProjectingAWorkspaceRefusesWhatItHasNoDocumentFor(t *testing.T) {
 	}
 }
 
-// TestFilingAWorkspaceRunRefusesAnIdentityItCannotName is the history store's
-// half, and it is the run report's refusals over the other document type.
-//
-// Both values name a file: the run id names the document under `runs/`, and the
-// workspace digest names the directory that holds it. A store that accepted
-// either unchecked would write outside the directory it owns, or into a file
-// named after something that is not a run.
 func TestFilingAWorkspaceRunRefusesAnIdentityItCannotName(t *testing.T) {
 	t.Parallel()
 
@@ -150,9 +126,6 @@ func TestFilingAWorkspaceRunRefusesAnIdentityItCannotName(t *testing.T) {
 			says: "cannot name a history directory",
 		},
 		{
-			// A document that cannot be encoded: a run report's
-			// `score_percent` is a `*float64`, and a non-finite float is the
-			// one value encoding/json has no representation for.
 			name: "a document that cannot be encoded",
 			doc:  withUnencodableScore(*good),
 			says: "could not be encoded as JSON",
@@ -175,8 +148,6 @@ func TestFilingAWorkspaceRunRefusesAnIdentityItCannotName(t *testing.T) {
 	}
 }
 
-// withRunID and withDigest are one field of a workspace report changed, for the
-// refusals above.
 func withRunID(doc report.WorkspaceReport, runID string) *report.WorkspaceReport {
 	doc.RunID = runID
 	return &doc
@@ -187,8 +158,6 @@ func withDigest(doc report.WorkspaceReport, digest string) *report.WorkspaceRepo
 	return &doc
 }
 
-// withUnencodableScore puts a NaN where a module's score goes, which is the one
-// value a workspace report can hold that encoding/json refuses.
 func withUnencodableScore(doc report.WorkspaceReport) *report.WorkspaceReport {
 	doc.Modules = append([]report.ModuleReport(nil), doc.Modules...)
 	rep := *doc.Modules[0].Report
@@ -198,8 +167,6 @@ func withUnencodableScore(doc report.WorkspaceReport) *report.WorkspaceReport {
 	return &doc
 }
 
-// workspaceTree writes the two modules' sources where the projection reads
-// them, and returns the workspace root.
 func workspaceTree(t *testing.T) string {
 	t.Helper()
 
@@ -217,7 +184,6 @@ func workspaceTree(t *testing.T) string {
 	return root
 }
 
-// workspaceDocumentAt is a built workspace report whose spans match the tree.
 func workspaceDocumentAt(t *testing.T, root string) *report.WorkspaceReport {
 	t.Helper()
 
@@ -228,18 +194,6 @@ func workspaceDocumentAt(t *testing.T, root string) *report.WorkspaceReport {
 	return doc
 }
 
-// TestAWorkspaceRunIsListedAsARunOfItsOwn is what the history store says about
-// the other document type, and it is two claims rather than one.
-//
-// A workspace run is a run: a listing that named only run reports would make a
-// workspace's history look empty, and a `report clean` would leave it behind.
-// And it is a run of the *workspace* rather than of any module in it: it names
-// its modules and no module path, so a command asking "is this run mine" gets a
-// different answer standing in a module from the one it gets standing in the
-// workspace. That is the point — a mutant measured in a workspace and the same
-// mutant measured alone have different identities, and offering one run's
-// documents for the other's question would be offering ids that do not mean
-// what the reader thinks.
 func TestAWorkspaceRunIsListedAsARunOfItsOwn(t *testing.T) {
 	t.Parallel()
 
@@ -280,12 +234,6 @@ func TestAWorkspaceRunIsListedAsARunOfItsOwn(t *testing.T) {
 	}
 }
 
-// TestMergingAWorkspaceRunsShardsReassemblesIt is the round trip: a workspace
-// run split N ways and put back together is the run it was split from.
-//
-// The module-level merge is [report.MergeShards] itself rather than a second
-// implementation of it, so what this adds is the check a per-module merge
-// cannot make -- that every shard holds the same modules, in the same order.
 func TestMergingAWorkspaceRunsShardsReassemblesIt(t *testing.T) {
 	t.Parallel()
 
@@ -310,8 +258,6 @@ func TestMergingAWorkspaceRunsShardsReassemblesIt(t *testing.T) {
 			merged.Summary.Killed, merged.Summary.Total,
 			whole.Summary.Killed, whole.Summary.Total)
 	}
-	// The merge is not an infrastructure failure, whatever a shard said: the
-	// merged document's verdict is the policy's, over the counts above.
 	if merged.Summary.Policy.Failure != nil {
 		t.Errorf("the merged run failed with %q; the shards were green and complete",
 			*merged.Summary.Policy.Failure)
@@ -331,9 +277,6 @@ func TestMergingAWorkspaceRunsShardsReassemblesIt(t *testing.T) {
 	}
 }
 
-// TestMergingWorkspacesRefusesWhatIsNotOneRun is the fail-closed half, and
-// every row is a set of documents that would merge into a smaller run than
-// anybody measured.
 func TestMergingWorkspacesRefusesWhatIsNotOneRun(t *testing.T) {
 	t.Parallel()
 
@@ -412,7 +355,6 @@ func TestMergingWorkspacesRefusesWhatIsNotOneRun(t *testing.T) {
 	}
 }
 
-// workspaceShards is one workspace run split into a complete set of shards.
 func workspaceShards(t *testing.T, total int) []*report.WorkspaceReport {
 	t.Helper()
 
@@ -453,14 +395,6 @@ func workspaceShards(t *testing.T, total int) []*report.WorkspaceReport {
 	return shards
 }
 
-// TestTheTwoRunDocumentsShareASchemaVersion is a one-line assumption the
-// history store's reader depends on.
-//
-// It checks one version for both kinds of document a run publishes, and that is
-// correct only while the two are at the same version. Stated here rather than
-// branched on there: a branch nothing could distinguish would be a branch no
-// test could tell from its absence, and this is the assertion that turns "they
-// happen to agree" into "they are required to".
 func TestTheTwoRunDocumentsShareASchemaVersion(t *testing.T) {
 	t.Parallel()
 

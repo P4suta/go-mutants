@@ -9,75 +9,46 @@ import (
 	"testing"
 )
 
-// The two grammars a probe hint is decided by, asked as questions about
-// expressions.
-//
-// effects.go argues at length why a probe hint may only be attached where
-// evaluating the statement's operands has no effect (grammar E) and where the
-// probed operand cannot panic (grammar P). Both are allowlists over the syntax,
-// and an allowlist is only as good as its refusals: admitting one expression
-// too many attaches a hint to a site where the probe's execution is not the
-// original's, and the consequence is a mutant reported as unkillable that a
-// test really could have killed. There is no diagnostic for that, so the
-// refusals are stated here one shape at a time.
-
-// grammarCase is one expression and the two answers it must get.
 type grammarCase struct {
-	name  string
-	decls string
-	// signature is the probe function's, for the shapes only a generic function
-	// can hold. Empty means `()`.
+	name       string
+	decls      string
 	signature  string
 	expr       string
 	effectFree bool
 	panicFree  bool
 }
 
-// TestWhichExpressionsAProbeMayStandInFor is grammar E and grammar P over one
-// table, because P is a subset of E and a row that claimed otherwise would be a
-// row about a contradiction.
 func TestWhichExpressionsAProbeMayStandInFor(t *testing.T) {
 	t.Parallel()
 
 	for _, c := range []grammarCase{
-		// The leaves. A function literal creates a closure and evaluates none of
-		// its body, which is why it stands beside a name and a number.
 		{name: "a name", decls: "var n int", expr: "n", effectFree: true, panicFree: true},
 		{name: "a literal", expr: "42", effectFree: true, panicFree: true},
 		{name: "a function literal", expr: "func() int { return 0 }", effectFree: true, panicFree: true},
 		{name: "an index of a call's result by a call", decls: "func f() []int { return nil }\n\nfunc g() int { return 0 }", expr: "f()[g()]"},
 
-		// Parentheses change nothing, and are asked twice so that an edit which
-		// stopped looking inside them is visible from both directions.
 		{name: "a parenthesised name", decls: "var n int", expr: "(n)", effectFree: true, panicFree: true},
 		{name: "a parenthesised call", decls: "func f() int { return 0 }", expr: "(f())"},
 		{name: "a parenthesised dereference", decls: "var p *int", expr: "(*p)", effectFree: true},
 
-		// Selections.
 		{name: "a qualified constant", decls: `import "time"`, expr: "time.Nanosecond", effectFree: true, panicFree: true},
 		{name: "a field of a value", decls: "var s struct{ n int }", expr: "s.n", effectFree: true, panicFree: true},
 		{name: "a field through a pointer", decls: "var p *struct{ n int }", expr: "p.n", effectFree: true},
 		{name: "a field of a call's result", decls: "func f() struct{ n int } { return struct{ n int }{} }", expr: "f().n"},
 		{name: "a method value", decls: "import \"time\"\n\nvar d time.Duration", expr: "d.String", effectFree: true},
 
-		// Dereferences and indexing: no effect, but each can panic.
 		{name: "a dereference", decls: "var p *int", expr: "*p", effectFree: true},
 		{name: "a dereference of a call's result", decls: "func f() *int { return nil }", expr: "*f()"},
 		{name: "an index", decls: "var xs []int", expr: "xs[0]", effectFree: true},
 		{name: "an index by a call", decls: "var xs []int\n\nfunc f() int { return 0 }", expr: "xs[f()]"},
 		{name: "an index into a call's result", decls: "func f() []int { return nil }", expr: "f()[0]"},
 		{
-			name:  "a generic function instantiated",
-			decls: "func pair[A any, B any](a A, b B) int { return 0 }",
-			// P has no case for an index of any kind, generic instantiation
-			// included: indexing panics, and a hint is declined rather than
-			// reasoned about one index expression at a time.
+			name:       "a generic function instantiated",
+			decls:      "func pair[A any, B any](a A, b B) int { return 0 }",
 			expr:       "pair[int, string]",
 			effectFree: true,
 		},
 
-		// Slices, whose three optional bounds are the reason
-		// effectFreeOrAbsent exists.
 		{name: "a slice with every bound", decls: "var xs []int", expr: "xs[1:2:3]", effectFree: true},
 		{name: "a slice with no bounds", decls: "var xs []int", expr: "xs[:]", effectFree: true},
 		{name: "a slice of a call's result", decls: "func f() []int { return nil }", expr: "f()[1:]"},
@@ -85,17 +56,14 @@ func TestWhichExpressionsAProbeMayStandInFor(t *testing.T) {
 		{name: "a slice whose high bound calls", decls: "var xs []int\n\nfunc f() int { return 0 }", expr: "xs[1:f()]"},
 		{name: "a slice whose capacity calls", decls: "var xs []int\n\nfunc f() int { return 0 }", expr: "xs[1:2:f()]"},
 
-		// Type assertions.
 		{name: "a type assertion", decls: "var v any", expr: "v.(int)", effectFree: true},
 		{name: "a type assertion of a call's result", decls: "func f() any { return nil }", expr: "f().(int)"},
 
-		// Unary operators. `<-` receives, which is an effect and a block.
 		{name: "a negation", decls: "var n int", expr: "-n", effectFree: true, panicFree: true},
 		{name: "a negated dereference", decls: "var p *int", expr: "-(*p)", effectFree: true},
 		{name: "an address", decls: "var n int", expr: "&n", effectFree: true, panicFree: true},
 		{name: "a receive", decls: "var ch chan int", expr: "<-ch"},
 
-		// Binary operators, where P has more to say than E.
 		{name: "addition", decls: "var a, b int", expr: "a + b", effectFree: true, panicFree: true},
 		{name: "addition of a call's result", decls: "var a int\n\nfunc f() int { return 0 }", expr: "a + f()"},
 		{name: "a call's result plus a name", decls: "var a int\n\nfunc f() int { return 0 }", expr: "f() + a"},
@@ -111,7 +79,6 @@ func TestWhichExpressionsAProbeMayStandInFor(t *testing.T) {
 		{name: "an interface against a concrete value", decls: "var v any\n\nvar n int", expr: "v == n", effectFree: true},
 		{name: "a concrete value against an interface", decls: "var v any\n\nvar n int", expr: "n == v", effectFree: true},
 
-		// Composite literals, and the map keys that can panic on insertion.
 		{name: "a slice literal", expr: "[]int{1}", effectFree: true, panicFree: true},
 		{name: "a slice literal holding a call", decls: "func f() int { return 0 }", expr: "[]int{f()}"},
 		{name: "a map literal", expr: "map[int]int{1: 2}", effectFree: true, panicFree: true},
@@ -120,7 +87,6 @@ func TestWhichExpressionsAProbeMayStandInFor(t *testing.T) {
 		{name: "a map literal keyed by an interface", decls: "var v any", expr: "map[any]int{v: 2}", effectFree: true},
 		{name: "a struct literal with a named field", expr: "struct{ n int }{n: 1}", effectFree: true, panicFree: true},
 
-		// Calls: a conversion, a builtin, and everything else.
 		{name: "a conversion", decls: "var n int", expr: "int64(n)", effectFree: true, panicFree: true},
 		{name: "a conversion of a dereference", decls: "var p *int", expr: "int64(*p)", effectFree: true},
 		{name: "a conversion of a slice to an array", decls: "var xs []int", expr: "[4]int(xs)", effectFree: true},
@@ -134,11 +100,6 @@ func TestWhichExpressionsAProbeMayStandInFor(t *testing.T) {
 		{name: "make, which allocates but may also panic", decls: "var n int", expr: "make([]int, n)", effectFree: true},
 		{name: "an ordinary call", decls: "func f() int { return 0 }", expr: "f()"},
 		{
-			// A builtin, and not one of the ones either table names. append may
-			// reallocate and copy, which is an effect the mutant that skipped
-			// the operand would not have; make is in E and not in P because a
-			// negative length panics. Both are the row that separates "is a
-			// builtin" from "is one of these builtins".
 			name:  "append",
 			decls: "var xs []int",
 			expr:  "append(xs, 1)",
@@ -146,23 +107,16 @@ func TestWhichExpressionsAProbeMayStandInFor(t *testing.T) {
 		{name: "copy", decls: "var xs, ys []int", expr: "copy(xs, ys)"},
 		{name: "recover", expr: "recover()"},
 		{
-			// The name is the builtin's and the object is not, so the call runs
-			// the package's own code.
 			name:  "a call of a function the package named after a builtin",
 			decls: "func len(xs []int) int { return 0 }\n\nvar xs []int",
 			expr:  "len(xs)",
 		},
 		{
-			// A builtin with no universe parent. unsafe's read memory the type
-			// system is deliberately not describing.
 			name:  "an unsafe builtin",
 			decls: "import \"unsafe\"\n\nvar n int64",
 			expr:  "unsafe.Sizeof(n)",
 		},
 		{
-			// A parenthesised callee, refused on purpose: the question is about
-			// a small set of exact shapes and an indirect spelling costs one
-			// unprobed mutant.
 			name:  "a builtin called through parentheses",
 			decls: "var xs []int",
 			expr:  "(len)(xs)",
@@ -190,15 +144,6 @@ func TestWhichExpressionsAProbeMayStandInFor(t *testing.T) {
 	}
 }
 
-// TestAnExpressionThatIsNotThereSatisfiesNeitherGrammar is what
-// [guardResolver.effectFreeOrAbsent] rests on, from the other side.
-//
-// A slice expression's bounds are optional, and a missing one is no evaluation
-// at all -- which is why the optional form says yes to nil. Both grammars
-// themselves say no to it, and the two answers are not in tension: one is about
-// an expression that is not written, the other about one that is not there to
-// look at. The refusal is pinned because it is the fall-through of an allowlist,
-// and a switch gains cases.
 func TestAnExpressionThatIsNotThereSatisfiesNeitherGrammar(t *testing.T) {
 	t.Parallel()
 
@@ -214,13 +159,6 @@ func TestAnExpressionThatIsNotThereSatisfiesNeitherGrammar(t *testing.T) {
 	}
 }
 
-// TestNeitherGrammarAnswersWithoutTheCheckersRecord is the fail-closed half of
-// both, and the reason each predicate asks before it reads.
-//
-// Every interesting answer here rests on what the checker recorded: which call
-// is a conversion, which selector is a package, what a constant folded to. With
-// no record there is no evidence, and a grammar that said yes anyway would
-// attach a probe hint on the strength of the syntax alone.
 func TestNeitherGrammarAnswersWithoutTheCheckersRecord(t *testing.T) {
 	t.Parallel()
 
@@ -248,14 +186,6 @@ func TestNeitherGrammarAnswersWithoutTheCheckersRecord(t *testing.T) {
 	}
 }
 
-// TestWhichOperandsAStatementEvaluates pins [statementOperands], which is the
-// set grammar E is asked of.
-//
-// It is a list rather than a walk on purpose: a statement kind nobody has
-// thought about yields no operands and therefore no hint, and an empty list is
-// the refusal. What makes each row worth stating is that the operands are the
-// ones *this statement* evaluates -- a `range` clause evaluates its key, its
-// value and the thing ranged over, and a `case` clause its labels.
 func TestWhichOperandsAStatementEvaluates(t *testing.T) {
 	t.Parallel()
 
@@ -297,34 +227,17 @@ func TestWhichOperandsAStatementEvaluates(t *testing.T) {
 		})
 	}
 
-	// A case clause evaluates its labels and not its body, which is the whole
-	// distinction this list exists to draw. It is reached from a nested
-	// position rather than as a statement of its own, so it is built here.
 	clause := &ast.CaseClause{List: []ast.Expr{ast.NewIdent("a"), ast.NewIdent("b")}}
 	clause.Body = []ast.Stmt{&ast.ExprStmt{X: &ast.CallExpr{Fun: ast.NewIdent("f")}}}
 	if got := statementOperands(clause); len(got) != 2 {
 		t.Errorf("statementOperands(a case clause) yielded %d operands, want its 2 labels", len(got))
 	}
 
-	// And the fall-through: a statement kind the list has no case for yields
-	// nothing, which is how a hint is declined rather than guessed at.
 	if got := statementOperands(&ast.EmptyStmt{}); got != nil {
 		t.Errorf("statementOperands(an empty statement) = %v, want nothing", got)
 	}
 }
 
-// TestTheResolverReadsAValuesTypeAndNotATypesName is
-// [guardResolver.typeOf] and [guardResolver.isTypeExpr], the pair every form
-// that writes a type down goes through.
-//
-// The checker records an entry for a type expression as well as for a value
-// one -- `int64` in `int64(n)` has a [types.TypeAndValue] of its own -- and the
-// two are told apart by [types.TypeAndValue.IsValue] rather than by the
-// presence of the entry. Reading the type out of either would hand a form the
-// conversion's *target* where it asked for the value's type, and the two differ
-// in every conversion that does anything. It is also what tells a conversion
-// from a call, which is the difference between "computes a value from bits it
-// has" and "runs code this phase cannot see".
 func TestTheResolverReadsAValuesTypeAndNotATypesName(t *testing.T) {
 	t.Parallel()
 
@@ -357,9 +270,6 @@ func TestTheResolverReadsAValuesTypeAndNotATypesName(t *testing.T) {
 		t.Errorf("constantValue(nothing at all) = %v, want nil", got)
 	}
 
-	// And with no record at all, which each of them answers for rather than
-	// dereferencing: a resolver over a file the checker refused still has a
-	// parent index, and the walks that read it still ask these questions.
 	blind := &guardResolver{parent: g.parent}
 	if got := blind.typeOf(call); got != nil {
 		t.Errorf("typeOf with no record = %v, want nil", got)
@@ -371,9 +281,6 @@ func TestTheResolverReadsAValuesTypeAndNotATypesName(t *testing.T) {
 		t.Errorf("constantValue with no record = %v, want nil", got)
 	}
 
-	// And a constant is read from the checker's folding rather than from the
-	// spelling: `2` and `1 + 1` are one value, and a shift by either is
-	// admitted for the same reason.
 	folded := probeSource(t, "const two = 1 + 1", "two")
 	if got := folded.resolver().constantValue(folded.expr); got == nil || got.String() != "2" {
 		t.Errorf("constantValue(a folded constant) = %v, want 2", got)
@@ -384,20 +291,6 @@ func TestTheResolverReadsAValuesTypeAndNotATypesName(t *testing.T) {
 	}
 }
 
-// TestWhichReplacementsCanIntroduceAPanicOfTheirOwn pins
-// [guardResolver.introducesPanic], which is the condition that separates a
-// probe hint from a wrong answer.
-//
-// A probe stands in for a mutant by evaluating the replacement beside the
-// original. Almost every replacement is as safe as what it replaces -- swapping
-// `+` for `-` cannot fail where `+` did not -- but `/` and `%` introduce an
-// operation the original did not have, and a mutant that divides by zero in the
-// probe tree takes the probe run down rather than recording a difference.
-//
-// The refusal of an anchor that is not the binary expression is the fail-closed
-// half. It cannot happen for the rules that produce these replacements, and
-// "cannot happen" is the wrong thing to spell as "carry on" in a function whose
-// answer licenses skipping a test.
 func TestWhichReplacementsCanIntroduceAPanicOfTheirOwn(t *testing.T) {
 	t.Parallel()
 
@@ -447,10 +340,6 @@ func TestWhichReplacementsCanIntroduceAPanicOfTheirOwn(t *testing.T) {
 	t.Run("a division by a zero constant does", func(t *testing.T) {
 		t.Parallel()
 
-		// `a * 0` is legal and `a / 0` is not, so the replacement really would
-		// not compile -- which is a rejection rather than a panic. The answer
-		// here is still "yes", because this function's job is to keep the probe
-		// from claiming anything about it.
 		g, anchor := binaryOf(t, "var a int", "a * 0")
 		if !g.introducesPanic(anchor, "/") {
 			t.Error("introducesPanic over a zero constant divisor = false, want true")
@@ -460,8 +349,6 @@ func TestWhichReplacementsCanIntroduceAPanicOfTheirOwn(t *testing.T) {
 	t.Run("a floating division does not", func(t *testing.T) {
 		t.Parallel()
 
-		// Division by zero is defined for floating point: it yields an
-		// infinity, and `%` is not legal on floats at all.
 		g, anchor := binaryOf(t, "var a, b float64", "a * b")
 		if g.introducesPanic(anchor, "/") {
 			t.Error("introducesPanic over a floating divisor = true, want false")
@@ -478,15 +365,6 @@ func TestWhichReplacementsCanIntroduceAPanicOfTheirOwn(t *testing.T) {
 	})
 }
 
-// TestAnExpressionWithNoEnclosingStatementIsNotInContext pins
-// [guardResolver.inertContext]'s fall-through.
-//
-// The ordering rule the two probe forms rest on is about the operands of one
-// *statement*, and a package-level declaration's initialiser has none: its
-// ordering is the initialisation order, which is a different rule entirely.
-// Discovery records such sites as `package-var-init` and never asks, so this is
-// the fail-closed answer to a shape that should not arrive -- and a `true` here
-// would licence skipping a test on the strength of a rule that does not apply.
 func TestAnExpressionWithNoEnclosingStatementIsNotInContext(t *testing.T) {
 	t.Parallel()
 
@@ -505,22 +383,11 @@ func TestAnExpressionWithNoEnclosingStatementIsNotInContext(t *testing.T) {
 	if g.inertContext(initialiser) {
 		t.Error("inertContext = true for an expression with no enclosing statement, want false")
 	}
-	// And the ordinary case, so that the refusal above is about the absence of
-	// a statement and not about the expression.
 	if !g.inertContext(p.expr) {
 		t.Error("inertContext = false for an expression inside a statement, want true")
 	}
 }
 
-// TestTheGrammarsAnswerAboutNodesTheParserCouldNotHaveMade is the fall-through
-// of two allowlists, asked with nodes built rather than parsed.
-//
-// Neither shape is one Go can produce today: a generic instantiation's indices
-// are types, so its operands are always effect-free, and every binary operator
-// the language has is named in the list. Both are still *decisions* -- the
-// lists say what they admit and everything else falls off the end -- and a
-// grammar that admitted a shape it was never taught would attach a probe hint
-// on the strength of not recognising something.
 func TestTheGrammarsAnswerAboutNodesTheParserCouldNotHaveMade(t *testing.T) {
 	t.Parallel()
 
@@ -549,8 +416,6 @@ func TestTheGrammarsAnswerAboutNodesTheParserCouldNotHaveMade(t *testing.T) {
 		}
 	}
 
-	// An operator the list does not name. `<-` is a token go/ast will put in a
-	// binary expression's Op field and the parser never does.
 	arrow := &ast.BinaryExpr{X: ast.NewIdent("a"), Op: token.ARROW, Y: ast.NewIdent("b")}
 	if g.panicFree(arrow) {
 		t.Error("panicFree accepted a binary operator the list does not name")

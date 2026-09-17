@@ -13,14 +13,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// Restore is one method with one caller in mind: a worker's private copy of an
-// instrumented tree, which has to be identical before every mutant that worker
-// runs. Without it, mutant k is measured against whatever mutant k-1's tests
-// wrote -- which is the same corruption the shared-snapshot drift gate exists
-// to catch, moved somewhere nobody is watching.
-
-// TestRestoreUndoesEveryKindOfDrift is the method in one test: a changed file,
-// an added one, and a removed one, all at once and all put back.
 func TestRestoreUndoesEveryKindOfDrift(t *testing.T) {
 	t.Parallel()
 
@@ -61,8 +53,6 @@ func TestRestoreUndoesEveryKindOfDrift(t *testing.T) {
 		t.Errorf("Restore undid %v, want %v", got, want)
 	}
 
-	// And the tree is the tree again, which is the claim the list above is
-	// only evidence for.
 	after, err := snap.Redigest()
 	if err != nil {
 		t.Fatalf("Redigest after Restore: %v", err)
@@ -81,8 +71,6 @@ func TestRestoreUndoesEveryKindOfDrift(t *testing.T) {
 	}
 }
 
-// TestRestoreTouchesNothingWhenNothingDrifted is the cheap case, and the one a
-// run pays for on every mutant of a suite that writes nowhere.
 func TestRestoreTouchesNothingWhenNothingDrifted(t *testing.T) {
 	t.Parallel()
 
@@ -104,14 +92,6 @@ func TestRestoreTouchesNothingWhenNothingDrifted(t *testing.T) {
 	}
 }
 
-// TestRestoreRefusesWhenTheSourceTreeItselfMoved is the postcondition, and it
-// is the one failure mode a caller cannot check for itself.
-//
-// Restore copies from the tree the snapshot was made of, so a digest that
-// disagrees after the copy means *that* tree has changed. A worker copy is
-// restored from the shared instrumented tree between every mutant, and the
-// whole arrangement rests on that tree being frozen; a silent success here
-// would restore the wrong bytes onto every worker for the rest of the run.
 func TestRestoreRefusesWhenTheSourceTreeItselfMoved(t *testing.T) {
 	t.Parallel()
 
@@ -135,9 +115,6 @@ func TestRestoreRefusesWhenTheSourceTreeItselfMoved(t *testing.T) {
 	}
 }
 
-// TestRestoreReportsASourceFileThatHasGone is the other way the source can
-// betray a restore, and it is reported rather than passed over: a file the
-// manifest names and the source no longer holds is a tree that has moved.
 func TestRestoreReportsASourceFileThatHasGone(t *testing.T) {
 	t.Parallel()
 
@@ -162,8 +139,6 @@ func TestRestoreReportsASourceFileThatHasGone(t *testing.T) {
 	}
 }
 
-// createIn makes a snapshot inside the test's own temporary directory, which is
-// what every test in this file wants and none of them wants to spell.
 func createIn(t *testing.T, source string) *snapshot.Snapshot {
 	t.Helper()
 	snap, err := snapshot.Create(source, snapshot.Options{DestParent: t.TempDir()})
@@ -178,7 +153,6 @@ func createIn(t *testing.T, source string) *snapshot.Snapshot {
 	return snap
 }
 
-// writeInto replaces a file's contents, creating it if it is not there.
 func writeInto(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -186,7 +160,6 @@ func writeInto(t *testing.T, path, content string) {
 	}
 }
 
-// readAll reads a file the test has just asserted about.
 func readAll(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -196,8 +169,6 @@ func readAll(t *testing.T, path string) string {
 	return string(data)
 }
 
-// fileTimes is every regular file under root with its modification time, so
-// that "nothing was rewritten" can be asserted rather than assumed.
 func fileTimes(t *testing.T, root string) map[string]int64 {
 	t.Helper()
 	out := map[string]int64{}
@@ -218,7 +189,6 @@ func fileTimes(t *testing.T, root string) map[string]int64 {
 	return out
 }
 
-// sameTimes reports whether two readings of fileTimes agree.
 func sameTimes(a, b map[string]int64) bool {
 	if len(a) != len(b) {
 		return false
@@ -231,8 +201,6 @@ func sameTimes(a, b map[string]int64) bool {
 	return true
 }
 
-// sameSet compares two lists as sets, because Restore's order is Redigest's and
-// this file is about what it undid rather than in which order.
 func sameSet(got, want []string) bool {
 	if len(got) != len(want) {
 		return false

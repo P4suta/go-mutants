@@ -19,28 +19,16 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// A call is one invocation the fake runner saw, captured by value so that a
-// later invocation cannot rewrite what an earlier assertion is about.
 type call struct {
-	Argv    []string
-	Dir     string
-	Env     []string
-	Timeout time.Duration
-	// Kind and Subject are the label the call site put on the execution. They
-	// are captured here, beside the argv, because a missing label is invisible
-	// in everything else a call carries: the command runs, the run is right, and
-	// the recording is the only thing that is poorer for it.
-	Kind    string
-	Subject string
-	// OutputLimit is the cap the call site put on the capture, and it is
-	// captured for the reason Kind is: a limit that never reached the spec is
-	// invisible in everything else a call carries, because a fake runner hands
-	// back whatever output the test asked for whatever budget it was given.
+	Argv        []string
+	Dir         string
+	Env         []string
+	Timeout     time.Duration
+	Kind        string
+	Subject     string
 	OutputLimit int
 }
 
-// active returns the activation identity this call carried, or "" if it carried
-// none.
 func (c call) active() string {
 	for _, entry := range c.Env {
 		if key, value, ok := strings.Cut(entry, "="); ok && key == instrument.ActiveEnv {
@@ -50,8 +38,6 @@ func (c call) active() string {
 	return ""
 }
 
-// program is the executable this call started, without its directory. It is
-// what the tests below name a binary by.
 func (c call) program() string {
 	if len(c.Argv) == 0 {
 		return ""
@@ -59,32 +45,15 @@ func (c call) program() string {
 	return c.Argv[0]
 }
 
-// fake is a [runner.Run] stand-in that records every call and answers from a
-// caller-supplied rule.
-//
-// Injecting here rather than compiling fixture programs is deliberate. What
-// these tests are about — which binary is tried next, which timeout is retried,
-// what two disagreeing attempts mean — is entirely a function of what the
-// runner returns, and a fixture that produced exit 97 on two platforms would be
-// testing the fixture.
 type fake struct {
-	// respond decides one call's result. It runs on worker goroutines and must
-	// be safe for concurrent use.
 	respond func(ctx context.Context, c call) runner.Result
 
-	// record makes the fake do the one thing [runner.Run] does besides starting
-	// a process: hand the execution to the spec's recorder and return the
-	// sequence it was recorded at. It is opt-in so that a test which is not
-	// about the recording sees exactly the runner it always saw, and so that a
-	// test which is about it can assert that an attempt's sequences are the
-	// sequences of the commands underneath it.
 	record bool
 
 	mu    sync.Mutex
 	calls []call
 }
 
-// run is the function handed to [execute.WithRunner].
 func (f *fake) run(ctx context.Context, spec runner.Spec) runner.Result {
 	c := call{
 		Argv:        slices.Clone(spec.Argv),
@@ -104,9 +73,6 @@ func (f *fake) run(ctx context.Context, spec runner.Spec) runner.Result {
 		result = f.respond(ctx, c)
 	}
 	if f.record {
-		// The reduction of the environment to names and of the output to a
-		// digest is the recorder's, exactly as it is for the real runner, so a
-		// fake cannot record something the production path could not.
 		result.TraceSeq = spec.Trace.Exec(trace.ExecRecord{
 			Kind:       spec.Kind,
 			Subject:    spec.Subject,
@@ -123,14 +89,12 @@ func (f *fake) run(ctx context.Context, spec runner.Spec) runner.Result {
 	return result
 }
 
-// seen returns the calls recorded so far, in order.
 func (f *fake) seen() []call {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.calls)
 }
 
-// programs returns the executables the fake was asked to start, in order.
 func (f *fake) programs() []string {
 	seen := f.seen()
 	out := make([]string, len(seen))
@@ -140,13 +104,10 @@ func (f *fake) programs() []string {
 	return out
 }
 
-// options wires a fake into an otherwise empty [execute.Options].
 func options(f *fake, jobs int) execute.Options {
 	return execute.WithRunner(execute.Options{Jobs: jobs}, f.run)
 }
 
-// recording opens a recorder over an unbounded ring and returns both, so a test
-// can assert on exactly what this package handed it.
 func recording(t *testing.T) (*trace.Recorder, *trace.MemorySink) {
 	t.Helper()
 	sink := trace.NewMemorySink(0)
@@ -162,8 +123,6 @@ func recording(t *testing.T) (*trace.Recorder, *trace.MemorySink) {
 	return recorder, sink
 }
 
-// traced hands options a recorder and tells the fake to record its calls into
-// it the way [runner.Run] would.
 func traced(t *testing.T, f *fake, opts execute.Options) (execute.Options, *trace.MemorySink) {
 	t.Helper()
 	recorder, sink := recording(t)
@@ -172,7 +131,6 @@ func traced(t *testing.T, f *fake, opts execute.Options) (execute.Options, *trac
 	return opts, sink
 }
 
-// eventsOf returns every event of one type the sink kept, in order.
 func eventsOf(sink *trace.MemorySink, eventType string) []trace.Event {
 	var found []trace.Event
 	for _, event := range sink.Events() {
@@ -183,9 +141,6 @@ func eventsOf(sink *trace.MemorySink, eventType string) []trace.Event {
 	return found
 }
 
-// execSeqs returns the sequence numbers of the exec events the sink kept, in
-// order, so an attempt's own list can be compared against the commands the
-// recording actually holds.
 func execSeqs(sink *trace.MemorySink) []int64 {
 	events := eventsOf(sink, trace.TypeExec)
 	seqs := make([]int64, len(events))
@@ -195,8 +150,6 @@ func execSeqs(sink *trace.MemorySink) []int64 {
 	return seqs
 }
 
-// testBins builds a run's worth of test binaries named after their import
-// paths, so that an assertion can name one by the string it was created with.
 func testBins(importPaths ...string) []execute.TestBinary {
 	out := make([]execute.TestBinary, len(importPaths))
 	for i, path := range importPaths {
@@ -209,7 +162,6 @@ func testBins(importPaths ...string) []execute.TestBinary {
 	return out
 }
 
-// mutants builds a queue of runs that all share one timeout.
 func mutants(timeout time.Duration, ids ...string) []execute.MutantRun {
 	out := make([]execute.MutantRun, len(ids))
 	for i, id := range ids {
@@ -218,18 +170,14 @@ func mutants(timeout time.Duration, ids ...string) []execute.MutantRun {
 	return out
 }
 
-// failed is the result of a test binary whose tests failed.
 func failed(output string) runner.Result {
 	return runner.Result{ExitCode: 1, Duration: time.Millisecond, Output: []byte(output)}
 }
 
-// passed is the result of a test binary whose tests all passed.
 func passed() runner.Result {
 	return runner.Result{ExitCode: 0, Duration: time.Millisecond, Output: []byte("PASS\n")}
 }
 
-// timedOut is what internal/runner reports for a child it had to kill on the
-// timeout: no exit status, TimedOut set, no error.
 func timedOut() runner.Result {
 	return runner.Result{
 		ExitCode: runner.ExitCodeUnavailable,
@@ -239,7 +187,6 @@ func timedOut() runner.Result {
 	}
 }
 
-// staleCatalog is the generated runtime refusing an identity it does not know.
 func staleCatalog() runner.Result {
 	return runner.Result{
 		ExitCode: instrument.UnknownMutantExit,
@@ -248,19 +195,12 @@ func staleCatalog() runner.Result {
 	}
 }
 
-// cancelled is what internal/runner reports for a child killed by a cancelled
-// context: no exit status, no timeout, no error.
 func cancelled() runner.Result {
 	return runner.Result{ExitCode: runner.ExitCodeUnavailable, Duration: time.Millisecond}
 }
 
-// isCancellation reports whether err carries a cancellation, which is how
-// internal/engine tells a Ctrl-C apart from a broken run.
 func isCancellation(err error) bool { return errors.Is(err, context.Canceled) }
 
-// envValue reads one variable out of a captured child environment. The lookup
-// is case-insensitive because Windows environment names are, and a child
-// composed on Windows may well have inherited "Path" rather than "PATH".
 func envValue(env []string, name string) string {
 	for _, entry := range env {
 		if key, value, ok := strings.Cut(entry, "="); ok && strings.EqualFold(key, name) {
@@ -270,7 +210,6 @@ func envValue(env []string, name string) string {
 	return ""
 }
 
-// statDir reports whether path exists and is a directory.
 func statDir(path string) (bool, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -279,7 +218,6 @@ func statDir(path string) (bool, error) {
 	return info.IsDir(), nil
 }
 
-// unstartable is a process that could not be started at all.
 func unstartable() runner.Result {
 	return runner.Result{
 		ExitCode: runner.ExitCodeUnavailable,
@@ -287,8 +225,6 @@ func unstartable() runner.Result {
 	}
 }
 
-// probeUnavailable is the generated probe runtime refusing to run because the
-// log it was told to write cannot be opened.
 func probeUnavailable() runner.Result {
 	return runner.Result{
 		ExitCode: instrument.ProbeUnavailableExit,

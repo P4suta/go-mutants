@@ -7,18 +7,6 @@ import (
 	"testing"
 )
 
-// The boolean probe form measures a Form C site where it stands, by evaluating
-// both readings of it and yielding the original's. That is what makes its
-// conditions different in kind from the return form's: the mutant there *skips*
-// an operand, so only that operand has to be inert, while here both readings
-// run and the whole site has to be.
-//
-// The second half of that is the one a reader would miss, and it is what these
-// tests are mostly about: a mutant may evaluate operands the original
-// short-circuited past, so a site is only probeable when *every* operand in it
-// is safe to evaluate — whichever way the operators are arranged.
-
-// boolProbeOf returns the probe hint of the one candidate of a rule.
 func boolProbeOf(t *testing.T, got scanned, rule string) *ProbeSite {
 	t.Helper()
 
@@ -31,8 +19,6 @@ func boolProbeOf(t *testing.T, got scanned, rule string) *ProbeSite {
 	return nil
 }
 
-// TestAComparisonIsProbedWhereItStands is the ordinary case, and most of what a
-// run catalogues.
 func TestAComparisonIsProbedWhereItStands(t *testing.T) {
 	t.Parallel()
 
@@ -58,12 +44,6 @@ func Above(a, b int) bool {
 	}
 }
 
-// TestASiteWithAnEffectInItIsNotProbed is the first condition, and the reason
-// it is asked of the whole site.
-//
-// Both readings are evaluated, so a call anywhere in the expression would be
-// made twice — and a probe tree that called a function twice would not be the
-// program it claims to be running.
 func TestASiteWithAnEffectInItIsNotProbed(t *testing.T) {
 	t.Parallel()
 
@@ -85,19 +65,6 @@ func Above(a int) bool {
 	}
 }
 
-// TestASiteAMutantCouldPanicInIsNotProbed is the condition a reader would miss,
-// and the one that makes short-circuiting safe.
-//
-// `x != nil && x.n > 0` never dereferences a nil pointer: the left operand
-// guards the right. Its `and-to-or` mutant is `x != nil || x.n > 0`, which
-// reads `x.n` exactly when x is nil. The probe evaluates both readings, so it
-// would panic where the original never could — and the mutant's own execution
-// would panic too, which is a difference the run finds out by running it rather
-// than one a probe may quietly record as "no infection".
-//
-// Nothing here asks about short-circuiting at all. [guardResolver.panicFree]
-// walks the whole expression and refuses a field reached through a pointer, so
-// every rearrangement of the operators is covered by one question asked once.
 func TestASiteAMutantCouldPanicInIsNotProbed(t *testing.T) {
 	t.Parallel()
 
@@ -119,20 +86,11 @@ func Positive(x *Box) bool {
 			t.Errorf("%s: probe site = %+v, and a reading of this site can dereference nil", rule, site)
 		}
 	}
-	// The nil check itself is probed, and the contrast is the whole reason the
-	// condition is about a *site* rather than about a statement. `x != nil` is
-	// its own Form C site; both readings of it compare a pointer with nil and
-	// neither touches what it points at, so evaluating it twice is exactly as
-	// safe as evaluating it once. What the refusals above have in common is not
-	// the `&&` — it is that the site's own bytes hold a dereference.
 	if site := boolProbeOf(t, got, "neq-to-eq"); site == nil {
 		t.Error("the nil check is not probed, though neither reading of it dereferences anything")
 	}
 }
 
-// TestAGuardedDereferenceIsProbedOnceItIsGuardedByAValue is the same shape with
-// the hazard removed, so that the refusal above is about the dereference rather
-// than about the `&&`.
 func TestAGuardedDereferenceIsProbedOnceItIsGuardedByAValue(t *testing.T) {
 	t.Parallel()
 
@@ -151,9 +109,6 @@ func Positive(a, b int) bool {
 	}
 }
 
-// TestTheWholeConditionAndEachHalfAreTheirOwnSites is what the nesting rests
-// on: an `&&` is a site and so is each comparison inside it, so the rewrite has
-// to compose one inside the other.
 func TestTheWholeConditionAndEachHalfAreTheirOwnSites(t *testing.T) {
 	t.Parallel()
 
@@ -183,12 +138,6 @@ func Between(v, lo, hi int) bool {
 	}
 }
 
-// TestANonBooleanSiteIsNotProbedByThisForm keeps the helper's signature
-// honest: it takes `bool`, so only the universe bool may reach it.
-//
-// A named boolean type is a Form C' site rather than a Form C one, and passing
-// one to a `func(uint32, bool, bool) bool` would not compile. The guard form is
-// what decides, which is why nothing here re-derives the type.
 func TestANonBooleanSiteIsNotProbedByThisForm(t *testing.T) {
 	t.Parallel()
 

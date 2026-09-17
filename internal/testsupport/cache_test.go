@@ -13,14 +13,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
-// TestCacheDirIsTheEnvironmentsCacheRoot keeps the forwarder honest for the
-// fourteen call sites that still go through it.
-//
-// Each of them uses the returned path as the cache *root* — the directory
-// go-mutants puts its own `go-mutants` directory in — and each of them then
-// asserts on what the code under test wrote below it. A forwarder that returned
-// the moved HOME, or the build cache, or a path that did not exist yet would
-// leave every one of those tests passing against a directory nothing writes to.
 func TestCacheDirIsTheEnvironmentsCacheRoot(t *testing.T) {
 	cache := testsupport.CacheDir(t)
 
@@ -43,8 +35,6 @@ func TestCacheDirIsTheEnvironmentsCacheRoot(t *testing.T) {
 		t.Errorf("the cache root %s is outside the moved HOME %s", cache, home)
 	}
 
-	// The rest of the policy comes with it, which is the reason the helper is a
-	// forwarder rather than its own implementation.
 	if got := os.Getenv("GOFLAGS"); got != "-mod=readonly" {
 		t.Errorf("GOFLAGS = %q, so CacheDir is not applying the harness policy", got)
 	}

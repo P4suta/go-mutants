@@ -20,9 +20,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// probeRun builds one probe pass over a log path that does not exist, which is
-// the ordinary shape here: the fake runner starts no process, so nothing writes
-// a log, and a missing log is the empty set of infections.
 func probeRun(logPath string) execute.ProbeRun {
 	return execute.ProbeRun{
 		Timeout: mutantTimeout,
@@ -32,15 +29,6 @@ func probeRun(logPath string) execute.ProbeRun {
 	}
 }
 
-// TestRunProbeMapsExitCodesToOutcomes is the classification the whole layer
-// rests on: exactly one exit status is a measurement, and every other end of a
-// probe process is an outcome that carries no infection facts at all.
-//
-// Nothing here may be read as "nothing was infected". A failing suite, a
-// supervisor's kill, a runtime that could not open its log and a process that
-// never started are four different things and none of them is evidence that a
-// site was never reached — which is what an empty set of indices would say, and
-// what would license skipping the very executions that find the kills.
 func TestRunProbeMapsExitCodesToOutcomes(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -106,10 +94,6 @@ func TestRunProbeMapsExitCodesToOutcomes(t *testing.T) {
 	}
 }
 
-// TestRunProbeStopsAtTheFirstBinaryThatProvesNothing pins the short-circuit,
-// which is a soundness rule rather than a saving: the indices the remaining
-// binaries would append cannot be combined with a pass that already failed, so
-// running them would only produce a subset that looks like a complete answer.
 func TestRunProbeStopsAtTheFirstBinaryThatProvesNothing(t *testing.T) {
 	f := &fake{respond: func(_ context.Context, c call) runner.Result {
 		if c.program() == "example.com/b.test" {
@@ -133,13 +117,6 @@ func TestRunProbeStopsAtTheFirstBinaryThatProvesNothing(t *testing.T) {
 	}
 }
 
-// TestRunProbeTreatsAMissingLogAsEmpty is the one absence that is a fact.
-//
-// The generated runtime writes its header in init, before any test code runs,
-// so a binary that exited zero having written no log is a binary that never
-// linked a probe — and one that never linked a probe cannot have run a probed
-// site. The set has to be non-nil, because nil is what every outcome that
-// proves nothing carries and the two must not be confused.
 func TestRunProbeTreatsAMissingLogAsEmpty(t *testing.T) {
 	f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
 
@@ -157,10 +134,6 @@ func TestRunProbeTreatsAMissingLogAsEmpty(t *testing.T) {
 	}
 }
 
-// TestRunProbeReportsAnUnreadableLog is the other side of that door. A log that
-// exists and cannot be read against this catalogue is a measurement that
-// happened and cannot be interpreted, and reading it as the empty set would
-// turn a damaged file into a licence to skip every execution.
 func TestRunProbeReportsAnUnreadableLog(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -205,9 +178,6 @@ func TestRunProbeReportsAnUnreadableLog(t *testing.T) {
 	}
 }
 
-// TestRunProbeReadsTheLogItsBinariesWrote is the whole point of the pass: the
-// indices come back sorted, distinct, and bounded by the catalogue they were
-// minted against.
 func TestRunProbeReadsTheLogItsBinariesWrote(t *testing.T) {
 	digest := strings.Repeat("b", 64)
 	log := filepath.Join(t.TempDir(), "infection.log")
@@ -250,9 +220,6 @@ func TestRunProbeReadsTheLogItsBinariesWrote(t *testing.T) {
 	}
 }
 
-// TestRunProbeRefusesAPassItCannotMeasure covers the fail-closed refusals. Each
-// of them would otherwise end as an empty set of indices, which is the one
-// answer that must never be produced by having measured nothing.
 func TestRunProbeRefusesAPassItCannotMeasure(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "infection.log")
 	cases := []struct {
@@ -321,14 +288,6 @@ func TestRunProbeRefusesAPassItCannotMeasure(t *testing.T) {
 	}
 }
 
-// TestProbeEnvSetsTheLogAndNoActiveMutant pins the two halves of a probe
-// process's environment.
-//
-// The log variable is what turns the linked-in runtime from a nil check into a
-// recorder. The activation variable's *absence* is the other half and is the
-// one that matters: a probe tree has no activation runtime, so a mutant name
-// there could only come from a developer's shell, and the whole claim of the
-// pass is that what ran is the program the user wrote.
 func TestProbeEnvSetsTheLogAndNoActiveMutant(t *testing.T) {
 	scratch := t.TempDir()
 	log := filepath.Join(scratch, "infection.log")
@@ -360,9 +319,6 @@ func TestProbeEnvSetsTheLogAndNoActiveMutant(t *testing.T) {
 	}
 }
 
-// TestRunProbeComposesTheChildInvocation pins that a probe process is started
-// exactly as a mutant's is — same working directory, same paired timeouts —
-// because the point of the pass is that the same tests run the same way.
 func TestRunProbeComposesTheChildInvocation(t *testing.T) {
 	f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
 	run := probeRun(filepath.Join(t.TempDir(), "infection.log"))
@@ -391,14 +347,6 @@ func TestRunProbeComposesTheChildInvocation(t *testing.T) {
 	}
 }
 
-// TestRunProbePassesTheOutputLimit is [RunOne]'s output budget applied to the
-// probe pass, and it is the same claim for the same reason: a pass whose
-// binaries print in a loop must not take a run's memory with it, and a caller
-// that raised or lowered the cap must be the one deciding that.
-//
-// The pass also reports what it could not keep. A probe's capture is what a
-// reader of a `test-failed` or a `timed-out` pass has to work from, and one
-// silently missing a megabyte reads exactly like a suite that said little.
 func TestRunProbePassesTheOutputLimit(t *testing.T) {
 	deciding := runner.Result{
 		ExitCode:    1,
@@ -431,16 +379,6 @@ func TestRunProbePassesTheOutputLimit(t *testing.T) {
 	}
 }
 
-// TestRunProbeAndRunOneShareTheProcessCore keeps the two passes measuring the
-// same program: a mutant's binary and a probe's are started with the same
-// argument vector, so a change to one that did not reach the other would
-// silently make the probe a measurement of something else.
-//
-// One argument is deliberately not shared and is named here rather than
-// tolerated. A mutant run stops at the first test that fails, because one
-// failure is its whole answer; a probe pass may not, because its answer is
-// accumulated by every test that runs. Naming the exception is what keeps a
-// *second* difference a failure.
 func TestRunProbeAndRunOneShareTheProcessCore(t *testing.T) {
 	args := []string{"-test.run=^TestRoundTrip$", "-test.count=1"}
 
@@ -486,11 +424,6 @@ func TestRunProbeAndRunOneShareTheProcessCore(t *testing.T) {
 	}
 }
 
-// TestRunProbeNamesTheBinaryACancellationCutOff is [RunOne]'s rule applied to
-// the probe pass, and it is the same argument: a pass that was cut off names
-// the binary it was in, because that is what a reader of a Ctrl-C is looking
-// for, and one that was cancelled before it started anything names nothing
-// rather than the command it was about to run.
 func TestRunProbeNamesTheBinaryACancellationCutOff(t *testing.T) {
 	t.Run("a child the cancellation killed", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
@@ -554,15 +487,6 @@ func TestRunProbeNamesTheBinaryACancellationCutOff(t *testing.T) {
 	})
 }
 
-// TestRunProbeLabelsEachBinaryStartAsProbeRun keeps the two passes over one
-// tree apart in the account of a run.
-//
-// A probe process and a mutant process are the same binary started the same way
-// — that is the whole point of them sharing [startTarget] — so in a recording
-// they are told apart by their label and by nothing else. The subject names the
-// package the pass is *about*, which is a fact about the pass rather than about
-// each child: a pass narrowed to one binary is a measurement of that package,
-// and a pass over several is a measurement of no single one, so it names none.
 func TestRunProbeLabelsEachBinaryStartAsProbeRun(t *testing.T) {
 	t.Parallel()
 
@@ -624,15 +548,6 @@ func TestRunProbeLabelsEachBinaryStartAsProbeRun(t *testing.T) {
 	})
 }
 
-// TestRunProbeNamesTheBinariesItStartedWhenAPassCannotBeMade keeps the account
-// of a pass that failed as complete as the account of one that worked.
-//
-// A pass whose second binary could not be started is exactly the pass somebody
-// has to diagnose, and "which binaries had already run" is the first thing they
-// need: the first binary ran a whole test suite, and a report that named none
-// of it would describe a pass that started nothing. The sequences go with them,
-// because the output of the binary that did run is in the recording and this is
-// what points at it.
 func TestRunProbeNamesTheBinariesItStartedWhenAPassCannotBeMade(t *testing.T) {
 	t.Parallel()
 
@@ -658,9 +573,6 @@ func TestRunProbeNamesTheBinariesItStartedWhenAPassCannotBeMade(t *testing.T) {
 	if !slices.Equal(attempt.Binaries, want) {
 		t.Errorf("Binaries = %q, want %q — both were started, and one of them would not run", attempt.Binaries, want)
 	}
-	// The failure names the binary that would not start, and neither the first
-	// one tried nor the pass's subject: a caller reporting the package has to be
-	// pointed at the one that broke.
 	var failure *execute.Error
 	if !errors.As(attempt.Err, &failure) {
 		t.Fatalf("err = %v, want an *execute.Error", attempt.Err)
@@ -668,8 +580,6 @@ func TestRunProbeNamesTheBinariesItStartedWhenAPassCannotBeMade(t *testing.T) {
 	if failure.Package != "example.com/b" {
 		t.Errorf("Package = %q, want example.com/b, the binary that would not start", failure.Package)
 	}
-	// One sequence: the binary that ran. The one that never became a process is
-	// recorded too, by internal/runner, and this fake records what it is given.
 	if got := execSeqs(sink); !slices.Equal(attempt.ExecSeqs, got) {
 		t.Errorf("ExecSeqs = %v, want the recording's own %v", attempt.ExecSeqs, got)
 	}

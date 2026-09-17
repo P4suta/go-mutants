@@ -14,54 +14,12 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// aliasBase is the local name every guard would like to spell the generated
-// runtime package with.
-//
-// Two leading underscores are not a Go convention, and that is the point: the
-// name has to be one no human wrote, because a name anything in the package
-// already binds gets a bumped alias and a diff a reader has to reconcile. It
-// stays a valid, exported-nothing identifier — a package alias is file-scoped
-// and never escapes into the package's API.
 const aliasBase = "__gm"
 
-// aliasFor returns the name this file will import the runtime package under,
-// given the names its package already binds.
-//
-// Two scopes are consulted, because an alias can be wrong in two different
-// ways, and the quieter of the two is the one that reaches further than this
-// file.
-//
-// Every identifier in the file is considered taken, not merely the file-scope
-// declarations. A local variable named "__gm" inside one function would shadow
-// a file-scoped import for exactly the statements a guard is most likely to sit
-// in, and the resulting failure — "__gm.M undefined (type int has no field M)"
-// — would name the generated runtime rather than the collision that caused it.
-// Scanning every identifier costs one walk and rules the whole class out.
-//
-// Every identifier the package block binds is taken too, and that one is not
-// shadowing at all: Go forbids the same name appearing in a file block and in
-// the package block of the same package, so a `var __gm` in a sibling file
-// makes `import __gm "…"` here a hard error — "__gm already declared through
-// import of package …" — no matter that the two are in different files. Those
-// names arrive through reserved, gathered from the directory by [packageNames],
-// because a file cannot see them by looking at itself.
-//
-// The implicit local name of an unaliased import counts too, since no
-// identifier node spells it: `import "example.com/__gm"` binds "__gm" as surely
-// as an explicit alias does.
 func aliasFor(file *ast.File, reserved map[string]bool) string {
 	return aliasIn(takenNames(file, reserved))
 }
 
-// takenNames is the set of identifiers a rewrite of this file may not bind: the
-// two scopes [aliasFor] documents, gathered once.
-//
-// It is a set rather than an answer because the alias is not the only name a
-// rewrite invents. The probe form declares a temporary per result of a `return`
-// and has to dodge exactly the same identifiers for exactly the same reasons —
-// a temporary shadowing something the file spells would change what an operand
-// reads — so the set is computed once per file and both choices are made
-// against it.
 func takenNames(file *ast.File, reserved map[string]bool) map[string]bool {
 	taken := make(map[string]bool, len(reserved))
 	for name := range reserved {
@@ -84,7 +42,6 @@ func takenNames(file *ast.File, reserved map[string]bool) map[string]bool {
 	return taken
 }
 
-// aliasIn picks the runtime import alias against a set of taken names.
 func aliasIn(taken map[string]bool) string {
 	if !taken[aliasBase] {
 		return aliasBase
@@ -97,39 +54,6 @@ func aliasIn(taken map[string]bool) string {
 	}
 }
 
-// importSplices returns the edits that make the runtime package reachable from
-// one file, under the local name alias.
-//
-// All three forms are insertions rather than replacements, and that is a
-// deliberate constraint rather than an accident of the shapes involved. An
-// insertion of text holding no line break is line-preserving whatever the file
-// around it looks like, while replacing a declaration would have to prove that
-// the bytes replaced hold no line break either — and `import` followed by a
-// newline and then the path is legal Go, so that proof would fail on source a
-// user is entitled to write.
-//
-// The three shapes an import section can take:
-//
-//   - A parenthesized list gets the new import inserted just inside the "(", so
-//     it lands on the same line as the "import (" the file already had.
-//   - A single unparenthesized import is parenthesized in place, by inserting
-//     "(" before the existing spec and "; alias path)" after it. The spec's own
-//     bytes — alias, blank import, comment position — are never touched.
-//   - A file with no imports at all gets one appended to its package clause,
-//     after an explicit semicolon. A package clause is a single line by
-//     construction, so this too preserves the file's line numbering.
-//
-// Only the first import declaration is considered. A file may hold several, and
-// picking the first one keeps the choice a function of the file rather than of
-// anything this package remembers between runs.
-//
-// More than one import may be written, and the extra ones are not the runtime's:
-// a guard that spells a type belonging to a package the file does not import
-// carries the import it needs (see [discover.Completion]), and they arrive here
-// as `completions`. Nothing about the shapes changes — every form is still an
-// insertion of text holding no line break, whether it writes one spec or six —
-// which is why the line-preservation argument above is written about the
-// insertion rather than about the import.
 func importSplices(
 	file *ast.File, tok *token.File, srcPath, alias, importPath string, completions []discover.Completion,
 ) ([]Splice, error) {
@@ -155,10 +79,6 @@ func importSplices(
 			}
 		}
 		if len(specs) == 1 {
-			// The parenthesised form would be equally legal and would move
-			// every existing instrumented file's bytes, for nothing: a file
-			// that needs no completion is the ordinary case, and its rewrite
-			// should be the same rewrite it was.
 			return []Splice{insertion(offset(file.Name.End()), "; import "+specs[0])}, nil
 		}
 		return []Splice{insertion(offset(file.Name.End()), "; import ("+strings.Join(specs, "; ")+")")}, nil
@@ -169,8 +89,6 @@ func importSplices(
 	}
 
 	if len(decl.Specs) != 1 {
-		// Unreachable: only a parenthesized declaration can hold anything other
-		// than exactly one spec.
 		return nil, &Error{
 			Code: CodeImportInjection,
 			Message: "internal error: " + strconv.Quote(srcPath) + " has an unparenthesized import declaration with " +
@@ -184,15 +102,6 @@ func importSplices(
 	}, nil
 }
 
-// importSpecs renders the specs one file gains: the generated runtime, and
-// whatever a guard's spelling needs the file to import and it does not.
-//
-// Every name is checked against every other, and a collision is refused rather
-// than resolved. Discovery chose the completion names against the file's own
-// identifiers and the package block, and internal/instrument chose the alias
-// against the same two scopes, so two of them colliding is not a source the
-// user wrote — it is the two phases having come to disagree, and the last place
-// to notice that is before writing a file that does not compile.
 func importSpecs(srcPath, alias, importPath string, completions []discover.Completion) ([]string, error) {
 	specs := []string{alias + " " + strconv.Quote(importPath)}
 	bound := map[string]string{alias: importPath}
@@ -218,7 +127,6 @@ func importSpecs(srcPath, alias, importPath string, completions []discover.Compl
 	return specs, nil
 }
 
-// either is the two-way choice a message needs and Go has no operator for.
 func either(cond bool, yes, no string) string {
 	if cond {
 		return yes
@@ -226,8 +134,6 @@ func either(cond bool, yes, no string) string {
 	return no
 }
 
-// firstImportDecl returns the file's first import declaration, or nil when it
-// has none.
 func firstImportDecl(file *ast.File) *ast.GenDecl {
 	for _, decl := range file.Decls {
 		gen, ok := decl.(*ast.GenDecl)

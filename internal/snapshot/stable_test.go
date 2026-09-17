@@ -17,13 +17,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/tempowner"
 )
 
-// TestStableNameIsDeterministicAndPrefixed pins the shape of the name itself.
-//
-// Everything the stable name buys depends on it being a function of the source
-// root and nothing else — not of the clock, not of the process, not of how
-// many runs came before. The prefix is load bearing twice over: the Cleanup
-// guard refuses a directory whose name does not carry it, and the sweep
-// collects the abandoned ones by it.
 func TestStableNameIsDeterministicAndPrefixed(t *testing.T) {
 	t.Parallel()
 
@@ -47,16 +40,6 @@ func TestStableNameIsDeterministicAndPrefixed(t *testing.T) {
 	}
 }
 
-// TestCreateUsesTheSameDirectoryNameForTheSameSourceRoot is the whole point of
-// the stable name, stated as the property a consumer measures.
-//
-// The go command hashes the absolute directory of a package into every compile
-// action id when -trimpath is not passed, and go-mutants deliberately does not
-// pass it: -trimpath changes the program under test, and a test that reads
-// runtime.Caller paths would behave differently in the snapshot than in the
-// user's tree. So a snapshot at a fresh random path costs the shared build
-// cache one full copy of the project's objects per run and hits nothing from
-// the last one. Two runs of one root therefore have to land on one path.
 func TestCreateUsesTheSameDirectoryNameForTheSameSourceRoot(t *testing.T) {
 	t.Parallel()
 
@@ -78,8 +61,6 @@ func TestCreateUsesTheSameDirectoryNameForTheSameSourceRoot(t *testing.T) {
 		t.Errorf("the snapshot of %s landed in %s, want %s", src, first, want)
 	}
 
-	// A different root is a different name, or the two would fight over one
-	// directory for no reason and each would keep evicting the other's copy.
 	other, otherStable := snapshotOnce(t, elsewhere, dest)
 	if other == first {
 		t.Errorf("%s and %s share the snapshot directory %s", src, elsewhere, other)
@@ -97,13 +78,6 @@ func TestCreateUsesTheSameDirectoryNameForTheSameSourceRoot(t *testing.T) {
 	}
 }
 
-// TestCreateFallsBackToARandomNameWhileTheStableDirectoryIsLive covers the one
-// thing the stable name must never buy: two processes in one directory.
-//
-// A second run of the same root while the first is still going finds the
-// stable name taken by a lock somebody holds, and takes a random name instead.
-// It loses the build-cache hits and keeps the isolation, which is the only
-// acceptable direction for that trade.
 func TestCreateFallsBackToARandomNameWhileTheStableDirectoryIsLive(t *testing.T) {
 	t.Parallel()
 
@@ -146,7 +120,6 @@ func TestCreateFallsBackToARandomNameWhileTheStableDirectoryIsLive(t *testing.T)
 		t.Errorf("the fallback directory is %q, want a name beginning with %q", base, DirPrefix)
 	}
 
-	// Both are complete copies, and neither disturbed the other's.
 	if second.WorkspaceDigest != first.WorkspaceDigest {
 		t.Errorf("the fallback copy hashes %s, want %s", second.WorkspaceDigest, first.WorkspaceDigest)
 	}
@@ -155,15 +128,6 @@ func TestCreateFallsBackToARandomNameWhileTheStableDirectoryIsLive(t *testing.T)
 	}
 }
 
-// TestCreateReplacesAnOrphanedStableDirectory is the rule that keeps a stable
-// name from turning into a cache of trees.
-//
-// The directory a killed run left behind holds that run's tree, mutated in
-// place by instrumentation and stale by however long the checkout has moved
-// on. It is never adopted: the sweep collects it exactly as it collects any
-// other orphan, and the copy is made again from the source. What is reused
-// across runs is the path, so that the build cache recognises it — never the
-// bytes, which only the workspace digest may speak for.
 func TestCreateReplacesAnOrphanedStableDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -171,8 +135,6 @@ func TestCreateReplacesAnOrphanedStableDirectory(t *testing.T) {
 	writeTree(t, src, map[string]string{"a.go": "package a\n"})
 	dest := t.TempDir()
 
-	// The shape a SIGKILLed run leaves: the marker written, the lock file
-	// present, and nobody holding it.
 	orphan := filepath.Join(dest, StableName(absolutePath(t, src)))
 	if err := os.Mkdir(orphan, 0o700); err != nil {
 		t.Fatalf("creating %s: %v", orphan, err)
@@ -214,14 +176,6 @@ func TestCreateReplacesAnOrphanedStableDirectory(t *testing.T) {
 	}
 }
 
-// TestCreateLeavesAKeptStableDirectoryAlone holds the stable name to the
-// promise KeepTemp makes.
-//
-// A kept directory is the answer to the one question a removed one cannot
-// answer — what the tree a failing mutant ran in actually looked like — and a
-// keep the next run overwrote because it wanted the name would be a keep in
-// name only. So the next run takes a random name and leaves the evidence
-// exactly where it was left.
 func TestCreateLeavesAKeptStableDirectoryAlone(t *testing.T) {
 	t.Parallel()
 
@@ -237,8 +191,6 @@ func TestCreateLeavesAKeptStableDirectoryAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claiming %s: %v", kept, err)
 	}
-	// Keep records the decision in the marker and releases the lock, which is
-	// exactly the state a --keep-temp run exits in.
 	if err = owner.Keep(); err != nil {
 		t.Fatalf("keeping %s: %v", kept, err)
 	}
@@ -272,16 +224,6 @@ func TestCreateLeavesAKeptStableDirectoryAlone(t *testing.T) {
 	}
 }
 
-// TestClaimDestinationLeavesADirectoryAnotherProcessOwns closes the one gap a
-// stable name opens between making the directory and claiming it.
-//
-// With a random name nobody else could be inside the directory Create had just
-// made, so removing it after a failed claim was always removing its own work.
-// A stable name is a name another process can arrive at: a run stopped between
-// its Mkdir and its Claim for longer than the legacy sweep window would find,
-// on resuming, that another run had swept the empty directory, recreated it
-// and claimed it. The claim then loses to that run's lock, and what it must
-// not do is remove that run's live snapshot on the way out.
 func TestClaimDestinationLeavesADirectoryAnotherProcessOwns(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), StableName("/home/example/project"))
@@ -324,12 +266,6 @@ func TestClaimDestinationLeavesADirectoryAnotherProcessOwns(t *testing.T) {
 	}
 }
 
-// snapshotOnce creates a snapshot, records where it landed and whether it got
-// the stable name, and removes it again before returning.
-//
-// The removal is what makes two calls two successive runs rather than two live
-// snapshots racing for one name — which is a different rule, tested
-// separately.
 func snapshotOnce(t *testing.T, src, dest string) (dir string, stable bool) {
 	t.Helper()
 	snap, err := Create(src, Options{DestParent: dest})
@@ -343,8 +279,6 @@ func snapshotOnce(t *testing.T, src, dest string) (dir string, stable bool) {
 	return dir, stable
 }
 
-// absolutePath is filepath.Abs with the test's error handling, for a test that
-// has to name the directory Create will choose before Create chooses it.
 func absolutePath(t *testing.T, path string) string {
 	t.Helper()
 	abs, err := filepath.Abs(path)

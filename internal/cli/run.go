@@ -27,13 +27,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/tui"
 )
 
-// eventBuffer is how many events the channel between the engine and the
-// renderer holds.
-//
-// The renderer drains continuously, so the buffer is not what keeps the engine
-// from blocking — draining is. It exists so that a burst of events during a
-// phase change does not serialise the engine behind a terminal write, and 64 is
-// comfortably more than any phase emits at once.
 const eventBuffer = 64
 
 const runLong = `Snapshot the workspace, prove the baseline, and run the mutants.
@@ -114,9 +107,6 @@ A completed run exits 0 unless a policy gate the user opted into failed. Nothing
 here fails a build by default: --strict and policy.minimum_score are how you ask
 for one.`
 
-// runOptions holds the flag destinations for one `run` invocation. It is a
-// struct rather than closure variables so that the command can be built more
-// than once in one process, which is what the tests do.
 type runOptions struct {
 	include   []string
 	exclude   []string
@@ -143,55 +133,19 @@ type runOptions struct {
 	noTUI     bool
 	noDiags   bool
 
-	// recording is the account the run kept of itself, filled in by [execute].
-	// It is held here rather than returned because the diagnostics bundle a
-	// failed run writes is assembled from it after everything else is done.
 	recording *traceRecording
 }
 
-// verbosity is the level `-v` asked for, clamped to what the renderer has.
-//
-// Deeper than the deepest level is the deepest level. `-vvv` is a typo with one
-// obvious meaning, and refusing it — or, worse, accepting it as a level nothing
-// implements — would be pedantry in front of somebody who is already trying to
-// see more.
 func (o *runOptions) verbosity() int { return min(o.verbose, console.MaxVerbosity) }
 
-// publishTrace reports whether the engine should fan its recording out onto the
-// event stream.
-//
-// Every verbose level needs it, not only `-vv`. What `-v` prints of the
-// recording is two events — what a sweep reclaimed, and the whole reason
-// coverage was given up — and both are recorded rather than published as engine
-// events, because they are the account of the run rather than its findings. The
-// alternative was a second path for those two facts to reach a console by,
-// which is two sources of truth for one sentence.
 func (o *runOptions) publishTrace() bool { return o.verbosity() >= console.VerbosityDetail }
 
-// The `--keep-temp` modes, as they are written on the command line.
-//
-// They are the words [engine.KeepTemp.String] prints, and that is a contract
-// rather than a coincidence: a mode a run reports in one vocabulary and accepts
-// in another is a mode whose own documentation misleads. keepTempNever is the
-// zero value's word — nothing ever produces it, since leaving the flag off says
-// the same thing, but somebody who read it in a message and typed it back must
-// not be refused for having believed it.
-//
-// keepTempAlways is also the flag's [pflag.Flag.NoOptDefVal]: pflag expresses an
-// optional value as the value the flag takes when it is written without one, and
-// "always" is what a bare `--keep-temp` can only mean.
 const (
 	keepTempNever     = "never"
 	keepTempAlways    = "always"
 	keepTempOnFailure = "on-failure"
 )
 
-// parseKeepTemp turns the flag's word into the engine's mode.
-//
-// The vocabulary is stated once, here, and the environment variable feeds its
-// value through this same check — so `GO_MUTANTS_KEEP_TEMP=sometimes` is refused
-// in the words somebody who typed `--keep-temp=sometimes` would read, and there
-// is one list of what the option accepts rather than two that can drift.
 func parseKeepTemp(value string) (engine.KeepTemp, error) {
 	switch strings.TrimSpace(value) {
 	case "", keepTempNever:
@@ -211,26 +165,17 @@ func parseKeepTemp(value string) (engine.KeepTemp, error) {
 	}
 }
 
-// newRunCommand builds the `run` command.
 func newRunCommand() *cobra.Command { return newRunCommandWith(&runOptions{}) }
 
-// newRunCommandWith builds it around one flag destination, so that a test can
-// read what a command line filled in without driving a whole run.
 func newRunCommandWith(o *runOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [flags] [-- test argv ...]",
 		Short: "Snapshot the workspace, prove the baseline, and run the mutants",
 		Long:  runLong,
-		// Positional arguments are accepted here and rejected in execute, so
-		// that the rejection can explain the `--` separator instead of cobra
-		// reporting "accepts 0 arg(s), received 3".
-		Args: cobra.ArbitraryArgs,
-		RunE: o.execute,
+		Args:  cobra.ArbitraryArgs,
+		RunE:  o.execute,
 	}
 	flags := cmd.Flags()
-	// StringArrayVar, never StringSliceVar: a pattern is a single opaque value.
-	// Splitting on commas would make `--include "a,b/**"` mean something the
-	// user did not write, and the glob language has no way to escape a comma.
 	flags.StringArrayVar(&o.include, "include", nil,
 		"`GLOB` a file must match to be mutated; repeat for more (default: mutation.include, or **/*.go)")
 	flags.StringArrayVar(&o.exclude, "exclude", nil,
@@ -243,18 +188,6 @@ func newRunCommandWith(o *runOptions) *cobra.Command {
 		"run only the mutant whose id starts with `ID_PREFIX`; it must select exactly one")
 	flags.StringVar(&o.changed, "changed", "",
 		"execute only the mutants on lines changed since `GIT_REF` (default: the upstream of HEAD); write it as --changed=REF")
-	// The value is optional, which pflag expresses with NoOptDefVal — and which
-	// also means `--changed REF` with a space is not the same thing as
-	// `--changed=REF`: pflag takes the bare form as the flag with its default
-	// and leaves REF as a positional argument. That is pflag's rule for every
-	// optional-value flag and cannot be turned off, so [passthrough] recognises
-	// the mistake and says how to write it instead.
-	//
-	// The default is git's own notation for the upstream branch, so that a user
-	// who writes it out longhand gets exactly what the bare flag does:
-	// [gitdiff.UpstreamRef] is a request to resolve the upstream by name rather
-	// than a ref to be diffed against, so both spellings record `origin/main`
-	// and both reach GOM7712 on a branch that tracks nothing.
 	flags.Lookup("changed").NoOptDefVal = gitdiff.UpstreamRef
 	flags.StringVar(&o.shard, "shard", "",
 		"execute only shard `K/N` of the mutants, 1-based; every shard reports the whole catalogue, and `go-mutants report merge` combines them")
@@ -265,46 +198,20 @@ func newRunCommandWith(o *runOptions) *cobra.Command {
 	flags.StringVar(&o.trace, "trace", "",
 		"record this run's diagnostic account into `DIR`; a bare --trace records under report.directory/trace, "+
 			"the value takes an equals sign, and GO_MUTANTS_TRACE=1|true|DIR asks for the same")
-	// The value is optional, which pflag expresses with NoOptDefVal — the same
-	// arrangement `--changed` has above, with the same consequence: `--trace DIR`
-	// with a space is not the same thing as `--trace=DIR`, and [passthrough]
-	// recognises the mistake and says how to write it instead.
-	//
-	// pflag renders the sentinel in `--help`, so it is a word rather than a
-	// path: `--trace DIR[="default"]` reads as what it is, and `--trace=default`
-	// means what a reader of that line would expect it to mean. See
-	// [traceDefaultDirectory].
 	flags.Lookup("trace").NoOptDefVal = traceDefaultDirectory
 	flags.StringVar(&o.keepTemp, "keep-temp", "",
 		"leave the run's snapshot and scratch directory on disk instead of removing them: `MODE` is "+
 			keepTempAlways+" or "+keepTempOnFailure+", a bare --keep-temp is "+keepTempAlways+
 			", and the value takes an equals sign (also GO_MUTANTS_KEEP_TEMP)")
-	// The third flag of this shape, with the same consequence: `--keep-temp MODE`
-	// with a space is not the same thing as `--keep-temp=MODE`, and
-	// [passthrough] recognises the mistake and says how to write it instead.
-	// Here the wrong reading is the expensive one — the run would keep its
-	// directories on every path instead of only on failure — so it is refused
-	// rather than resolved.
 	flags.Lookup("keep-temp").NoOptDefVal = keepTempAlways
 	flags.BoolVar(&o.noDiags, "no-diagnostics", false,
 		"do not write a diagnostics bundle when the run fails (also GO_MUTANTS_DIAGNOSTICS=0)")
-	// The pflag default is zero and the real one is described in the usage
-	// text. Printing config.DefaultJobs() as the default would make `--help`
-	// say 8 on a laptop and 4 on a CI runner, and help output that depends on
-	// the machine cannot be diffed, golden-tested, or quoted in a bug report.
-	// Nothing reads the zero: the overlay carries this flag only when pflag
-	// says the user typed it, and `--jobs 0` is refused by the configuration
-	// validator like any other out-of-range worker count.
 	flags.IntVarP(&o.jobs, "jobs", "j", 0,
 		"mutants to execute concurrently (default: execution.jobs, or min(CPUs, 8))")
 	flags.DurationVar(&o.timeout, "timeout", 0,
 		"per-mutant timeout; unset derives max(10s, slowest baseline x 5)")
 	flags.BoolVar(&o.isolate, "isolate", false,
 		"give every worker its own copy of the instrumented tree (default: execution.isolate)")
-	// A string rather than a typed flag, because pflag has a duration type and
-	// no byte-size one. The value goes through config.ParseMemory, so `2GB` is
-	// refused with the same sentence here and in the file, and the diagnostic
-	// names the flag the user typed.
 	flags.StringVar(&o.memory, "memory", "",
 		"per-mutant memory bound, e.g. 2GiB; unset derives max(1GiB, largest baseline peak x 4)")
 	flags.BoolVar(&o.strict, "strict", false,
@@ -317,10 +224,6 @@ func newRunCommandWith(o *runOptions) *cobra.Command {
 		"after the summary, print every rejected mutant with the compiler's own words, and the suppressed sites by reason")
 	flags.BoolVarP(&o.quiet, "quiet", "q", false,
 		"print only the baseline summary, warnings, and the closing summary block")
-	// A count rather than a level: `-v` and `-vv` are what a user types, and a
-	// `--verbose=2` that had to be spelled out would be a level nobody reaches
-	// for. It is the opposite end of the same axis as --quiet, which is why the
-	// two are refused together rather than resolved.
 	flags.CountVarP(&o.verbose, "verbose", "v",
 		"print more: -v adds phase durations, what killed each mutant, and which suites cover a survivor; "+
 			"-vv adds one line per recorded event. Implies --no-tui")
@@ -328,14 +231,10 @@ func newRunCommandWith(o *runOptions) *cobra.Command {
 		"never colourise output, even on a terminal; implies --no-tui")
 	flags.BoolVar(&o.noTUI, "no-tui", false,
 		"never draw the live dashboard; print the plain lines even on a terminal")
-	// Neither is wrong on its own and each is a complete answer, so the pair is
-	// refused rather than resolved: silently letting one win would make the
-	// meaning of a command line depend on a rule nobody wrote down.
 	cmd.MarkFlagsMutuallyExclusive("strict", "no-strict")
 	return cmd
 }
 
-// execute is the `run` command's body.
 func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 	testArgv, err := passthrough(cmd, args)
 	if err != nil {
@@ -355,9 +254,6 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 	if err = checkVerbose(o.verbose, o.quiet, o.json); err != nil {
 		return err
 	}
-	// Checked before a workspace is copied and a baseline is measured. A prefix
-	// of the wrong shape can never name a mutant, and finding that out after
-	// several minutes of work would be a poor way to learn it.
 	if err = checkMutantPrefix(o.mutant); err != nil {
 		return err
 	}
@@ -368,16 +264,10 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 	if err = checkTraceDirectory(flags.Changed("trace"), o.trace); err != nil {
 		return err
 	}
-	// Parsed here, before anything is copied, for the reason the shard is parsed
-	// here: a mode nobody can spell is a mistake about the invocation, and it
-	// costs nothing to say so before a module-sized copy is made.
 	keepTemp, err := parseKeepTemp(o.keepTemp)
 	if err != nil {
 		return err
 	}
-	// Parsed here rather than in the engine for the same reason: `--shard 3/2`
-	// is a mistake about the invocation, and it costs nothing to say so before
-	// the workspace is copied.
 	var shard report.Shard
 	if o.shard != "" {
 		if shard, err = report.ParseShard(o.shard); err != nil {
@@ -403,10 +293,6 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Under --json the document owns standard output, so everything the
-	// renderer writes goes to standard error — the same split `list --json`
-	// makes. The renderer is never simply dropped: the engine's sends block, so
-	// something has to drain them whatever the user asked to see.
 	out := cmd.OutOrStdout()
 	rendered := out
 	if o.json {
@@ -414,15 +300,6 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 	}
 	color := console.ColorEnabled(rendered, o.noColor)
 
-	// The recording is opened before anything is measured, and the id it is
-	// named by is the one the report will be filed under: a trace and the
-	// document it explains have to be pairable afterwards, and the only way to
-	// guarantee that is for one identity to exist before either is written.
-	//
-	// Every run opens one, whether or not a recording was asked for. A run that
-	// asked for none keeps its last events in memory, which costs a bounded
-	// amount once and means the failure nobody expected — exactly the failure
-	// nobody thought to ask for a recording of — still has an account.
 	runID := engine.NewRunID(time.Now())
 	recording, traceErr := openTrace(traceRequest{
 		workspace:       root,
@@ -433,29 +310,15 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 	})
 	o.recording = recording
 	defer func() { _ = recording.close() }()
-	// A warning rather than a returned error, and on standard error rather than
-	// through the renderer: the run is about to happen either way, and the
-	// dashboard would take the line with it when it closes the alternate
-	// screen. See [CodeTraceUnavailable].
 	if traceErr != nil {
 		renderWarning(cmd.ErrOrStderr(), traceErr)
 	}
 
 	ctx, watch, stop := watchSignals(cmd.Context())
 	defer stop()
-	// A second cancellation, downstream of the signal handler's, so that the
-	// dashboard's Ctrl-C key can stop the run without owning the signal
-	// handling. Both paths end in the same place — this context, cancelled,
-	// with the engine unwinding and publishing its partial report — which is
-	// what makes the two renderers agree about what interrupting a run means.
-	// A keystroke leaves no signal behind, so [interpret] reports it as an
-	// interrupt and the process exits 130, exactly as Ctrl-C in plain mode does.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// The dashboard is the default on a terminal and is never the only copy of
-	// anything: what it draws is erased when it exits, and what it kept is
-	// printed underneath by [replayFinal].
 	var (
 		renderer  console.Renderer
 		dashboard *tui.Renderer
@@ -469,9 +332,6 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 		renderer = plain
 	}
 
-	// The renderer starts first and is joined last: the engine's sends block,
-	// so a consumer that is not already running is a deadlock, and a consumer
-	// that is not waited for can lose the closing line to a racing exit.
 	events := make(chan engine.Event, eventBuffer)
 	var (
 		wg        sync.WaitGroup
@@ -502,8 +362,6 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 	})
 	wg.Wait()
 
-	// Best effort, and reported rather than returned: a stream that could not
-	// be synced has nothing to do with what the run measured.
 	if err := recording.close(); err != nil {
 		renderWarning(cmd.ErrOrStderr(), &Error{
 			Code:    CodeTraceUnavailable,
@@ -512,18 +370,12 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	// Once the alternate screen is gone, the scrollback gets what was on it
-	// that still matters. A plain run has already printed all of this.
 	var replay func() error
 	if dashboard != nil {
 		replay = func() error { return replayFinal(rendered, Version, color, dashboard.Final()) }
 	}
 	renderErr = finishRendering(cmd.ErrOrStderr(), renderErr, replay)
 
-	// The document is written whenever there is one, the interrupted path
-	// included: a partial report is still the record of what the run measured,
-	// and a consumer that asked for JSON should not have to parse a console to
-	// find out that it exists.
 	if o.json {
 		if document := publishedDocument(outcome); document != nil {
 			if err := writeReportJSON(out, document); err != nil {
@@ -531,11 +383,6 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 			}
 		}
 	}
-	// Underneath the closing summary, and only when there is a document to
-	// explain: a run that stopped before it had a report has nothing to say
-	// here, and the failure that stopped it has already been reported. A
-	// workspace run explains every module in `use` order, because a rejection
-	// or a skip belongs to the module whose file it is about.
 	if o.explain {
 		for _, rep := range publishedReports(outcome) {
 			if err := explainRun(rendered, color, rep); err != nil {
@@ -548,10 +395,6 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 	}
 
 	if runErr != nil {
-		// The bundle last of all, and never before the error it explains is
-		// decided: what goes into it is the failure as the process is about to
-		// report it, and the path it went to is printed underneath that failure
-		// by [RenderError].
 		return o.withDiagnostics(cmd, root, cfg.Report.Directory, runID, outcome,
 			interpret(runErr, watch.Signal()), runErr)
 	}
@@ -561,25 +404,6 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 	return policyFailure(outcome.Verdict)
 }
 
-// withDiagnostics writes the bundle for a failed run and returns the error the
-// exit status is decided from, which is never changed by having written one.
-//
-// Two runs get no bundle. One the user asked to suppress, and one that was
-// interrupted: nothing went wrong there, there is no failure to explain, and a
-// directory per cancelled run in somebody's tree is exhaust rather than
-// evidence. It is the same predicate `--keep-temp=on-failure` obeys, asked of
-// the engine so that the two answers cannot disagree.
-//
-// A bundle that could not be written is a warning and nothing else. The run has
-// already failed and the user is about to read why; turning "I could not write
-// a diagnostic" into a different exit status would tell a CI job the tool broke
-// where the truth is that the tests did not pass, which is exactly the inversion
-// [CodeDiagnosticsUnavailable] exists to refuse.
-//
-// reported is the failure as the process will report it — [interpret]'s answer,
-// not the engine's raw error — because the bundle's own copy of it has to be
-// what the console said. runErr is the engine's, because only it answers the
-// question about interruption.
 func (o *runOptions) withDiagnostics(
 	cmd *cobra.Command,
 	workspace, reportDirectory, runID string,
@@ -589,15 +413,6 @@ func (o *runOptions) withDiagnostics(
 	if o.noDiags || engine.Interrupted(runErr) {
 		return reported
 	}
-	// A context of the bundle's own, and the two halves of it are for opposite
-	// reasons. The cancellation is detached because the run's context is very
-	// often *done* by the time this runs — a deadline that expired is one of the
-	// ways a run fails, and it is exactly the run whose toolchain and
-	// configuration somebody wants to see — and a `doctor` probed through a dead
-	// context reports six rows of "context deadline exceeded", which diagnoses
-	// the bundle rather than the machine. A bound is then put back on, because a
-	// diagnostic that inherits no deadline is a diagnostic that can hang the
-	// process after the run it explains has finished.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(cmd.Context()), diagnosticsBudget)
 	defer cancel()
 	directory, err := writeDiagnostics(ctx, diagnosticsRequest{
@@ -623,18 +438,6 @@ func (o *runOptions) withDiagnostics(
 	return &diagnosticsError{err: reported, directory: directory}
 }
 
-// runOverlay turns the flags the user actually typed into a configuration
-// layer.
-//
-// Only changed flags are carried. A flag's default is not an opinion: `--jobs`
-// left alone must lose to `execution.jobs` in the file, and the only way to
-// know the difference is pflag's Changed.
-//
-// Two things travel outside it, each for its own reason. The `--` passthrough
-// goes to the engine as [engine.Options.TestArgv], so that the override has
-// exactly one path; setting both would apply the same value twice and leave two
-// places to look when it is wrong. `--mutant` is not a configuration setting at
-// all — it narrows one invocation and is never written in a file.
 func runOverlay(cmd *cobra.Command, o *runOptions) (config.Overlay, error) {
 	flags := cmd.Flags()
 	overlay := config.Overlay{
@@ -645,21 +448,12 @@ func runOverlay(cmd *cobra.Command, o *runOptions) (config.Overlay, error) {
 		Isolate:   config.When(flags.Changed("isolate"), o.isolate),
 		Timeout:   config.When(flags.Changed("timeout"), o.timeout),
 	}
-	// The two spellings are mutually exclusive, so at most one is Changed. Each
-	// carries its own flag's value rather than a constant, so that the explicit
-	// `--strict=false` a script may generate means what it says.
 	switch {
 	case flags.Changed("strict"):
 		overlay.Strict = config.Explicit(o.strict)
 	case flags.Changed("no-strict"):
 		overlay.Strict = config.Explicit(!o.noStrict)
 	}
-	// The profile is the one flag parsed here rather than in the configuration
-	// layer, because the overlay carries a tier and the command line carries a
-	// name. Everything else — every glob, every operator name — is validated by
-	// internal/config against the same rules the file is held to, so a bad value
-	// is reported as the flag the user typed and not as the TOML key they never
-	// wrote.
 	if flags.Changed("profile") {
 		tier, err := config.ParseProfile(o.profile)
 		if err != nil {
@@ -667,9 +461,6 @@ func runOverlay(cmd *cobra.Command, o *runOptions) (config.Overlay, error) {
 		}
 		overlay.Profile = config.Explicit(tier)
 	}
-	// `--cache` is parsed here for the same reason as `--profile`: the overlay
-	// carries a mode and the command line carries a name, and the diagnostic for
-	// a bad one should name the flag the user typed.
 	if flags.Changed("cache") {
 		mode, err := config.ParseCacheMode(o.cache)
 		if err != nil {
@@ -677,11 +468,6 @@ func runOverlay(cmd *cobra.Command, o *runOptions) (config.Overlay, error) {
 		}
 		overlay.CacheMode = config.Explicit(mode)
 	}
-	// `--memory` is parsed here for the reason `--profile` and `--cache` are,
-	// with one more of its own: pflag has no byte-size type, so the flag is a
-	// string and something has to read it. That something is the very function
-	// the file goes through, so a bound written either way means the same
-	// number and a bad one is refused with the same sentence.
 	if flags.Changed("memory") {
 		size, err := config.ParseMemory(o.memory)
 		if err != nil {
@@ -689,11 +475,6 @@ func runOverlay(cmd *cobra.Command, o *runOptions) (config.Overlay, error) {
 		}
 		overlay.Memory = config.Explicit(size)
 	}
-	// `--report` is the third of the same kind: the overlay carries a list of
-	// formats and the command line carries one comma-separated word. `none` is
-	// the reason the parsing cannot be left to the overlay machinery — it means
-	// an explicitly empty list, which has to beat the file's `formats` the way
-	// any other explicit value does, and an empty flag value could not say that.
 	if flags.Changed("report") {
 		formats, err := config.ParseReportFormats(o.report)
 		if err != nil {
@@ -704,13 +485,6 @@ func runOverlay(cmd *cobra.Command, o *runOptions) (config.Overlay, error) {
 	return overlay, nil
 }
 
-// checkMutantPrefix rejects a `--mutant` value that could never name a mutant.
-//
-// Only the shape is checked here. Whether a well-formed prefix matches one
-// mutant, none, or several is a question about the catalogue, which does not
-// exist until the run has copied the workspace and discovered it; the engine
-// answers it and reports a [engine.SelectionError], which [interpret] turns
-// back into a usage error.
 func checkMutantPrefix(value string) error {
 	if value == "" {
 		return nil
@@ -726,13 +500,6 @@ func checkMutantPrefix(value string) error {
 	return nil
 }
 
-// checkExplain refuses `--explain` alongside `--json`.
-//
-// It is a semantic check rather than cobra's MarkFlagsMutuallyExclusive, which
-// would render as a bare usage error: neither flag is wrong on its own, the
-// remedy is to drop one rather than to fix a value, and the reason is worth a
-// sentence. It is the same judgement, and the same code, as `--json` with
-// `--quiet`.
 func checkExplain(explain, asJSON bool) error {
 	if !explain || !asJSON {
 		return nil
@@ -745,17 +512,6 @@ func checkExplain(explain, asJSON bool) error {
 	}
 }
 
-// checkVerbose refuses `-v` alongside the two flags that mean the opposite of
-// it.
-//
-// `--quiet` asks for less of the same output and `-v` for more of it: they are
-// two ends of one axis, and a command line that names both has no reading that
-// is not a guess about which the user meant. `--json` is the same judgement as
-// `--explain` with `--json` — the document is the whole of what that flag
-// writes, and prose interleaved with it would make the output neither readable
-// nor parsable. Both are semantic checks rather than cobra's
-// MarkFlagsMutuallyExclusive for the reason [checkExplain] is: neither flag is
-// wrong on its own, and the reason is worth a sentence.
 func checkVerbose(verbose int, quiet, asJSON bool) error {
 	if verbose == 0 {
 		return nil
@@ -780,17 +536,6 @@ func checkVerbose(verbose int, quiet, asJSON bool) error {
 	}
 }
 
-// checkSelectors refuses `--mutant` alongside a narrowing flag.
-//
-// `--mutant` is a selector and not a filter: it names the one mutant the run is
-// about, and the question it exists to answer — "why did this one survive" —
-// has no smaller version. Combining it with `--changed` or `--shard` can only
-// take that mutant away, and the run would then execute nothing at all and exit
-// 0 having measured nothing, which is the most dangerous kind of green.
-//
-// `--changed` and `--shard` compose, and deliberately so: a shard of a pull
-// request's diff is what a CI matrix asks for, and each narrows a set rather
-// than naming a member of it.
 func checkSelectors(mutant string, changed bool, shard string) error {
 	if mutant == "" {
 		return nil
@@ -812,18 +557,6 @@ func checkSelectors(mutant string, changed bool, shard string) error {
 	}
 }
 
-// checkTraceDirectory refuses a `--trace` written with an empty directory.
-//
-// `--trace=` is a typed flag with nothing after the equals sign, which is
-// almost always a shell variable that expanded to nothing — `--trace=$TRACE_DIR`
-// in a script where the variable was never set. Reading it as a bare `--trace`
-// would silently record somewhere the author did not name, and reading it as the
-// workspace root would be refused for a reason that has nothing to do with the
-// mistake. Saying so is the only answer that helps.
-//
-// `GO_MUTANTS_TRACE=` is deliberately not this. An empty variable is how a job
-// switches an inherited request off, so it produces no flag at all and never
-// reaches here; see [traceFlag].
 func checkTraceDirectory(changed bool, directory string) error {
 	if !changed || strings.TrimSpace(directory) != "" {
 		return nil
@@ -836,27 +569,6 @@ func checkTraceDirectory(changed bool, directory string) error {
 	}
 }
 
-// emitGitHub writes the GitHub Actions half of a run's output: the survivor
-// annotations to out, and the Markdown summary appended to the file
-// `$GITHUB_STEP_SUMMARY` names.
-//
-// The variable is the whole of the detection. It is set by the runner for every
-// step of every job and by nothing else, which makes it a far better signal
-// than `CI`, and it also names the file that has to be written — so a run
-// inside a job that somehow has no summary file is a run that emits nothing,
-// rather than one that prints workflow commands into somebody's terminal.
-//
-// `--json` suppresses both halves. Standard output belongs to the document
-// then, and a `::warning` line in front of it would make the one thing `--json`
-// promises — that the output is a document a validator can read — false.
-//
-// A failure to write either half is reported and does not decide the exit
-// status, which is [reportDashboardFailure]'s judgement applied to the same
-// kind of thing. By the time this runs the mutants have been executed, the
-// report is filed, and the closing block is on the screen; the annotations are
-// a convenience on top of a run that has already done its work, and letting one
-// turn a failed score gate's exit 1 into an exit 2 would tell a CI job "the
-// tool broke" where the truth is "your tests missed something".
 func emitGitHub(out, errOut io.Writer, asJSON bool, r *report.Report) {
 	if asJSON || r == nil {
 		return
@@ -874,13 +586,6 @@ func emitGitHub(out, errOut io.Writer, asJSON bool, r *report.Report) {
 	}
 }
 
-// publishedDocument is the document a run published, whichever kind it is, and
-// nil for a run that stopped before it had one.
-//
-// A run over one module publishes a run report and a run over a `go.work`
-// publishes a workspace report, and the two are never both there. Reading them
-// through one value is what keeps `--json` from being two code paths that have
-// to stay in step. See ADR 0012.
 func publishedDocument(outcome engine.RunOutcome) interface{ Marshal() ([]byte, error) } {
 	switch {
 	case outcome.WorkspaceReport != nil:
@@ -891,8 +596,6 @@ func publishedDocument(outcome engine.RunOutcome) interface{ Marshal() ([]byte, 
 	return nil
 }
 
-// publishedReports is every run report a run published: the one, or one per
-// module of the workspace, in `use` order.
 func publishedReports(outcome engine.RunOutcome) []*report.Report {
 	if outcome.WorkspaceReport != nil {
 		return outcome.WorkspaceReport.Reports()
@@ -903,12 +606,6 @@ func publishedReports(outcome engine.RunOutcome) []*report.Report {
 	return []*report.Report{outcome.Report}
 }
 
-// writeReportJSON writes the run report and nothing else.
-//
-// The bytes are the report's own: [report.Report.Marshal] is what goes on disk,
-// so the document on standard output and the document in the history are the
-// same file. Re-encoding it here would be a second encoder to keep in step with
-// the schema.
 func writeReportJSON(w io.Writer, r interface{ Marshal() ([]byte, error) }) error {
 	data, err := r.Marshal()
 	if err != nil {
@@ -918,11 +615,6 @@ func writeReportJSON(w io.Writer, r interface{ Marshal() ([]byte, error) }) erro
 	return err
 }
 
-// passthrough extracts the argv the user wrote after `--`.
-//
-// pflag records where the separator was, and everything after it is taken
-// verbatim: no splitting, no expansion, no interpretation of a leading dash.
-// Anything before it is a positional argument, which `run` does not have.
 func passthrough(cmd *cobra.Command, args []string) ([]string, error) {
 	dash := cmd.ArgsLenAtDash()
 	if dash < 0 {
@@ -953,25 +645,8 @@ func passthrough(cmd *cobra.Command, args []string) ([]string, error) {
 	return argv, nil
 }
 
-// positional builds the refusal for an argument `run` cannot take, and
-// recognises the one way a correct-looking command line produces one.
-//
-// `--changed` takes an optional value, which pflag can only express as
-// `--changed=REF`: written with a space, the ref becomes a positional argument
-// and the run is narrowed by the upstream branch instead of by the ref the user
-// named — or refused here, which is the better of the two. Both branches of
-// [passthrough] can be reached that way, `--changed HEAD -- go test ./...`
-// landing in the one about the separator, so both ask this to word the message.
-//
-// `--trace` and `--keep-temp` are the other two flags of that shape, and each
-// makes the mistake worse in its own way: the recording lands in the default
-// directory rather than the named one, and the run keeps its directories on
-// every path rather than only when it failed.
 func positional(cmd *cobra.Command, got, what string) error {
 	err := usagef("%s (got %q)", what, got)
-	// In the order the flags were added, so that a command line carrying two of
-	// them is reported against the first — which is arbitrary but fixed, and a
-	// message that moved with the map iteration would be worse than either.
 	for _, flag := range []struct{ name, noun string }{
 		{"changed", "ref"}, {"trace", "directory"}, {"keep-temp", "mode"},
 	} {
@@ -984,14 +659,6 @@ func positional(cmd *cobra.Command, got, what string) error {
 	return err
 }
 
-// policyFailure turns a completed run's verdict into the exit status, or nil
-// when nothing the user asked to gate on failed.
-//
-// The failure is deliberately silent: the reason is already in the summary
-// block the renderer wrote, and printing "error GOM....: 1 mutant survived
-// unexpectedly" underneath it would say the same thing twice and, worse, dress
-// a measurement the run made correctly up as something having gone wrong. What
-// the exit status means is documented in the help output's exit code table.
 func policyFailure(verdict mutation.Verdict) error {
 	if verdict.OK() {
 		return nil
@@ -1003,19 +670,6 @@ func policyFailure(verdict mutation.Verdict) error {
 	return &exitError{code: verdict.Code, err: errors.New(detail), silent: true}
 }
 
-// finishRendering closes the rendering half of a run and returns the one error
-// the exit status should be decided from.
-//
-// It reports a dashboard failure and then replays the closing block, in that
-// order, and the order is the point. Both steps can fail, only one error
-// survives, and the two failures are not worth the same: a dashboard that could
-// not take the terminal cost the user a picture, while a replay that could not
-// write cost them the answer. Reporting the dashboard first is what empties the
-// slot, so a replay failure lands in it rather than being dropped behind a
-// cosmetic error that had already claimed it.
-//
-// replay is nil for a plain run, which has printed its closing block as it went
-// and has nothing to put back on the screen.
 func finishRendering(w io.Writer, renderErr error, replay func() error) error {
 	renderErr = reportDashboardFailure(w, renderErr)
 	if replay == nil {
@@ -1027,23 +681,6 @@ func finishRendering(w io.Writer, renderErr error, replay func() error) error {
 	return renderErr
 }
 
-// reportDashboardFailure writes a dashboard failure to w and returns the error
-// the exit status should be decided from, which is no longer that one.
-//
-// The live dashboard is decoration over a run that has already done its work.
-// By the time one of its failures is in hand the engine has executed, the
-// renderer has drained the stream to the end, the report has been written, and
-// the closing summary has been replayed to standard output by [replayFinal] —
-// so the user has everything a plain run would have given them, minus the
-// picture. Letting that decide the exit status would be wrong twice over: it
-// would report an exit 2 infrastructure failure for a run that succeeded, and
-// it would hide a policy gate that really did fail, because a returned error
-// short-circuits [policyFailure] and a CI job would read "the tool broke" where
-// the truth is "your score is below the threshold you set".
-//
-// Every other renderer error is returned unchanged. When the plain renderer's
-// writes fail the user got no output at all, which is a failure of the one job
-// a run has beyond measuring, and exit 2 is the honest answer to it.
 func reportDashboardFailure(w io.Writer, renderErr error) error {
 	var dashboardErr *tui.Error
 	if !errors.As(renderErr, &dashboardErr) {
@@ -1053,26 +690,9 @@ func reportDashboardFailure(w io.Writer, renderErr error) error {
 	return nil
 }
 
-// interpret decides what an engine failure means for the exit status.
-//
-// A cancelled run is not an infrastructure failure: the user asked for it, and
-// the contract answers 130 for an interrupt and 143 for a termination. The
-// signal is what tells the two apart, and a cancellation with no signal behind
-// it — an embedding whose context was cancelled — is reported as an interrupt,
-// which is the closest true statement available.
-//
-// A `--mutant` that did not select one mutant is the other special case. The
-// engine reports it without a code, because the mistake is in how the run was
-// invoked rather than in the orchestration and only this package owns that
-// vocabulary; it comes out here as one GOM10xx usage error rather than as two
-// codes for one condition.
 func interpret(err error, sig os.Signal) error {
 	var selection *engine.SelectionError
 	if errors.As(err, &selection) {
-		// The cause is the catalogue's own sentinel rather than the engine's
-		// wrapper, whose text already contains it: an error that renders as
-		// "did not select one mutant: did not select one mutant: ..." is one
-		// nobody reads twice. The sentinel stays reachable through errors.Is.
 		return &Error{
 			Code:    CodeMutantUnresolved,
 			Message: "--mutant " + strconv.Quote(selection.Prefix) + " did not select one mutant",

@@ -80,19 +80,6 @@ func TestTryOnADescriptionThatAlreadyHoldsTheLockKeepsIt(t *testing.T) {
 	}
 }
 
-// TestTryReportsAFailureItCannotReadAsContention is the third answer this
-// function has and the one nothing was asking for.
-//
-// `Try` has three outcomes, not two: the lock was taken, the lock is held by
-// somebody else, and the question could not be asked at all. The first two were
-// covered and the third was not, so the line that carries a real error out
-// could return `nil` — or `true` — and every test here still passed. A lock
-// helper that reports "acquired" for a call that failed is the one answer that
-// makes a caller do the unsafe thing.
-//
-// A closed file is the cheapest way to ask an unanswerable question: the
-// descriptor is no longer a descriptor, and the answer is neither of the two
-// ordinary ones.
 func TestTryReportsAFailureItCannotReadAsContention(t *testing.T) {
 	t.Parallel()
 

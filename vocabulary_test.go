@@ -1,15 +1,6 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// The published result vocabularies against the ones the engine produces.
-//
-// A consumer switching on [gomutants.Outcome] has no compiler to tell it when a
-// case is missing: Go's switch is exhaustive only by convention, so a value the
-// engine starts returning reaches a `default` that was written for values that
-// never arrive. The vocabularies are small and they are stable, and neither of
-// those is a reason not to say what they are — a consumer that wants to be told
-// at build time needs a list it can pin, and this is where that list has to
-// agree with what the engine actually has.
 package gomutants_test
 
 import (
@@ -28,14 +19,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// TestKnownOutcomesIsTheEnginesOutcomeVocabulary pins the published list to the
-// one the engine settles a mutant with.
-//
-// [gomutants.Session.Exec] spells its result by converting the engine's own
-// outcome, so the two vocabularies are one vocabulary written twice. Being
-// written twice is what makes this worth a test: the published list is the
-// thing a consumer pins, and a consumer pinning a list the engine has already
-// grown past learns nothing from having pinned it.
 func TestKnownOutcomesIsTheEnginesOutcomeVocabulary(t *testing.T) {
 	t.Parallel()
 
@@ -49,8 +32,6 @@ func TestKnownOutcomesIsTheEnginesOutcomeVocabulary(t *testing.T) {
 	}
 }
 
-// TestKnownProbeOutcomesIsTheEnginesProbeVocabulary pins the published list to
-// the one a probe pass ends with.
 func TestKnownProbeOutcomesIsTheEnginesProbeVocabulary(t *testing.T) {
 	t.Parallel()
 
@@ -64,9 +45,6 @@ func TestKnownProbeOutcomesIsTheEnginesProbeVocabulary(t *testing.T) {
 	}
 }
 
-// TestTheOutcomeVocabulariesAreFreshSlices refuses a list a caller can edit out
-// from under the next one, which is the contract [gomutants.KnownPreparePhases]
-// already states and these two have to match.
 func TestTheOutcomeVocabulariesAreFreshSlices(t *testing.T) {
 	t.Parallel()
 
@@ -83,16 +61,6 @@ func TestTheOutcomeVocabulariesAreFreshSlices(t *testing.T) {
 	}
 }
 
-// TestTheOutcomeVocabulariesNameEveryConstantDeclaredBesideThem reads the
-// declarations rather than trusting the lists.
-//
-// A list of constants and a list that enumerates them are two statements, and
-// the second one is maintained by remembering. [TestOutcomeNames] in
-// internal/mutation shows what that costs: it compares the enumeration against
-// a map written in the test, so a seventh constant added to neither is a
-// seventh constant nothing mentions. The declarations are the thing that cannot
-// be forgotten, because adding one is the act itself — so they are what these
-// lists are checked against.
 func TestTheOutcomeVocabulariesNameEveryConstantDeclaredBesideThem(t *testing.T) {
 	t.Parallel()
 
@@ -115,16 +83,12 @@ func TestTheOutcomeVocabulariesNameEveryConstantDeclaredBesideThem(t *testing.T)
 	}
 }
 
-// constantsOfType is every constant in api.go declared with the named type, in
-// declaration order.
 func constantsOfType(t *testing.T, typeName string) []string {
 	t.Helper()
 
 	return constantsOfTypeIn(t, "api.go", nil, typeName)
 }
 
-// constantsOfTypeIn is constantsOfType against named source, so that the reader
-// can be shown a declaration this repository does not have.
 func constantsOfTypeIn(t *testing.T, name string, src any, typeName string) []string {
 	t.Helper()
 
@@ -160,10 +124,6 @@ func constantsOfTypeIn(t *testing.T, name string, src any, typeName string) []st
 	return names
 }
 
-// outcomeNames is the identifier each outcome is declared under. The wire name
-// and the identifier differ — `not_run` against OutcomeNotRun — so the two
-// lists are joined by construction here rather than by transforming one into
-// the other, which would be this test deciding the spelling rule.
 func outcomeNames(outcomes []gomutants.Outcome) []string {
 	byValue := map[gomutants.Outcome]string{
 		gomutants.OutcomeNotRun:       "OutcomeNotRun",
@@ -180,7 +140,6 @@ func outcomeNames(outcomes []gomutants.Outcome) []string {
 	return names
 }
 
-// probeNames is outcomeNames for the probe vocabulary.
 func probeNames(outcomes []gomutants.ProbeOutcome) []string {
 	byValue := map[gomutants.ProbeOutcome]string{
 		gomutants.ProbeMeasured:    "ProbeMeasured",
@@ -195,19 +154,10 @@ func probeNames(outcomes []gomutants.ProbeOutcome) []string {
 	return names
 }
 
-// sameNames reports whether two identifier lists are equal, order included.
 func sameNames(declared, enumerated []string) bool {
 	return slices.Equal(declared, enumerated)
 }
 
-// TestTheDeclarationReaderSeesAConstantNoListNames is the other half of
-// [TestTheOutcomeVocabulariesNameEveryConstantDeclaredBesideThem].
-//
-// That test passes when the declarations and the list agree, and it would pass
-// just as quietly if the reader had stopped finding declarations at all — an
-// empty list compared against an empty list is agreement. So the reader is
-// shown a constant this repository does not declare, and has to find it. A
-// gate whose failure nobody has observed is half a gate.
 func TestTheDeclarationReaderSeesAConstantNoListNames(t *testing.T) {
 	t.Parallel()
 

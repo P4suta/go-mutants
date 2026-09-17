@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// TestRegisteringTheUpdateFlagTwiceIsANoOp is the whole point of the change it
-// covers: the second registration of a flag name panics, and the panic lands
-// before any test runs, so a binary that links two harnesses each convinced it
-// owns "update" cannot even report which two.
 func TestRegisteringTheUpdateFlagTwiceIsANoOp(t *testing.T) {
 	t.Parallel()
 	if flag.Lookup(UpdateFlagName) == nil {
@@ -22,9 +18,6 @@ func TestRegisteringTheUpdateFlagTwiceIsANoOp(t *testing.T) {
 	}
 }
 
-// TestUpdateReadsTheFlagSetRatherThanAPointer covers the other half. Reading
-// through the set is what lets this package obey a value some other package
-// registered.
 func TestUpdateReadsTheFlagSetRatherThanAPointer(t *testing.T) {
 	registered := flag.Lookup(UpdateFlagName)
 	if registered == nil {

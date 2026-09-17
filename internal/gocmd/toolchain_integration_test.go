@@ -3,25 +3,6 @@
 
 //go:build integration
 
-// The half of the toolchain wrapper that has to meet a real `go`.
-//
-// Everything else this package does is now driven by a scripted stand-in in the
-// unit tier — a probe that hangs, one that answers garbage, one that exits
-// non-zero, a listing that fails — and every one of those is a claim about
-// go-mutants' own code. These four are the other kind of claim: that the probe
-// agrees with reality. A `go version` line the parser has never seen, a
-// toolchain manager that puts `go` somewhere unexpected, a released format
-// change — none of them can be discovered from a table, because the table is
-// written from the same belief the parser is.
-//
-// So they run against whatever `go` this machine has, and they are the reason
-// the ledger in internal/testkit/testdata/unit-toolchain-allowlist.txt no longer
-// names this package: the unit tier drives no toolchain at all.
-//
-// Run them with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/gocmd
-
 package gocmd_test
 
 import (
@@ -40,9 +21,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// TestLocateFindsTheToolchainOnPath is the happy path against the real
-// toolchain, and the one assertion no fake can make: that what this package
-// parses is what a released `go` prints.
 func TestLocateFindsTheToolchainOnPath(t *testing.T) {
 	t.Parallel()
 
@@ -59,8 +37,6 @@ func TestLocateFindsTheToolchainOnPath(t *testing.T) {
 	if !strings.HasPrefix(tc.Version.Release, "go") && !tc.Version.IsDevel() {
 		t.Errorf("Version.Release = %q, want a go release or a devel build", tc.Version.Release)
 	}
-	// The toolchain that built this test binary is the toolchain that runs it,
-	// so the target it reports has to be the one this code is executing on.
 	if tc.Version.GOOS != runtime.GOOS || tc.Version.GOARCH != runtime.GOARCH {
 		t.Errorf("target = %s/%s, want %s/%s", tc.Version.GOOS, tc.Version.GOARCH, runtime.GOOS, runtime.GOARCH)
 	}
@@ -69,28 +45,16 @@ func TestLocateFindsTheToolchainOnPath(t *testing.T) {
 	}
 }
 
-// TestLocateHonoursAnExplicitPath checks that configuration wins over PATH.
-//
-// It wins by being the only way in: PATH is emptied first, so a [gocmd.Options]
-// whose Explicit was ignored finds nothing at all and the test fails with
-// [gocmd.CodeToolchainNotFound]. Naming the toolchain PATH would have found
-// anyway — which is what this did — proves nothing, because both mechanisms
-// then produce the same answer.
 func TestLocateHonoursAnExplicitPath(t *testing.T) {
-	// No t.Parallel: PATH is emptied with t.Setenv, which is process-wide.
 	found, err := exec.LookPath("go")
 	if err != nil {
 		t.Fatalf("looking up the go that is running this test: %v", err)
 	}
-	// Absolute, because that is what [gocmd.Toolchain.GoBin] promises to be and
-	// what the comparison below is against: exec.LookPath hands a relative PATH
-	// entry straight back.
 	found, err = filepath.Abs(found)
 	if err != nil {
 		t.Fatalf("resolving %q: %v", found, err)
 	}
 
-	// A directory with no `go` in it, so PATH cannot answer the question.
 	t.Setenv("PATH", t.TempDir())
 
 	tc, err := gocmd.Locate(gocmd.Options{Explicit: found})
@@ -103,9 +67,6 @@ func TestLocateHonoursAnExplicitPath(t *testing.T) {
 	}
 }
 
-// TestCommandProducesARunnableSpec closes the loop between the two packages:
-// the fragment Command returns really is something runner.Run accepts, and the
-// real toolchain answers it with the very line the probe parsed.
 func TestCommandProducesARunnableSpec(t *testing.T) {
 	t.Parallel()
 
@@ -128,14 +89,6 @@ func TestCommandProducesARunnableSpec(t *testing.T) {
 	}
 }
 
-// TestLocateRecordsTheVersionProbeAsGoVersion is the first labelled command in
-// a run: the toolchain probe. It is here rather than in internal/runner because
-// the label belongs to the call site, and this is the only call site that has
-// one until the engine's own commands are labelled.
-//
-// It stays on the real toolchain because the fact it pins is a join between two
-// things only a real probe has both of: the binary [testkit.GoBinary] resolved
-// on PATH, and the argv the recorder wrote down.
 func TestLocateRecordsTheVersionProbeAsGoVersion(t *testing.T) {
 	t.Parallel()
 

@@ -14,19 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
-// TestAddAcceptanceKeepsWhatSomebodyWroteInTheFile is the claim an editing
-// command has to make about a file a person maintains.
-//
-// `goatest accept` loaded the configuration, appended one acceptance, and wrote
-// the whole model back. Every comment went with it: the SPDX header this
-// repository's licence gate requires, and the argument beside each setting for
-// why it is not at its default. A configuration file is not a serialisation of
-// a struct -- it is a document, and most of what a reader needs from it is the
-// part the struct does not hold.
-//
-// Found by using the product on itself: accepting one equivalent mutant in
-// goatest's own .goatest.toml deleted fourteen lines of reasoning and the
-// licence header, and the licence gate is what would have caught it next.
 func TestAddAcceptanceKeepsWhatSomebodyWroteInTheFile(t *testing.T) {
 	t.Parallel()
 

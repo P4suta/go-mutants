@@ -20,10 +20,6 @@ func mutationSpan(start, end uint32) mutation.Span {
 	return mutation.Span{StartByte: start, EndByte: end}
 }
 
-// TestCodesAreWellFormed keeps the diagnostic codes usable as the stable
-// handles they are advertised to be: unique, sorted, and inside the block this
-// package owns. A duplicated code makes two different failures
-// indistinguishable to anyone searching for one.
 func TestCodesAreWellFormed(t *testing.T) {
 	t.Parallel()
 
@@ -57,10 +53,6 @@ func TestCodesAreWellFormed(t *testing.T) {
 	}
 }
 
-// TestCodesAreReachable asserts the list is complete: every code the package
-// documents can actually be produced. A code nobody can trigger is dead
-// documentation, and one that is triggered but unlisted would be missing from
-// `doctor`'s table.
 func TestCodesAreReachable(t *testing.T) {
 	t.Parallel()
 
@@ -96,38 +88,18 @@ func TestCodesAreReachable(t *testing.T) {
 	_, err = m.MapSpan(mutationSpan(3, 8))
 	record(err)
 
-	// The remaining three are the flattener's own postconditions, which no
-	// input is meant to reach, and they are produced here through the test-only
-	// hooks in export_test.go. Asserting instead that they are unreachable
-	// would be asserting something this test cannot check: "no input reaches
-	// them" is a claim about every possible input, and the only way to be wrong
-	// about it quietly is to write it down and stop looking. Running them
-	// proves the one thing that matters about a postcondition — that it fires.
 	record(instrument.CheckFlat([]byte("a\nb")))
 	record(instrument.VerifyTokensAgainst([]byte("ab"), []byte("a b")))
 	_, err = instrument.FlattenLiteral(token.STRING, "`abc\ndef")
 	record(err)
 
-	// The instrumenter's own refusals, produced by the same list the refusal
-	// test checks the codes of, so that a new code cannot be added to one place
-	// and forgotten in the other.
 	for _, f := range instrumentationFailures(t) {
 		record(f.err)
 	}
 
-	// The probe half's one refusal. It is produced here rather than through
-	// that list because it is not a refusal to instrument anything: it is the
-	// reader of the infection log declining to attribute a file it cannot read
-	// whole. [TestReadInfectionLogRejectsAnythingItCannotReadWhole] is where the
-	// shapes that reach it are enumerated.
 	_, err = instrument.ReadInfectionLog(strings.NewReader(""), "cafefeed", 1)
 	record(err)
 
-	// And the counting half's, which is the same kind of refusal about the
-	// other file a run reads back off the disk: a census it cannot read whole
-	// yields no ceiling at all rather than the ceilings it could make out.
-	// [TestReadLoopCensusRejectsAnythingItCannotReadWhole] enumerates the
-	// shapes that reach it.
 	_, err = instrument.ReadLoopCensus(strings.NewReader(""), 1)
 	record(err)
 

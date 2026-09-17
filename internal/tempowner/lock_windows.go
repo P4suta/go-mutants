@@ -12,10 +12,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// tryAdvisoryLock takes a one-byte exclusive range lock on the file handle.
-// LOCKFILE_FAIL_IMMEDIATELY is what turns the blocking wait into the answer a
-// sweep needs, and the lock is released by the operating system when the handle
-// closes — including when the process is killed.
 func tryAdvisoryLock(file *os.File) (bool, error) {
 	overlapped := new(windows.Overlapped)
 	err := windows.LockFileEx(

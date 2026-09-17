@@ -10,9 +10,6 @@ import (
 	"testing"
 )
 
-// TestParseDiffReadsTheDestinationSide covers the hunk header shapes git
-// actually writes, including the two that are easy to read wrongly: an omitted
-// count, which means one line, and a zero count, which means none.
 func TestParseDiffReadsTheDestinationSide(t *testing.T) {
 	t.Parallel()
 
@@ -155,8 +152,6 @@ func TestParseDiffReadsTheDestinationSide(t *testing.T) {
 	}
 }
 
-// TestParseDiffRefusesWhatItCannotRead proves that an unreadable header is a
-// failure rather than a silently smaller selection.
 func TestParseDiffRefusesWhatItCannotRead(t *testing.T) {
 	t.Parallel()
 
@@ -197,8 +192,6 @@ func TestParseDiffRefusesWhatItCannotRead(t *testing.T) {
 	}
 }
 
-// TestUnquotePathDecodesGitsEscapes covers the paths git still quotes with
-// core.quotePath off.
 func TestUnquotePathDecodesGitsEscapes(t *testing.T) {
 	t.Parallel()
 
@@ -208,8 +201,6 @@ func TestUnquotePathDecodesGitsEscapes(t *testing.T) {
 		{`"say \"hi\".go"`, `say "hi".go`},
 		{`"back\\slash.go"`, `back\slash.go`},
 		{`"tab\there.go"`, "tab\there.go"},
-		// A three-digit octal escape per byte is how git writes anything it
-		// will not print; this is one accented letter in UTF-8.
 		{`"r\303\251sum\303\251.go"`, "résumé.go"},
 		{`"trailing\"`, `trailing\`},
 	}
@@ -220,8 +211,6 @@ func TestUnquotePathDecodesGitsEscapes(t *testing.T) {
 	}
 }
 
-// TestTouchesIsInclusiveAtBothEnds pins the overlap rule the selection stage
-// asks its question with.
 func TestTouchesIsInclusiveAtBothEnds(t *testing.T) {
 	t.Parallel()
 
@@ -236,8 +225,6 @@ func TestTouchesIsInclusiveAtBothEnds(t *testing.T) {
 		{12, 20, true},
 		{13, 20, false},
 		{1, 100, true},
-		// A caller that hands the ends over the wrong way round is asking about
-		// the same span, and is answered rather than quietly told no.
 		{12, 10, true},
 	}
 	for _, c := range cases {
@@ -253,8 +240,6 @@ func TestTouchesIsInclusiveAtBothEnds(t *testing.T) {
 	}
 }
 
-// TestPathsAreSorted proves the accessor imposes an order rather than handing
-// out a map's.
 func TestPathsAreSorted(t *testing.T) {
 	t.Parallel()
 
@@ -268,20 +253,6 @@ func TestPathsAreSorted(t *testing.T) {
 	}
 }
 
-// TestMergeJoinsTouchingRangesWithoutOverflowing is [Merge]'s own table, and
-// the last row is why it exists as a test rather than as a line inside the
-// parser's.
-//
-// The join is "r starts at or before one past the end of the last range", and
-// the obvious way to write it — `r.First <= out[n-1].Last+1` — wraps to a
-// negative number when the last range ends at math.MaxInt, at which point every
-// following range compares as disjoint and the result stops being canonical.
-// `r.First-1 <= out[n-1].Last` says the same thing and cannot wrap, because
-// [checkLineRange] and the hunk parser both refuse a First below 1.
-//
-// A range that ends at math.MaxInt is not hypothetical from this side: the
-// public Selection takes ranges from a caller, and "everything from line 41 on"
-// is the natural way to spell a range whose end nobody knows.
 func TestMergeJoinsTouchingRangesWithoutOverflowing(t *testing.T) {
 	t.Parallel()
 
@@ -321,10 +292,6 @@ func TestMergeJoinsTouchingRangesWithoutOverflowing(t *testing.T) {
 	}
 }
 
-// TestCodesAreUniqueAndInBlock holds this package inside the range it owns.
-//
-// GOM7701 belongs to internal/tui, which shares the GOM77xx block; this package
-// starts at GOM7710 so that the two allocations can never meet.
 func TestCodesAreUniqueAndInBlock(t *testing.T) {
 	t.Parallel()
 
@@ -347,25 +314,12 @@ func TestCodesAreUniqueAndInBlock(t *testing.T) {
 	}
 }
 
-// TestTheParserKnowsWhereItIsInTheDiff is the state machine stated as the two
-// facts that make it one.
-//
-// Under `-U0` every body line begins with `+` or `-`, so an added line whose
-// text starts with `++ ` arrives as `+++ ` and is spelled exactly like a file
-// header. Nothing in the line tells the two apart; only the position does. A
-// `+++` is a header before the first hunk of a file and body text after it, and
-// a `diff --git` line is what puts the reader back before.
 func TestTheParserKnowsWhereItIsInTheDiff(t *testing.T) {
 	t.Parallel()
 
 	t.Run("a target header before any hunk is a header", func(t *testing.T) {
 		t.Parallel()
 
-		// The reader starts outside every file's hunks, which is what makes
-		// the first `+++` it sees a header. git always writes `diff --git`
-		// ahead of one, so this states the machine's initial state rather than
-		// a shape git produces -- and the machine is what the case below
-		// depends on being right.
 		got, err := parseDiff("+++ b/x.go\n@@ -0,0 +1,2 @@\n+one\n+two\n", "")
 		if err != nil {
 			t.Fatalf("parseDiff: %v", err)
@@ -379,9 +333,6 @@ func TestTheParserKnowsWhereItIsInTheDiff(t *testing.T) {
 	t.Run("a target header inside the hunks is body text", func(t *testing.T) {
 		t.Parallel()
 
-		// One file, two hunks, and the first hunk adds the line `++ b/evil.go`
-		// -- which git writes as `+++ b/evil.go`. Read as a header it would
-		// send the second hunk's lines to a file that is not in this diff.
 		diff := "diff --git a/x.go b/x.go\n" +
 			"+++ b/x.go\n" +
 			"@@ -1,0 +1 @@\n" +
@@ -422,16 +373,6 @@ func TestTheParserKnowsWhereItIsInTheDiff(t *testing.T) {
 	})
 }
 
-// TestHunkHeadersThatAreNumbersButNotLineNumbers covers the three refusals a
-// header can earn after its `+` field has been found.
-//
-// They are separated from the shapes in [TestParseDiffRefusesWhatItCannotRead]
-// because each one is a number strconv will happily read and no file could
-// have: a start too large for an int, a start of zero under a non-zero count,
-// and a negative count. The first is the one worth being exact about --
-// strconv.Atoi answers a value *and* an error for an overflow, and the value it
-// answers is math.MaxInt, so a reader that looked only at the number would
-// select a range no file has instead of refusing the header.
 func TestHunkHeadersThatAreNumbersButNotLineNumbers(t *testing.T) {
 	t.Parallel()
 
@@ -467,8 +408,6 @@ func TestHunkHeadersThatAreNumbersButNotLineNumbers(t *testing.T) {
 		})
 	}
 
-	// And the boundary on the other side: line 1 with a zero count is a pure
-	// deletion, which is a header this parser reads and stores nothing for.
 	got, err := parseDiff("diff --git a/x.go b/x.go\n+++ b/x.go\n@@ -1,2 +0,0 @@\n", "")
 	if err != nil {
 		t.Fatalf("parseDiff of a pure deletion: %v", err)
@@ -478,16 +417,6 @@ func TestHunkHeadersThatAreNumbersButNotLineNumbers(t *testing.T) {
 	}
 }
 
-// TestRelativeDropsWhatIsOutsideTheWorkspace pins the one mapping between git's
-// coordinates and this run's.
-//
-// git is asked about the repository and answers in repository-relative paths; a
-// run mutates a module that may be a subtree of it. Everything outside that
-// subtree is dropped rather than carried with a `../` in front of it, because a
-// path this run cannot mutate is not a path to select by. The prefix git
-// reports always ends in a slash, which is what makes a sibling directory whose
-// name starts with the same letters -- `internal/` against `internalise/` --
-// the case a plain string prefix would get wrong.
 func TestRelativeDropsWhatIsOutsideTheWorkspace(t *testing.T) {
 	t.Parallel()
 
@@ -501,8 +430,6 @@ func TestRelativeDropsWhatIsOutsideTheWorkspace(t *testing.T) {
 		{"sub/deep/a.go", "sub/", "deep/a.go"},
 		{"other/a.go", "sub/", ""},
 		{"subsidiary/a.go", "sub/", ""},
-		// The prefix itself, with nothing after it. There is no file at a
-		// directory, so there is nothing to mutate and nothing to name.
 		{"sub/", "sub/", ""},
 	} {
 		if got := relative(test.path, test.prefix); got != test.want {
@@ -511,13 +438,6 @@ func TestRelativeDropsWhatIsOutsideTheWorkspace(t *testing.T) {
 	}
 }
 
-// TestMergeJoinsRangesThatShareAStart is the tie [TestMergeJoinsTouchingRanges…]
-// does not reach: two hunks git emitted for the same first line.
-//
-// It is the one ordering the sort has to decide without help from the starts,
-// and the answer has to be the same set whichever way it decides it, because a
-// canonical range list is what lets a selection and a diff describing one file
-// compare equal.
 func TestMergeJoinsRangesThatShareAStart(t *testing.T) {
 	t.Parallel()
 
@@ -552,7 +472,6 @@ func TestMergeJoinsRangesThatShareAStart(t *testing.T) {
 	}
 }
 
-// sameFiles compares two changed-line maps.
 func sameFiles(got, want map[string][]Range) bool {
 	if len(got) != len(want) {
 		return false
@@ -565,15 +484,6 @@ func sameFiles(got, want map[string][]Range) bool {
 	return true
 }
 
-// TestUnquoteReadsOnlyWhatIsReallyQuoted covers the edges of the quoting rule,
-// which are all about telling a quoted path from a path that merely contains a
-// quotation mark.
-//
-// git quotes a path by wrapping it in `"` and escaping what it will not print,
-// so a path is quoted only when it starts *and* ends with one and has room for
-// both. Everything else is a literal path and is returned untouched: a name
-// beginning with a quotation mark is a legal file name, and decoding it would
-// rename a file this run is about to mutate.
 func TestUnquoteReadsOnlyWhatIsReallyQuoted(t *testing.T) {
 	t.Parallel()
 
@@ -584,7 +494,6 @@ func TestUnquoteReadsOnlyWhatIsReallyQuoted(t *testing.T) {
 		in:   `""`,
 		want: ``,
 	}, {
-		// One byte cannot be both the opening and the closing quote.
 		name: "a lone quotation mark",
 		in:   `"`,
 		want: `"`,
@@ -615,16 +524,6 @@ func TestUnquoteReadsOnlyWhatIsReallyQuoted(t *testing.T) {
 	}
 }
 
-// TestUnquoteReadsAnOctalEscapeOnlyWhenItIsAWholeOne is the other half, and it
-// is the half with the arithmetic in it.
-//
-// git writes a byte it will not print as exactly three octal digits. Two digits
-// at the end of a name is not a short escape — it is a backslash followed by
-// two characters — and reading it as one would consume bytes that are part of
-// the path. The rule is therefore "three digits, and a value a byte can hold",
-// and both halves of that are what strconv.ParseUint answers over exactly three
-// bytes: a digit that is not octal and a value past 255 are the same refusal,
-// and writing the first digit back is the same answer to both.
 func TestUnquoteReadsAnOctalEscapeOnlyWhenItIsAWholeOne(t *testing.T) {
 	t.Parallel()
 
@@ -643,14 +542,10 @@ func TestUnquoteReadsAnOctalEscapeOnlyWhenItIsAWholeOne(t *testing.T) {
 		in:   `"\000"`,
 		want: "\x00",
 	}, {
-		// 0o400 is 256, which no byte holds. The digits are written back as
-		// they were found rather than truncated to something else.
 		name: "three digits past what a byte holds",
 		in:   `"\400"`,
 		want: `400`,
 	}, {
-		// One digit, and the name ends. There is no fourth byte to read and
-		// nothing to guess at.
 		name: "one digit at the end of the name",
 		in:   `"\1"`,
 		want: `1`,
@@ -675,8 +570,6 @@ func TestUnquoteReadsAnOctalEscapeOnlyWhenItIsAWholeOne(t *testing.T) {
 		in:   `"\303\251tude.go"`,
 		want: "\xc3\xa9tude.go",
 	}, {
-		// The escape is not the last thing in the name, so there is a fourth
-		// byte -- and it is still not part of the escape.
 		name: "two digits followed by a letter",
 		in:   `"\17x"`,
 		want: `17x`,

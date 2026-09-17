@@ -12,57 +12,32 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// The scripted recordings every group of tests in this package shares.
-//
-// [scriptedEvents] records one event of every type on a clock that advances by
-// a fixed step, and [scriptedFailureEvents] records the same contract's other
-// half: the error, timeout, refusal and lossy-accounting shapes a healthy run
-// never produces. Between them they are three things at once: the sequences the
-// recorder tests assert over, the bytes the two goldens pin, and the corpus the
-// schema tests validate — so a payload that drifts from the contract fails in
-// all three places rather than in whichever one somebody remembered to extend.
 var fixtureStart = time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 
 const (
-	// fixtureTick is how far the scripted clock moves between two readings. A
-	// quarter of a second is large enough that every duration in the recording
-	// is a whole number of milliseconds, which is what keeps the golden stable.
 	fixtureTick = 250 * time.Millisecond
 
-	fixtureRunID        = "20260906T120000Z-1a2b"
-	fixtureToolVersion  = "0.1.0-dev"
-	fixturePID          = 31337
-	fixtureRoot         = "/home/dev/project"
-	fixtureVerdict      = "ok"
-	fixtureStageName    = "catalog"
-	fixtureStageDetail  = "1024 candidates"
-	fixtureArtifactPath = "reports/mutation/run.json"
-	fixtureNoteCode     = "GOM4102"
-	fixtureNoteDetail   = "the coverage profile was empty"
-	fixtureMutantID     = "4b2f8c1d0e6a39571c84fb02de7a6519cf3b48d20a71e6c95f803b4d17ea92c6"
-	fixtureDisplayID    = "4b2f8c1d0e6a39571c84"
-	// A test binary has two names: the import path of the package it was built
-	// from, which is what `binaries`, `killed_by` and `covering` carry, and the
-	// file the run executed, which is what an `argv` carries.
+	fixtureRunID         = "20260906T120000Z-1a2b"
+	fixtureToolVersion   = "0.1.0-dev"
+	fixturePID           = 31337
+	fixtureRoot          = "/home/dev/project"
+	fixtureVerdict       = "ok"
+	fixtureStageName     = "catalog"
+	fixtureStageDetail   = "1024 candidates"
+	fixtureArtifactPath  = "reports/mutation/run.json"
+	fixtureNoteCode      = "GOM4102"
+	fixtureNoteDetail    = "the coverage profile was empty"
+	fixtureMutantID      = "4b2f8c1d0e6a39571c84fb02de7a6519cf3b48d20a71e6c95f803b4d17ea92c6"
+	fixtureDisplayID     = "4b2f8c1d0e6a39571c84"
 	fixturePackage       = "github.com/P4suta/go-mutants/internal/mutation"
 	fixtureOtherPackage  = "github.com/P4suta/go-mutants/internal/interval"
 	fixtureBinaryCommand = "/tmp/go-mutants-tmp-1/mutation.test"
 	fixtureDigest        = "07c5a1e94b83d26f0a1b7c8de95243f60b8a17d3e42c9b058f1d6a723c40e9b8"
-	// fixtureContextKey is a cache context key: sixteen hex characters, the
-	// truncation `cache.ContextKeyLength` names an entry's directory by. It is
-	// deliberately a value nothing could mistake for a real one, because a
-	// field whose name ends in `key` holding a plausible high-entropy string is
-	// what a secret scanner is built to find, and the repository runs one over
-	// its own fixtures.
-	fixtureContextKey = "0000000000000001"
+	fixtureContextKey    = "0000000000000001"
 
 	fixturePrepareTime = 875 * time.Millisecond
 	fixtureOutputTail  = "--- FAIL: TestScore (0.00s)"
 
-	// The sequence numbers the scripted recording's own events point at. They
-	// are constants rather than values read back out of the recording, so that
-	// inserting an event without fixing what refers to it fails the fixture
-	// rather than producing a golden whose references resolve to nothing.
 	fixtureExecSeq         = 7
 	fixtureProbeExecSeq    = 9
 	fixtureValidateExecSeq = 11
@@ -70,17 +45,12 @@ const (
 	fixtureScriptedCount = 20
 	fixtureTypeCount     = 16
 
-	// The failure recording's own counts.
 	fixtureFailureCount        = 17
 	fixtureFailureValidateSeq  = 6
 	fixtureFailureProbeExecSeq = 13
 	fixtureFailureDroppedSeq   = 17
 )
 
-// fixtureClock returns a clock that starts at [fixtureStart] and advances one
-// [fixtureTick] per reading. It is not safe for concurrent use, which is
-// deliberate: the tests that record from many goroutines want a clock that
-// says so rather than one that quietly interleaves.
 func fixtureClock() func() time.Time {
 	moment := fixtureStart.Add(-fixtureTick)
 	return func() time.Time {
@@ -102,15 +72,13 @@ func fixtureStartRecord() trace.StartRecord {
 
 func fixtureExecRecord() trace.ExecRecord {
 	return trace.ExecRecord{
-		Kind:      trace.ExecKindMutantRun,
-		Subject:   fixtureMutantID,
-		Argv:      []string{fixtureBinaryCommand, "-test.timeout=30s"},
-		Dir:       fixtureRoot,
-		EnvNames:  []string{"PATH=/usr/bin", "GO_MUTANTS_ACTIVE=" + fixtureMutantID, "PATH=/bin"},
-		TimeoutMS: 30000,
-		ExitCode:  1,
-		// A peak beside the exit status: every command a run starts is measured,
-		// so the scripted recording carries one too.
+		Kind:            trace.ExecKindMutantRun,
+		Subject:         fixtureMutantID,
+		Argv:            []string{fixtureBinaryCommand, "-test.timeout=30s"},
+		Dir:             fixtureRoot,
+		EnvNames:        []string{"PATH=/usr/bin", "GO_MUTANTS_ACTIVE=" + fixtureMutantID, "PATH=/bin"},
+		TimeoutMS:       30000,
+		ExitCode:        1,
 		PeakMemoryBytes: 268435456,
 		Output:          []byte(fixtureOutputTail + "\n"),
 	}
@@ -141,22 +109,17 @@ func fixtureValidateExecRecord() trace.ExecRecord {
 
 func fixtureMutantRecord() trace.MutantRecord {
 	return trace.MutantRecord{
-		ID:         fixtureMutantID,
-		DisplayID:  fixtureDisplayID,
-		Attempt:    1,
-		Worker:     3,
-		Package:    fixturePackage,
-		Binaries:   []string{fixturePackage, fixtureOtherPackage},
-		Args:       []string{"-test.timeout=30s"},
-		TimeoutMS:  30000,
-		Outcome:    trace.OutcomeKilled,
-		KilledBy:   fixturePackage,
-		DurationMS: 412,
-		// The kill in this fixture is an ordinary one — a test failed — so the
-		// bound is absent and only the peak is recorded. The other spelling,
-		// where memory_exceeded is what made the kill, is exercised by the
-		// schema tests rather than frozen into the golden: a recording is not
-		// evidence, and one row cannot be both shapes.
+		ID:              fixtureMutantID,
+		DisplayID:       fixtureDisplayID,
+		Attempt:         1,
+		Worker:          3,
+		Package:         fixturePackage,
+		Binaries:        []string{fixturePackage, fixtureOtherPackage},
+		Args:            []string{"-test.timeout=30s"},
+		TimeoutMS:       30000,
+		Outcome:         trace.OutcomeKilled,
+		KilledBy:        fixturePackage,
+		DurationMS:      412,
 		PeakMemoryBytes: 268435456,
 		ExecSeqs:        []int64{fixtureExecSeq},
 		OutputTail:      fixtureOutputTail,
@@ -231,12 +194,6 @@ func fixtureSweepRecord() trace.SweepRecord {
 	}
 }
 
-// scriptedEvents records one event of every type and returns the recording.
-//
-// Every reference inside it resolves: the mutant attempt names the `exec` that
-// ran its binary, the probe pass names the `probe-run` before it, and the
-// validation step names the `validate-build` before it. A golden whose
-// `exec_seqs` pointed at nothing would document a shape no run produces.
 func scriptedEvents(t *testing.T) []trace.Event {
 	t.Helper()
 	sink := trace.NewMemorySink(0)
@@ -266,16 +223,6 @@ func scriptedEvents(t *testing.T) []trace.Event {
 	return sink.Events()
 }
 
-// scriptedFailureEvents records the shapes a healthy run never produces.
-//
-// It is a workspace recording rather than a run recording, it fails at nearly
-// every step it takes, one of its events is refused by the sink, and it closes
-// with a verdict and a non-zero exit code. Everything a reader has to handle
-// and a happy path never shows is in here: an execution that timed out, a
-// probe pass stopped by an error before it reached an outcome, a mutant no
-// test binary reaches, the whole validation vocabulary including the gate and
-// a rejection, a snapshot and a sweep that failed, and an accounting that
-// admits to a loss.
 func scriptedFailureEvents(t *testing.T) []trace.Event {
 	t.Helper()
 	ring := trace.NewMemorySink(0)
@@ -365,16 +312,11 @@ func scriptedFailureEvents(t *testing.T) []trace.Event {
 		ContextKey: fixtureContextKey,
 	})
 	recorder.Note(trace.NoteWarning, "GOM4106", "the probe tree could not be prepared")
-	// The event the sink refuses. The bundle was written; the line saying so is
-	// the one the recording lost, which is exactly the loss the accounting
-	// exists to admit to.
 	recorder.Artifact(trace.ArtifactDiagnostics, "reports/mutation/diagnostics/"+fixtureRunID)
 	recorder.RunEnd("failed", 2, errors.New("the probe tree could not be prepared"))
 	return ring.Events()
 }
 
-// requireSeq fails the fixture when an event did not land where the recording
-// says it did.
 func requireSeq(t *testing.T, want, got int64, what string) {
 	t.Helper()
 	if got != want {
@@ -382,8 +324,6 @@ func requireSeq(t *testing.T, want, got int64, what string) {
 	}
 }
 
-// refusingAt forwards every event but one, and does not count its own losses —
-// which is what makes the recorder fall back to counting refusals itself.
 type refusingAt struct {
 	inner *trace.MemorySink
 	seq   int64

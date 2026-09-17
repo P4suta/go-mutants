@@ -17,73 +17,14 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// This file is the fixtures' half of the hint contract: given a fixture and the
-// candidates it catalogues, it produces the [discover.Guard] discovery would
-// have produced for each of them.
-//
-// It is deliberately a re-statement of internal/discover's rule rather than a
-// call into it. Discovery answers the question with a type checker and a
-// go/packages load; a fixture here is one file with no module around it, so the
-// answer is derived from the syntax and from the two things syntax cannot say —
-// what a `:=` declares, and which bool-valued expressions are of a named
-// boolean type rather than the universe `bool` — which the fixture states for
-// itself in [hintOptions]. That keeps the golden files a statement about the
-// rewrite the instrumenter performs for a given hint, which is the only thing
-// this package decides.
-//
-// It deliberately does not restate discovery's Form D *refusals*, because a
-// refusal produces no hint and so has nothing to say about a rewrite. A fixture
-// here must therefore not carry a declaration discovery would decline — one
-// whose declared type or whose initialiser-less spec is spelled across lines,
-// or whose initialiser mentions a name it declares. This would hand the
-// instrumenter a Form D hint discovery never emits, and the failure would
-// surface as a line-drift error in a golden test rather than as the missing
-// candidate it really is. internal/instrument's own integration suite covers
-// those shapes against the real discovery pass.
-
-// hintOptions are the answers a syntax tree does not hold, stated by the
-// fixture that needs them.
 type hintOptions struct {
-	// declared gives the type each name a Form D site declares is declared as,
-	// by name. A fixture with a `:=` site must name every variable it declares:
-	// the type is what the guard writes in front of itself, and there is no
-	// honest way to guess it from the syntax.
-	declared map[string]string
-	// namedBool lists the expressions whose type is a named boolean type rather
-	// than the universe `bool`, spelled exactly as the fixture writes them. Such
-	// an expression is not a Form C site — a selector produces a plain `bool`,
-	// which is not assignable to a named boolean type — so discovery hands it to
-	// the statement form instead, and this is how a fixture says so.
-	namedBool []string
-	// unprobed lists the `return` statements discovery would refuse to compute a
-	// probe hint for, spelled exactly as the fixture writes them. Discovery
-	// refuses a statement whose result types it cannot spell in the file, and a
-	// fixture cannot demonstrate that from syntax alone — every result type a
-	// function declares is, by construction, spelled in the file that declares
-	// it — so the fixture says which of its statements stands for one.
-	unprobed []string
-	// unprobedSites lists the boolean expressions discovery would refuse to
-	// measure in place, spelled exactly as the fixture writes them. The form
-	// evaluates both readings of a site, so it needs the whole expression to be
-	// free of effects and of anything that can panic -- which syntax cannot
-	// show either, since a call is only an effect when it is one.
+	declared      map[string]string
+	namedBool     []string
+	unprobed      []string
 	unprobedSites []string
-	// valueTypes gives the spelled type of each expression the value probe form
-	// measures, keyed by the expression exactly as the fixture writes it. A
-	// fixture that names none has no value sites, which is how every fixture
-	// written before that form existed keeps the bytes it had.
-	//
-	// It is stated rather than derived for [hintOptions.declared]'s reason: the
-	// type is what the closure writes in front of itself, and there is no
-	// honest way to guess it from the syntax.
-	valueTypes map[string]string
+	valueTypes    map[string]string
 }
 
-// returnValueRules are the six rules whose candidates carry a probe hint. They
-// are restated here rather than imported for the reason the rest of this file
-// is a restatement: it is the fixtures' own statement of what discovery
-// produces, so that a golden file is a claim about the rewrite and not about
-// the neighbour that asked for it.
 var returnValueRules = map[string]bool{
 	"return-zero-numeric": true,
 	"return-empty-string": true,
@@ -93,8 +34,6 @@ var returnValueRules = map[string]bool{
 	"return-err-to-nil":   true,
 }
 
-// hintsFor derives the hints of a whole catalogue, reading each catalogued file
-// out of the snapshot it was catalogued from.
 func hintsFor(t *testing.T, root string, catalog *mutation.Catalog, opts hintOptions) instrument.Hints {
 	t.Helper()
 
@@ -115,12 +54,6 @@ func hintsFor(t *testing.T, root string, catalog *mutation.Catalog, opts hintOpt
 	return hints
 }
 
-// hintsOfCandidates derives the hints of one file's candidates before they are
-// catalogued, keyed by the id each of them hashes to.
-//
-// It is what lets several fixtures' hints be merged into the one index a
-// whole-tree pass needs: a mutant id is unique across every file, so the union
-// of the maps is the index of the union of the catalogues.
 func hintsOfCandidates(
 	t *testing.T,
 	path string,
@@ -142,8 +75,6 @@ func hintsOfCandidates(
 	return hints
 }
 
-// hintsInSource derives the hints of one file's mutants without a snapshot on
-// disk, for the tests that never write one.
 func hintsInSource(t *testing.T, src []byte, catalog *mutation.Catalog, opts hintOptions) instrument.Hints {
 	t.Helper()
 
@@ -155,7 +86,6 @@ func hintsInSource(t *testing.T, src []byte, catalog *mutation.Catalog, opts hin
 	return hints
 }
 
-// A hintDeriver answers the hint question for one parsed fixture.
 type hintDeriver struct {
 	t      *testing.T
 	path   string
@@ -198,14 +128,6 @@ func newHintDeriver(t *testing.T, path string, src []byte, opts hintOptions) *hi
 	return d
 }
 
-// guardFor is the hint for one candidate's span, or a fatal error: a fixture
-// that catalogues an edit no guard form covers is a fixture with a mistake in
-// it, not a case worth carrying.
-//
-// The rule decides one thing and nothing else: whether the hint also carries a
-// return site. That is a fact about which family the edit belongs to rather
-// than about the syntax around it, which is why the span alone cannot answer it
-// — an operator swap and a return replacement can sit in the same `return`.
 func (d *hintDeriver) guardFor(span mutation.Span, rule string) discover.Guard {
 	d.t.Helper()
 
@@ -215,11 +137,6 @@ func (d *hintDeriver) guardFor(span mutation.Span, rule string) discover.Guard {
 	}
 	guard, ok := d.formC(anchor)
 	if ok {
-		// A Form C site is a boolean probe site, which is discovery's own rule:
-		// the helper takes the universe bool and that is exactly what Form C
-		// requires. What syntax cannot show is a site with an effect or a
-		// possible panic in it, and [hintOptions.unprobedSites] is how a
-		// fixture states one.
 		guard.Probe = d.boolSite(guard)
 	} else {
 		if guard, ok = d.statementSite(anchor); !ok {
@@ -232,26 +149,18 @@ func (d *hintDeriver) guardFor(span mutation.Span, rule string) discover.Guard {
 	if guard.Probe == nil && deletionRules[rule] {
 		guard.Probe = d.reachSite(guard)
 	}
-	// The return form replaces whatever the guard chose and never the other way
-	// round, exactly as it does in discovery: it compares the value the
-	// function would really have returned, which is the stronger evidence.
 	if site := d.returnSite(anchor, span, rule); site != nil {
 		guard.Probe = site
 	}
 	return guard
 }
 
-// deletionRules are the rules whose candidates fall back to reachability. They
-// are restated here for [returnValueRules]'s reason: this file is the fixtures'
-// own statement of what discovery produces.
 var deletionRules = map[string]bool{
 	"delete-call-statement": true,
 	"delete-assignment":     true,
 	"delete-incdec":         true,
 }
 
-// reachSite derives the probe hint of a deleted statement, which is the guard's
-// own site and nothing else.
 func (d *hintDeriver) reachSite(guard discover.Guard) *discover.ProbeSite {
 	d.t.Helper()
 
@@ -261,12 +170,6 @@ func (d *hintDeriver) reachSite(guard discover.Guard) *discover.ProbeSite {
 	return &discover.ProbeSite{Form: discover.ProbeFormReach, Span: guard.SiteSpan}
 }
 
-// valueSite derives the probe hint of the nearest expression around the edit
-// that the fixture has given a type for.
-//
-// The walk is discovery's own -- outward from the edit until an expression
-// answers -- and what answers here is [hintOptions.valueTypes] rather than a
-// type checker. A fixture that names no expression has no value sites.
 func (d *hintDeriver) valueSite(anchor ast.Node) *discover.ProbeSite {
 	d.t.Helper()
 
@@ -291,8 +194,6 @@ func (d *hintDeriver) valueSite(anchor ast.Node) *discover.ProbeSite {
 	return nil
 }
 
-// boolSite derives the probe hint of a Form C site, or nothing for one the
-// fixture has declared unprobeable.
 func (d *hintDeriver) boolSite(guard discover.Guard) *discover.ProbeSite {
 	d.t.Helper()
 
@@ -305,15 +206,6 @@ func (d *hintDeriver) boolSite(guard discover.Guard) *discover.ProbeSite {
 	return &discover.ProbeSite{Form: discover.ProbeFormBool, Span: guard.SiteSpan}
 }
 
-// returnSite derives the probe hint of a return-value candidate: the statement
-// it sits in, the declared type of every result of that statement, and which of
-// them the edit replaces.
-//
-// The types are read off the enclosing function's own syntax, which is exactly
-// what discovery's type-checked answer comes to for a fixture: a result type is
-// spelled in the file that declares it, so the bytes of the signature *are* the
-// spelling. What syntax cannot show is a refusal, and [hintOptions.unprobed] is
-// how a fixture states one.
 func (d *hintDeriver) returnSite(anchor ast.Node, span mutation.Span, rule string) *discover.ProbeSite {
 	d.t.Helper()
 
@@ -343,9 +235,6 @@ func (d *hintDeriver) returnSite(anchor ast.Node, span mutation.Span, rule strin
 	return nil
 }
 
-// enclosingReturn finds the `return` a node sits in and the function that
-// return belongs to, stopping at the first function boundary so that a literal
-// inside a return answers with its own return and its own signature.
 func (d *hintDeriver) enclosingReturn(anchor ast.Node) (*ast.ReturnStmt, *ast.FuncType) {
 	var stmt *ast.ReturnStmt
 	for node := anchor; node != nil; node = d.parent[node] {
@@ -363,8 +252,6 @@ func (d *hintDeriver) enclosingReturn(anchor ast.Node) (*ast.ReturnStmt, *ast.Fu
 	return nil, nil
 }
 
-// resultTypes spells one function's declared results, one entry per result and
-// in order, so that `(a, b int)` names int twice.
 func (d *hintDeriver) resultTypes(fn *ast.FuncType) []string {
 	if fn == nil || fn.Results == nil {
 		return nil
@@ -379,9 +266,6 @@ func (d *hintDeriver) resultTypes(fn *ast.FuncType) []string {
 	return out
 }
 
-// anchor is the innermost node covering a candidate's span, which is the node
-// discovery would have anchored the rule to: the binary expression an operator
-// sits in, the identifier a literal is, the statement a deletion removes.
 func (d *hintDeriver) anchor(span mutation.Span) ast.Node {
 	var best ast.Node
 	ast.Inspect(d.file, func(node ast.Node) bool {
@@ -396,8 +280,6 @@ func (d *hintDeriver) anchor(span mutation.Span) ast.Node {
 	return best
 }
 
-// formC looks outward for the nearest bool-valued expression that may be
-// wrapped, stopping at the first ancestor that is not an expression.
 func (d *hintDeriver) formC(anchor ast.Node) (discover.Guard, bool) {
 	for node := anchor; node != nil; node = d.parent[node] {
 		expr, ok := node.(ast.Expr)
@@ -412,8 +294,6 @@ func (d *hintDeriver) formC(anchor ast.Node) (discover.Guard, bool) {
 	return discover.Guard{}, false
 }
 
-// universeBool reports whether an expression is one of the shapes that yields a
-// bool, and is not one the fixture declared to be of a named boolean type.
 func (d *hintDeriver) universeBool(expr ast.Expr) bool {
 	for _, named := range d.opts.namedBool {
 		if d.text(expr) == named {
@@ -438,9 +318,6 @@ func (d *hintDeriver) universeBool(expr ast.Expr) bool {
 	}
 }
 
-// wrappablePosition is internal/discover's rule for where a parenthesized
-// expression of the same type is legal, restated over the shapes the fixtures
-// use.
 func (d *hintDeriver) wrappablePosition(expr ast.Expr) bool {
 	switch parent := d.parent[expr].(type) {
 	case *ast.ExprStmt, *ast.DeferStmt, *ast.GoStmt:
@@ -467,8 +344,6 @@ func (d *hintDeriver) wrappablePosition(expr ast.Expr) bool {
 	}
 }
 
-// statementSite looks outward for the nearest statement and decides which
-// statement form covers it, stopping at the enclosing function.
 func (d *hintDeriver) statementSite(anchor ast.Node) (discover.Guard, bool) {
 	for node := anchor; node != nil; node = d.parent[node] {
 		switch n := node.(type) {
@@ -484,8 +359,6 @@ func (d *hintDeriver) statementSite(anchor ast.Node) (discover.Guard, bool) {
 	return discover.Guard{}, false
 }
 
-// blockIsLegalFor reports whether a statement may be replaced by an `if`
-// statement, which no simple-statement slot allows.
 func (d *hintDeriver) blockIsLegalFor(stmt ast.Stmt) bool {
 	switch parent := d.parent[stmt].(type) {
 	case *ast.ForStmt:
@@ -503,8 +376,6 @@ func (d *hintDeriver) blockIsLegalFor(stmt ast.Stmt) bool {
 	}
 }
 
-// statementGuard classifies one statement into Form S or Form D, on exactly the
-// division internal/discover draws: a statement that declares is Form D.
 func (d *hintDeriver) statementGuard(stmt ast.Stmt) (discover.Guard, bool) {
 	span := d.span(stmt)
 	switch s := stmt.(type) {
@@ -542,9 +413,6 @@ func (d *hintDeriver) statementGuard(stmt ast.Stmt) (discover.Guard, bool) {
 	}
 }
 
-// declTypes pairs every declared name with the type the fixture says it has.
-// The blank identifier declares nothing and is passed over, exactly as
-// discovery passes over it.
 func (d *hintDeriver) declTypes(names []*ast.Ident) []discover.DeclType {
 	d.t.Helper()
 
@@ -562,7 +430,6 @@ func (d *hintDeriver) declTypes(names []*ast.Ident) []discover.DeclType {
 	return out
 }
 
-// span is the byte range of a node.
 func (d *hintDeriver) span(node ast.Node) mutation.Span {
 	return mutation.Span{
 		StartByte: uint32(d.tok.Offset(node.Pos())),
@@ -570,32 +437,18 @@ func (d *hintDeriver) span(node ast.Node) mutation.Span {
 	}
 }
 
-// text is a node's own bytes.
 func (d *hintDeriver) text(node ast.Node) string {
 	span := d.span(node)
 	return string(d.src[span.StartByte:span.EndByte])
 }
 
-// An editSpec is one candidate as a fixture states it: the rule, the bytes it
-// replaces located by a snippet that holds them, and what it writes.
-//
-// Locating an edit by text rather than by offset is what keeps the fixtures
-// editable: a comment added at the top of a fixture would otherwise renumber
-// every span in its table.
 type editSpec struct {
-	// rule is the canonical registry name of the operator.
 	rule string
-	// in is a snippet of the fixture that holds the edit, and must occur in it
-	// exactly once.
-	in string
-	// find is the text to replace, located inside the first occurrence of in.
-	// Empty means the whole of in, which is how a statement deletion is written.
+	in   string
 	find string
-	// with is the replacement, empty for a deletion.
 	with string
 }
 
-// editsIn resolves a fixture's edit table into candidates.
 func editsIn(t *testing.T, src []byte, edits ...editSpec) []mutation.Candidate {
 	t.Helper()
 

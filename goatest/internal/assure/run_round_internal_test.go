@@ -281,24 +281,6 @@ func TestRunCoordinatorHandlesRaceExecutionAndFindingTerminals(t *testing.T) {
 	})
 }
 
-// TestRunCoordinatorReportsWhyPreparationFailedWhenThatIsWhatStoppedTheBaseline
-// pins the one case where the preparation's error is the run's.
-//
-// Preparation runs beside the baseline, and when it fails the engine refuses
-// every later call on that workspace with [gomutants.ErrPrepareFailed]. So the
-// baseline fails too, and it fails *first* -- with the consequence. Its error
-// was the one the run reported, and the preparation's, which is the only place
-// the reason is written down, went out with the channel: an ERROR verdict whose
-// whole account was "workspace preparation failed", and nothing anywhere saying
-// what about it failed.
-//
-// TestRunCoordinatorPrefersBaselineErrorsAndCancelsPreparation pins the
-// opposite and is also right: a baseline that failed on its own cancels the
-// preparation, so the preparation's error is a context cancellation and
-// reporting it would name the run's own cleanup as the cause. ErrPrepareFailed
-// is what tells the two apart, and it is exactly the right signal because the
-// engine returns it only after a preparation has already failed -- it is by
-// construction a consequence and never a cause.
 func TestRunCoordinatorReportsWhyPreparationFailedWhenThatIsWhatStoppedTheBaseline(t *testing.T) {
 	cause := errors.New("main_validation: the instrumented tree did not build")
 	consequence := fmt.Errorf("goatest: go build: gomutants: exec: %w", gomutants.ErrPrepareFailed)

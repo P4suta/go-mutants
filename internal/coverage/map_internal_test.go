@@ -1,18 +1,6 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// The three invariants of the mapping that [Map] cannot be asked about.
-//
-// Everything else this package promises is a question about Map's answer, and
-// map_test.go asks it from outside the package, which is where a test of a pure
-// function belongs. These three are not: the index records a file it never
-// reached and nothing downstream reads that record back, merge joins two
-// adjacent ranges into one and covers answers a query about the joined range
-// exactly as it answers one about the pair, and relativeTo refuses a name that
-// is not a path. Each is a documented promise of the code below, each is what
-// makes the structure above it cheap or honest, and none of them changes an
-// answer Map gives — so a test that only went through Map would pin none of
-// them, and a mutation run says so by leaving the lines alive.
 package coverage
 
 import (
@@ -20,27 +8,12 @@ import (
 	"testing"
 )
 
-// The two spellings the mapping has to keep apart, as in map_test.go: a profile
-// names a file by import path, and a mutant is located by a module-relative
-// path.
 const (
 	indexModule   = "example.com/m"
 	indexFile     = "internal/core/core.go"
 	indexProfiled = indexModule + "/" + indexFile
 )
 
-// TestNewFileIndexRecordsAFileItNeverReached pins the difference between
-// "profiled and never reached" and "never profiled".
-//
-// A file whose every block has a count of zero is indexed to an empty list —
-// present, and covering nothing — rather than left out, and it is recorded in
-// matched. Both facts are invisible through [Map], because a present-and-empty
-// entry and a missing one make covers answer false alike and matched is only
-// ever counted. They are the two halves of the fact [Result.Matched] exists to
-// report: a run whose profiles line up with the module and reach nothing is a
-// suite with no coverage, and a run whose profiles line up with nothing is a
-// module path that does not match what the toolchain wrote. Only the second is
-// a reason to distrust the mapping, and only this record tells them apart.
 func TestNewFileIndexRecordsAFileItNeverReached(t *testing.T) {
 	t.Parallel()
 
@@ -68,13 +41,6 @@ func TestNewFileIndexRecordsAFileItNeverReached(t *testing.T) {
 	}
 }
 
-// TestNewFileIndexKeepsACoveredFileApartFromAnUnreachedOne is the other half:
-// a file with one covered block indexes to that block, and a name from outside
-// the modules is recorded nowhere at all.
-//
-// Both are keyed on the profile's own spelling, which is what lets two modules
-// of a workspace each hold an `app.go`: two files there are two keys here,
-// where stripping a module prefix would have made them one.
 func TestNewFileIndexKeepsACoveredFileApartFromAnUnreachedOne(t *testing.T) {
 	t.Parallel()
 
@@ -95,14 +61,6 @@ func TestNewFileIndexKeepsACoveredFileApartFromAnUnreachedOne(t *testing.T) {
 	}
 }
 
-// TestMergeJoinsWhatCoversAnswersIdenticallyAbout pins merge's output rather
-// than the answers it leads to, because the joining is invisible from outside.
-//
-// Two adjacent ranges and one joined range answer every overlap query the same
-// way — that is exactly the argument merge's own comment makes for joining them
-// — so [Map] cannot tell the two apart and neither can any test written through
-// it. What the joining buys is a shorter list to binary-search on every lookup,
-// and this is the test that says the list is actually shorter.
 func TestMergeJoinsWhatCoversAnswersIdenticallyAbout(t *testing.T) {
 	t.Parallel()
 
@@ -122,16 +80,11 @@ func TestMergeJoinsWhatCoversAnswersIdenticallyAbout(t *testing.T) {
 			want: []interval{{start: 3, end: 5}},
 		},
 		{
-			// The case merge exists for and the one covers cannot be asked
-			// about: [3,5] and [6,9] leave no line between them, so the pair
-			// and the join answer every query alike.
 			name: "adjacent intervals are joined",
 			in:   []interval{{start: 3, end: 5}, {start: 6, end: 9}},
 			want: []interval{{start: 3, end: 9}},
 		},
 		{
-			// One line apart is the boundary on the other side: line 6 is
-			// covered by nothing, so the two ranges stay two.
 			name: "intervals with a line between them are left apart",
 			in:   []interval{{start: 3, end: 5}, {start: 7, end: 9}},
 			want: []interval{{start: 3, end: 5}, {start: 7, end: 9}},
@@ -152,18 +105,11 @@ func TestMergeJoinsWhatCoversAnswersIdenticallyAbout(t *testing.T) {
 			want: []interval{{start: 3, end: 20}},
 		},
 		{
-			// Two blocks of one file can open on the same line — a one-line
-			// `if` and the statement it guards do. They overlap by definition,
-			// so the join keeps the further end whichever of them the sort put
-			// first; the secondary sort key is there to make the sort a
-			// function rather than to change this answer.
 			name: "intervals that start on one line join into the further one",
 			in:   []interval{{start: 3, end: 9}, {start: 3, end: 5}},
 			want: []interval{{start: 3, end: 9}},
 		},
 		{
-			// The blocks arrive in whatever order the profile listed them, and
-			// the binary search below needs them sorted and disjoint.
 			name: "unsorted intervals are sorted before they are joined",
 			in:   []interval{{start: 20, end: 25}, {start: 3, end: 5}, {start: 6, end: 9}},
 			want: []interval{{start: 3, end: 9}, {start: 20, end: 25}},
@@ -181,13 +127,6 @@ func TestMergeJoinsWhatCoversAnswersIdenticallyAbout(t *testing.T) {
 	}
 }
 
-// TestProfilePath pins the one place a mutant's spelling is turned into a
-// profile's.
-//
-// A mutant names its own module in a workspace and does not outside one, where
-// the run's module is the one answer for every mutant. Neither, and the path is
-// taken as it stands, which is the hand-written fixture case: a profile written
-// by hand already spells its files module-relatively.
 func TestProfilePath(t *testing.T) {
 	t.Parallel()
 
@@ -234,11 +173,6 @@ func TestProfilePath(t *testing.T) {
 	}
 }
 
-// TestCompareTestKeysOrdersByImportPathThenName pins the one order every list
-// of keys uses, field by field, because the callers sort sets that come out of
-// a map: a comparator that answered 0 too often would leave those lists in
-// iteration order, which is a different order on every run and a flake in
-// every test that reads one.
 func TestCompareTestKeysOrdersByImportPathThenName(t *testing.T) {
 	t.Parallel()
 
@@ -280,14 +214,6 @@ func TestCompareTestKeysOrdersByImportPathThenName(t *testing.T) {
 	}
 }
 
-// TestModulesOfIsEveryModuleTheMutantsAreIn pins the list [Result.Matched] is
-// counted against, which is the one thing standing between a profile that lines
-// up and a run that believes nothing is covered.
-//
-// The list is exact rather than merely sufficient: a module named twice would
-// make the answer depend on how many mutants a module has, and a module the
-// mutants do not name would count a profile file that no mutant is in. Both are
-// invisible from the outside, which is why this asks the function.
 func TestModulesOfIsEveryModuleTheMutantsAreIn(t *testing.T) {
 	t.Parallel()
 
@@ -319,8 +245,6 @@ func TestModulesOfIsEveryModuleTheMutantsAreIn(t *testing.T) {
 			want:      []string{indexModule, "example.com/a"},
 		},
 		{
-			// The hand-written fixture case: a profile already spells its files
-			// module-relatively, so there is no module to be under.
 			name:    "neither",
 			mutants: []Mutant{{Path: indexFile}},
 		},
@@ -338,13 +262,6 @@ func TestModulesOfIsEveryModuleTheMutantsAreIn(t *testing.T) {
 	}
 }
 
-// TestUnderModuleIsTheRuleMatchedCounts is the other half of the same answer.
-//
-// A profile names files from outside the modules under test — the standard
-// library, a dependency — and counting those would make [Result.Matched] say a
-// run lined up when nothing of the module's did. No modules at all is the
-// hand-written fixture case, where every file the profile names is one of
-// theirs.
 func TestUnderModuleIsTheRuleMatchedCounts(t *testing.T) {
 	t.Parallel()
 
@@ -360,8 +277,6 @@ func TestUnderModuleIsTheRuleMatchedCounts(t *testing.T) {
 		{name: "outside every module", file: "other.example/pkg/a.go",
 			modules: []string{indexModule}},
 		{
-			// A prefix that is not a path boundary: a module named
-			// "example.com/m" does not hold "example.com/mm/a.go".
 			name: "a module whose name is a prefix of another's",
 			file: indexModule + "m/a.go", modules: []string{indexModule},
 		},

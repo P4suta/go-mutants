@@ -12,28 +12,10 @@ import (
 	"github.com/P4suta/go-mutants/internal/coverage"
 )
 
-// FuzzParseTextfmt asserts what a reader of somebody else's output has to be
-// able to promise.
-//
-// This parser reads what `go tool covdata textfmt` writes, which is a document
-// produced by a program go-mutants does not control and cannot pin: a
-// toolchain release may add a field, a counter mode, or a line shape, and a
-// parser that panicked on one would turn a coverage pass -- an optimisation
-// that is documented never to fail a run -- into a crash.
-//
-// Three promises, and the third is the one a table of hand-written cases
-// cannot make:
-//
-//   - it never panics, whatever the bytes;
-//   - a refusal is a typed error carrying GOM7600 and the line it blames, so
-//     that a user who meets one can find it in docs/errors.md;
-//   - a document it accepts re-parses to exactly itself when re-rendered, which
-//     is what says the parse kept everything and invented nothing.
 func FuzzParseTextfmt(f *testing.F) {
 	f.Add("mode: set\n")
 	f.Add("mode: count\nexample.com/a/a.go:3.31,4.12 1 1\n")
 	f.Add("mode: atomic\nexample.com/a/a.go:1.1,2.2 0 0\n")
-	// The shapes that have broken parsers of this format before.
 	f.Add("")
 	f.Add("\n")
 	f.Add("\n\n\n")
@@ -73,9 +55,6 @@ func FuzzParseTextfmt(f *testing.F) {
 		if profile.Mode == "" {
 			t.Fatalf("ParseTextfmt accepted a document and reported no mode:\n%q", document)
 		}
-		// Re-rendering and re-parsing is the round trip: a parse that dropped a
-		// block, or invented one, or lost a coordinate, produces a different
-		// document the second time round.
 		rendered := renderProfile(profile)
 		again, err := coverage.ParseTextfmt(strings.NewReader(rendered))
 		if err != nil {
@@ -90,12 +69,6 @@ func FuzzParseTextfmt(f *testing.F) {
 	})
 }
 
-// renderProfile writes a profile back in the format it was read from.
-//
-// It is deliberately a second, independent statement of the format rather than
-// a method on the type: a renderer the parser shared code with would agree with
-// it for the same wrong reasons, which is the mistake the glob reference
-// implementation in internal/glob exists to avoid.
 func renderProfile(p coverage.Profile) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "mode: %s\n", p.Mode)

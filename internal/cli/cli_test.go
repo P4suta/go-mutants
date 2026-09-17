@@ -21,14 +21,11 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// execute drives the whole command tree with captured streams.
 func execute(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	return executeContext(t, t.Context(), args...)
 }
 
-// executeContext is [execute] with the context named, for the tests whose
-// subject is a run that was cancelled before or while it worked.
 func executeContext(t *testing.T, ctx context.Context, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -36,21 +33,6 @@ func executeContext(t *testing.T, ctx context.Context, args ...string) (code int
 	return code, out.String(), errOut.String()
 }
 
-// TestCodesAreUniqueAndInBlock holds this package inside the ranges it owns.
-//
-// There are five. GOM10xx is the command line itself; GOM80xx, GOM81xx, GOM82xx
-// and GOM83xx belong to one command each — `doctor`, `init`, the three
-// run-history commands, and the `trace` commands — because none of their
-// failures is a mistake in an invocation, and a user reading one should see at a
-// glance which of the places the remedy is in. Each block is checked rather than
-// merely allowed, so that a doctor code cannot drift into the history range or a
-// usage code into either.
-//
-// Naming a code below also asserts that [Codes] lists it, which is the second
-// half of the registry's job: a code declared and never registered is one
-// `doctor` cannot print and nobody can look up. The two warnings the diagnostic
-// options report themselves under are named for that reason and no other — they
-// are in the same GOM10xx block everything unnamed defaults to.
 func TestCodesAreUniqueAndInBlock(t *testing.T) {
 	blocks := map[Code]string{
 		CodeTraceUnavailable:        "GOM10",
@@ -124,8 +106,6 @@ func TestVersionPrintsOneLineAndKeepsTheShorthandFree(t *testing.T) {
 	if stdout != "go-mutants "+Version+"\n" {
 		t.Errorf("stdout = %q, want %q", stdout, "go-mutants "+Version+"\n")
 	}
-	// -v is reserved for verbosity; cobra would have claimed it for --version
-	// if the flag had not been registered explicitly.
 	if flag := NewRootCommand().Flags().ShorthandLookup("v"); flag != nil {
 		t.Errorf("-v is bound to --%s; it must stay free for verbosity", flag.Name)
 	}
@@ -144,9 +124,6 @@ func TestUnknownCommandSuggestsAndFails(t *testing.T) {
 	}
 }
 
-// TestNewCommandsAreSuggested. A command added to the tree has to reach the
-// did-you-mean list, or the list quietly becomes a statement about which
-// commands existed when it was last checked.
 func TestNewCommandsAreSuggested(t *testing.T) {
 	cases := map[string]string{
 		"docter": "doctor",
@@ -165,11 +142,6 @@ func TestNewCommandsAreSuggested(t *testing.T) {
 	}
 }
 
-// TestReportHelpListsTheHistoryCommands. cobra only reports an unknown
-// *subcommand* from the root, so `go-mutants report lst` prints `report`'s help
-// and succeeds — the same as `go-mutants cache anything` does today. That makes
-// the parent's help the whole of the answer somebody mistyping gets, so it has
-// to name all five.
 func TestReportHelpListsTheHistoryCommands(t *testing.T) {
 	code, stdout, stderr := execute(t, "report", "lst")
 	if code != int(mutation.ExitOK) {
@@ -182,15 +154,6 @@ func TestReportHelpListsTheHistoryCommands(t *testing.T) {
 	}
 }
 
-// TestTraceIsRefusedOnListDoctorReportAndCache keeps `--trace` to the one
-// command that runs anything.
-//
-// A recording is the account of a run, and none of these commands performs one:
-// `list` prints a catalogue, `doctor` inspects the machine, `report` and `cache`
-// read what earlier runs left. A flag accepted there would either do nothing or
-// invite somebody to believe it did something, so it is an unknown flag — which
-// is also why [withEnvironmentFlags] adds the flag to `run` alone: exporting
-// GO_MUTANTS_TRACE must not make every other command refuse to work.
 func TestTraceIsRefusedOnListDoctorReportAndCache(t *testing.T) {
 	commands := [][]string{
 		{"list"},
@@ -214,7 +177,6 @@ func TestTraceIsRefusedOnListDoctorReportAndCache(t *testing.T) {
 }
 
 func TestFarTypoGetsNoSuggestion(t *testing.T) {
-	// Three edits from "run" is past SuggestionsMinimumDistance.
 	_, _, stderr := execute(t, "cache")
 	if strings.Contains(stderr, "Did you mean") {
 		t.Errorf("a distant typo was given a suggestion: %q", stderr)
@@ -282,8 +244,6 @@ func TestOverlayCarriesOnlyChangedFlags(t *testing.T) {
 	cmd := newRunCommand()
 	o := &runOptions{}
 	cmd.RunE = func(c *cobra.Command, _ []string) error {
-		// The flag destinations belong to the command's own runOptions, so the
-		// overlay is read from the command rather than from o.
 		layer, err := runOverlay(c, o)
 		if err != nil {
 			return err
@@ -296,9 +256,6 @@ func TestOverlayCarriesOnlyChangedFlags(t *testing.T) {
 		}
 		return nil
 	}
-	// Explicitly empty rather than nil: cobra reads the process's own argv when
-	// SetArgs has never been called, and nil is indistinguishable from that.
-	// Under `go test -update` that argv holds a flag no go-mutants command has.
 	cmd.SetArgs([]string{})
 	cmd.SetOut(&bytes.Buffer{})
 	if err := cmd.Execute(); err != nil {
@@ -343,8 +300,6 @@ func TestInvalidConfigurationIsReportedWithItsOwnCode(t *testing.T) {
 	if !strings.Contains(stderr, "error GOM3064") {
 		t.Errorf("stderr = %q, want the configuration's own code", stderr)
 	}
-	// The code must appear once per line, not twice: every configuration error
-	// already renders itself with its code.
 	for _, line := range strings.Split(strings.TrimSpace(stderr), "\n") {
 		if strings.Count(line, "GOM3064") > 1 {
 			t.Errorf("the code is printed twice: %q", line)
@@ -362,15 +317,6 @@ func TestRenderErrorLiftsTheCodeOutOfEveryLine(t *testing.T) {
 	}
 }
 
-// TestRenderErrorCodesAContinuationLine covers the shape the all-lines-coded
-// test above cannot reach: a single error whose message carries a newline.
-//
-// internal/discover folds a multi-line loader blob before it gets here, so this
-// is the second line of defence rather than the first. It is still a line
-// go-mutants must never print, because a line with no "error GOM####: " on it is
-// a line `grep '^error '` and every CI log parser drop on the floor — and the
-// half of a compile failure that names the file and the column is exactly the
-// half that would go missing.
 func TestRenderErrorCodesAContinuationLine(t *testing.T) {
 	var b bytes.Buffer
 	RenderError(&b, errors.New("GOM4111: discovery needs a tree that compiles, and 1 package error stopped it: "+
@@ -382,8 +328,6 @@ func TestRenderErrorCodesAContinuationLine(t *testing.T) {
 	if got != want {
 		t.Errorf("RenderError:\n got %q\nwant %q", got, want)
 	}
-	// The property the two lines above are one instance of: nothing this
-	// function writes may stand on its own.
 	for _, line := range strings.Split(strings.TrimSuffix(got, "\n"), "\n") {
 		if !strings.HasPrefix(line, "error GOM") {
 			t.Errorf("line %q is not greppable as an error", line)
@@ -391,9 +335,6 @@ func TestRenderErrorCodesAContinuationLine(t *testing.T) {
 	}
 }
 
-// TestRenderErrorKeepsAnUncodedErrorGreppableToo is the same property on the
-// other branch. cobra and pflag produce one line, so this cannot happen through
-// the command line; the loop exists so that it cannot happen at all.
 func TestRenderErrorKeepsAnUncodedErrorGreppableToo(t *testing.T) {
 	var b bytes.Buffer
 	RenderError(&b, errors.New("unknown flag: --nope\ndid you mean --note?"))
@@ -487,18 +428,6 @@ func TestInterpretDistinguishesTheSignals(t *testing.T) {
 	}
 }
 
-// TestNoArgumentsMeansNoArgumentsRatherThanTheProcessesOwn pins the one place
-// an embedded command line can pick up somebody else's.
-//
-// cobra reads os.Args[1:] when SetArgs has never been called, and a nil slice
-// is indistinguishable from not calling it. So `ExecuteContext(ctx, nil, …)`
-// used to run against whatever the surrounding program was invoked with — and
-// for a test binary that is its own flags, which is how `mise run
-// golden-update` came to fail with `unknown shorthand flag: 'u' in -update`
-// from a command nobody had passed a flag to.
-//
-// The flag is chosen to be one no go-mutants command has and one `go test`
-// does, so the test fails in exactly the way the defect did.
 func TestNoArgumentsMeansNoArgumentsRatherThanTheProcessesOwn(t *testing.T) {
 	previous := os.Args
 	t.Cleanup(func() { os.Args = previous })

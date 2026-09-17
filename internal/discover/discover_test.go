@@ -1,12 +1,6 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// The discovery tests run the real Go toolchain against the fixture module in
-// testdata. There is no build tag on them and no mock underneath them: every
-// interesting thing this package does — telling the universe's `true` from a
-// shadowed one, telling a type argument from a map index, knowing that a cgo
-// file exists on a machine where cgo is switched off — is a fact about
-// go/packages and go/types that a fake would have to invent.
 package discover
 
 import (
@@ -28,17 +22,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// toolchain locates the Go toolchain the fixtures are loaded with.
-//
-// [testkit.GoBinary] first, because the skip policy belongs to the harness
-// rather than to this file: it skips on a machine without Go and *fails* under
-// GO_MUTANTS_TEST_REQUIRE_TOOLS, which every CI test job sets. The bare
-// t.Skipf this replaces was the exact failure that policy exists to catch — a
-// runner whose toolchain went missing would have retired seventy-four tests
-// and reported a green build.
-//
-// A Locate that then fails is a real failure rather than a second skip: `go` is
-// on PATH, so a version probe that will not answer is a fact worth reporting.
 func toolchain(t *testing.T) gocmd.Toolchain {
 	t.Helper()
 	testkit.GoBinary(t)
@@ -49,7 +32,6 @@ func toolchain(t *testing.T) gocmd.Toolchain {
 	return located
 }
 
-// fixture returns the absolute path of a testdata module.
 func fixture(t *testing.T, name string) string {
 	t.Helper()
 	path, err := fixturePath(name)
@@ -59,23 +41,6 @@ func fixture(t *testing.T, name string) string {
 	return path
 }
 
-// fixturePath resolves a testdata module, and refuses anything that is not one.
-//
-// The name is checked before the path is, and the path is checked for a module
-// file rather than for existing. `os.Stat` on the joined path -- which is what
-// this did -- answers a weaker question than the caller asked: the empty name
-// and `.` both join to the `testdata` directory, `..` joins to this package,
-// and all three exist. The helper would hand back a path that is not a module,
-// and every caller puts what it gets straight into [Options.SnapshotRoot];
-// discovery would then walk the wrong tree and the test would measure something
-// nobody named, with nothing anywhere saying so.
-//
-// Either module file counts. `workspace` is a `go.work` with no `go.mod` beside
-// it, and asking only for `go.mod` refuses a fixture two tests here already use
-// -- which is how the first draft of this rule failed them.
-//
-// The rule is internal/testkit's, from `root.go`, which resolves the
-// repository's own fixtures and has refused these shapes since it was written.
 func fixturePath(name string) (string, error) {
 	switch {
 	case name == "", name == ".", name == "..":
@@ -96,11 +61,6 @@ func fixturePath(name string) (string, error) {
 		"%s holds neither a go.mod nor a go.work", path)
 }
 
-// TestFixturePathRefusesWhatIsNotAFixtureModule pins the shape this helper
-// resolves, and not merely that something is there.
-//
-// Watched failing first, on the three names that used to pass: "" and "."
-// resolved the `testdata` directory and ".." resolved this package.
 func TestFixturePathRefusesWhatIsNotAFixtureModule(t *testing.T) {
 	t.Parallel()
 
@@ -109,7 +69,6 @@ func TestFixturePathRefusesWhatIsNotAFixtureModule(t *testing.T) {
 			t.Errorf("fixturePath(%q) resolved %s, and that is not a fixture module", name, path)
 		}
 	}
-	// One of each marker, because the rule accepts either.
 	for _, name := range []string{"mainmod", "workspace"} {
 		if _, err := fixturePath(name); err != nil {
 			t.Errorf("fixturePath refused %q, a fixture this package has: %v", name, err)
@@ -117,8 +76,6 @@ func TestFixturePathRefusesWhatIsNotAFixtureModule(t *testing.T) {
 	}
 }
 
-// discoverFixture runs a discovery over a testdata module, failing the test on
-// any error.
 func discoverFixture(t *testing.T, name string, opts Options) Result {
 	t.Helper()
 	opts.SnapshotRoot = fixture(t, name)
@@ -148,7 +105,6 @@ func TestDiscoverLoadsOnlySelectedPackages(t *testing.T) {
 	}
 }
 
-// patterns compiles test patterns, which are fixed at authoring time.
 func patterns(t *testing.T, sources ...string) []glob.Pattern {
 	t.Helper()
 	compiled, err := CompilePatterns(sources)
@@ -158,9 +114,6 @@ func patterns(t *testing.T, sources ...string) []glob.Pattern {
 	return compiled
 }
 
-// summarize renders candidates in the compact form the expectation tables are
-// written in: everything that identifies the edit, nothing that would have to
-// be recounted whenever the fixture gains a line.
 func summarize(candidates []Located) []string {
 	out := make([]string, 0, len(candidates))
 	for _, c := range candidates {
@@ -169,7 +122,6 @@ func summarize(candidates []Located) []string {
 	return out
 }
 
-// summarizeSkips renders skips the same way.
 func summarizeSkips(skips []Skip) []string {
 	out := make([]string, 0, len(skips))
 	for _, s := range skips {
@@ -178,9 +130,6 @@ func summarizeSkips(skips []Skip) []string {
 	return out
 }
 
-// equalStrings compares two lists element by element and reports the whole of
-// both when they differ, because a discovery bug is much easier to read as two
-// tables than as one diff line.
 func equalStrings(t *testing.T, got, want []string) {
 	t.Helper()
 	if reflect.DeepEqual(got, want) {
@@ -190,14 +139,6 @@ func equalStrings(t *testing.T, got, want []string) {
 		len(got), len(want), strings.Join(got, "\n      "), strings.Join(want, "\n      "))
 }
 
-// wantCandidates is every candidate the fixture module holds, in the order
-// discovery promises: path, then span, then registry position.
-//
-// It is one line per candidate and it is long, because the whole catalogue is
-// implemented and the whole catalogue is applied to every fixture: a package
-// written to exercise the bitwise rules also has assignments to delete and
-// results to zero. That is the point of an exact table — a rule that starts
-// firing somewhere new shows up here rather than in a count.
 var wantCandidates = []string{
 	"arith/arith.go delete-assignment out[0] = a + b->",
 	"arith/arith.go add-to-sub +->-",
@@ -248,8 +189,6 @@ var wantCandidates = []string{
 	"bits/bits.go shr-to-shl >>-><<",
 	"bits/bits.go delete-assignment out[0] = a & b->",
 	"bits/bits.go band-to-bor &->|",
-	// The package import completion draws on: exported, named, and imported
-	// by one file of package split and not the other.
 	"carrier/carrier.go return-zero-numeric Extent(b.n)->0",
 	"carrier/carrier.go return-zero-numeric int(e)->0",
 	"carrier/carrier.go return-zero-numeric deeper.Of(n)->0",
@@ -292,7 +231,6 @@ var wantCandidates = []string{
 	"compare/compare.go return-false off->false",
 	"compare/compare.go return-zero-numeric m[true]->0",
 	"compare/compare.go true-to-false true->false",
-	// The package that is one edge too far: nothing in split imports it.
 	"deeper/deeper.go return-zero-numeric Thing(n)->0",
 	"deeper/deeper.go return-zero-numeric int(t)->0",
 	"deletion/deletion.go delete-call-statement Log(\"start\")->",
@@ -508,9 +446,6 @@ var wantCandidates = []string{
 	"shadow/shadow.go return-zero-numeric true->0",
 	"shadow/shadow.go false-to-true false->true",
 	"shadow/shadow.go return-true false->true",
-	// Widest is the site import completion exists for: its `+` has the type
-	// carrier.Extent, and only the file beside it imports carrier. Deepest
-	// below it is the same shape one package further out, and is a skip.
 	"split/sayable.go return-zero-numeric carrier.Count(boxed(a).Size()) + b->0",
 	"split/sayable.go add-to-sub +->-",
 	"split/unsayable.go add-to-sub +->-",
@@ -555,34 +490,16 @@ var wantCandidates = []string{
 	"unnameable/unnameable.go return-zero-numeric a->0",
 }
 
-// wantSkips is every recorded reason for the same run.
 var wantSkips = []string{
 	"cgopkg/cgo.go cgo 1",
 	"cgopkg/pure.go cgo 1",
-	// Four for the sites no form covers: the `for` post statement, the `if`
-	// initialiser, the `switch` tag, and the short declaration that redeclares.
-	// Then eight for the declaration form's own refusals — one in the `:=`
-	// that shadows and reads what it shadows, two in the `var` that does the
-	// same, three across the `var` block whose specs refer to each other, and
-	// one each for the two multi-line cuts.
 	"generated/generated.go generated 1",
-	// One for the generic function's constraint, one for the generic type's,
-	// one for the single explicit type argument, and two for the list form.
 	"generics/generics.go type-param 5",
 	"labels/labels.go label-or-goto 1",
-	// Import completion's own boundary: a type whose package *no* file of this
-	// one imports. The sibling file beside it has no path to it either, which
-	// is what makes this a refusal while Widest in the same file is a site.
 	"split/unsayable.go unnameable-decl-type 1",
-	// The condition of a named boolean type: negatable Go, and no guard form.
 	"suppressed/suppressed.go array-length 2",
 	"suppressed/suppressed.go const-decl 4",
-	// Four rather than five: the function literal in the last initialiser
-	// returns a constant comparison, so one of its two return replacements is
-	// the program it would mutate and was never an edit to decline.
 	"suppressed/suppressed.go package-var-init 4",
-	// The reason the reserved name was chosen for: a Form D site whose
-	// declared type is another package's unexported one.
 	"unnameable/unnameable.go unnameable-decl-type 1",
 }
 
@@ -591,12 +508,6 @@ func TestDiscoverFindsEveryImplementedRule(t *testing.T) {
 	equalStrings(t, summarize(result.Candidates), wantCandidates)
 }
 
-// TestTheFixtureModuleFiresEveryRule is the guard on the fixtures rather than
-// on the code: an exact table proves what discovery found, and only this proves
-// that what it found covers the whole catalogue.
-//
-// It reads the rules out of [SupportedRules] rather than out of a list here, so
-// a rule that lands without a fixture fails in the commit that lands it.
 func TestTheFixtureModuleFiresEveryRule(t *testing.T) {
 	result := wholeFixture(t)
 	fired := make(map[string]bool, len(result.Candidates))
@@ -631,13 +542,6 @@ func TestDiscoverReportsTheModule(t *testing.T) {
 	}
 }
 
-// assertCandidatesMatchTheFile re-derives everything a candidate claims about
-// a file from the bytes on disk: the digest, the text under the span, and the
-// line and column counted the way a reader would count them.
-//
-// It reads the file rather than the syntax tree the candidate came from on
-// purpose. The tree is the thing under test; the file is what the instrumenter,
-// the diff, and the editor a user jumps from will all see.
 func assertCandidatesMatchTheFile(t *testing.T, root string, candidates []Located) {
 	t.Helper()
 	for _, c := range candidates {
@@ -659,8 +563,6 @@ func assertCandidatesMatchTheFile(t *testing.T, root string, candidates []Locate
 			t.Errorf("%s %s: replacement is the original", c.Path, c.Span)
 		}
 
-		// Line and column are recomputed the same way: count the newlines,
-		// then step Column-1 bytes into the line.
 		line, ok := sourceLine(t, src, c)
 		if !ok {
 			continue
@@ -671,8 +573,6 @@ func assertCandidatesMatchTheFile(t *testing.T, root string, candidates []Locate
 	}
 }
 
-// sourceLine returns the line a candidate sits on, reporting false — after
-// failing the test — when the position does not address the file at all.
 func sourceLine(t *testing.T, src []byte, c Located) (string, bool) {
 	t.Helper()
 	lines := strings.Split(string(src), "\n")
@@ -688,9 +588,6 @@ func sourceLine(t *testing.T, src []byte, c Located) (string, bool) {
 	return line, true
 }
 
-// TestDiscoverSpansCoverTheOriginalText is the invariant everything downstream
-// rests on, checked here against the bytes on disk rather than against the
-// syntax tree the candidate came from.
 func TestDiscoverSpansCoverTheOriginalText(t *testing.T) {
 	result := wholeFixture(t)
 	if len(result.Candidates) == 0 {
@@ -699,15 +596,6 @@ func TestDiscoverSpansCoverTheOriginalText(t *testing.T) {
 	assertCandidatesMatchTheFile(t, fixture(t, "mainmod"), result.Candidates)
 }
 
-// TestDiscoverColumnsAreBytesNotRunes pins what [Located.Column] means, and
-// pins the fixture that makes the question answerable at all.
-//
-// The test above would now catch a rune column too, because the runes package
-// is part of the module it walks — but only for as long as that package keeps
-// a multi-byte character ahead of a candidate, and nothing in it says so. This
-// one says so: the moment no candidate's byte column and rune column disagree,
-// the fixture has stopped testing the contract, and that is a failure here
-// rather than a test that silently proves nothing.
 func TestDiscoverColumnsAreBytesNotRunes(t *testing.T) {
 	root := fixture(t, "mainmod")
 	result := discoverFixture(t, "mainmod", Options{Include: patterns(t, "runes/**")})
@@ -735,9 +623,6 @@ func TestDiscoverColumnsAreBytesNotRunes(t *testing.T) {
 	}
 }
 
-// summarizeGuards renders the site hint of every candidate the way the guard
-// expectation table is written: the edit, then the form, the bytes the guard
-// replaces, and the types a Form D site has to declare.
 func summarizeGuards(t *testing.T, root string, candidates []Located) []string {
 	t.Helper()
 	out := make([]string, 0, len(candidates))
@@ -760,22 +645,6 @@ func summarizeGuards(t *testing.T, root string, candidates []Located) []string {
 	return out
 }
 
-// wantFormsGuards is the exact site hint of every candidate in the guard
-// fixture, which is the contract internal/instrument consumes.
-//
-// The three forms are all here and each one is here for a reason the fixture
-// spells out in prose beside it: a bool selector where the edit sits in a
-// bool-valued expression, a statement guard where it does not, and a
-// declaration rewrite where the statement declares. The four sites this file
-// refuses do not appear — they are the unnameable-decl-type skips in
-// [wantSkips].
-//
-// The last block is the one place bool-valued and Form C part company. A call
-// returning the universe bool is a Form C site everywhere a value is wanted —
-// `return n > 0` below is one — and in none of the three statement positions,
-// where a guard would be a bool nothing uses or a `defer` operand that is not a
-// call. Those read `| S` with the whole statement as the site, and an entry
-// there that reads `| C` is a hint no instrumenter could rewrite into Go.
 var wantFormsGuards = []string{
 	"add-to-sub + | D var sum = a + b [sum int]",
 	"return-zero-numeric sum | S return sum []",
@@ -845,18 +714,12 @@ var wantFormsGuards = []string{
 	"return-zero-numeric n | S return n []",
 }
 
-// TestDiscoverEmitsTheGuardHints pins the Form D site hint contract on the
-// fixture written for it.
 func TestDiscoverEmitsTheGuardHints(t *testing.T) {
 	root := fixture(t, "mainmod")
 	result := discoverFixture(t, "mainmod", Options{Include: patterns(t, "forms/**")})
 	equalStrings(t, summarizeGuards(t, root, result.Candidates), wantFormsGuards)
 }
 
-// TestDiscoverNamesADeclaredTypeFromItsOwnPackage is the qualifier's own case,
-// separated from the table above because it is the one that would be wrong in
-// a way a table could not show: a type of the package under test has to render
-// unqualified, and `negate.Flag` spliced into package negate does not compile.
 func TestDiscoverNamesADeclaredTypeFromItsOwnPackage(t *testing.T) {
 	result := discoverFixture(t, "mainmod", Options{Include: patterns(t, "negate/**")})
 	got, ok := candidateOf(t, result.Candidates, "ge-to-gt")
@@ -873,9 +736,6 @@ func TestDiscoverNamesADeclaredTypeFromItsOwnPackage(t *testing.T) {
 	}
 }
 
-// TestEveryCandidateCarriesAUsableGuard is the invariant the hint has to hold
-// everywhere, checked over the whole fixture module rather than over the one
-// package written to exercise it.
 func TestEveryCandidateCarriesAUsableGuard(t *testing.T) {
 	root := fixture(t, "mainmod")
 	result := wholeFixture(t)
@@ -891,10 +751,6 @@ func TestEveryCandidateCarriesAUsableGuard(t *testing.T) {
 			t.Errorf("%s %s: guard form %q is not one this build emits", c.Path, c.Span, c.Guard.Form)
 			continue
 		}
-		// A site type belongs to the two forms that write one: Form C' converts
-		// its selector back to it and Form E returns it. The other three
-		// produce a statement or an untyped expression and have no type of
-		// their own.
 		carriesType := c.Guard.Form == GuardFormCPrime || c.Guard.Form == GuardFormE
 		if (c.Guard.SiteType != "") != carriesType {
 			t.Errorf("%s %s: a Form %s site carries SiteType %q",
@@ -919,8 +775,6 @@ func TestEveryCandidateCarriesAUsableGuard(t *testing.T) {
 			}
 		}
 	}
-	// All three forms have to be reachable, or the fixtures have stopped
-	// covering the contract whatever the counts above say.
 	for _, form := range []GuardForm{GuardFormC, GuardFormS, GuardFormD} {
 		if forms[form] == 0 {
 			t.Errorf("no candidate in the fixture module carries a Form %s hint", form)
@@ -928,14 +782,7 @@ func TestEveryCandidateCarriesAUsableGuard(t *testing.T) {
 	}
 }
 
-// TestDiscoverIsDeterministic is the property the whole catalogue depends on:
-// two passes over the same bytes agree field for field, maps and directory
-// order included.
 func TestDiscoverIsDeterministic(t *testing.T) {
-	// The two passes here are deliberately not the shared one every other
-	// whole-fixture test reads: what this asserts is that discovery run twice
-	// agrees, and a cached result compared with itself would agree whatever
-	// discovery did.
 	first := discoverFixture(t, "mainmod", Options{})
 	second := discoverFixture(t, "mainmod", Options{})
 	if !reflect.DeepEqual(first, second) {
@@ -943,9 +790,6 @@ func TestDiscoverIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestDiscoverNeverMutatesTestFiles covers the one exclusion that is
-// structural: a test file is built, type-checked, and run, is never mutated,
-// and is never recorded as a skip either, because it was never a decision.
 func TestDiscoverNeverMutatesTestFiles(t *testing.T) {
 	result := wholeFixture(t)
 	for _, c := range result.Candidates {
@@ -960,15 +804,6 @@ func TestDiscoverNeverMutatesTestFiles(t *testing.T) {
 	}
 }
 
-// crlfModule is a whole module written with CRLF line endings.
-//
-// It is spelled out here instead of being checked into testdata for two
-// reasons. `gofmt -l .` walks testdata and lists any Go file whose line endings
-// are not LF, so a checked-in CRLF fixture would fail this repository's own
-// format gate; and a CRLF file on disk is one editor, one `gofmt -w`, one
-// helpful tool away from being normalised to LF without anybody noticing that
-// the fixture had stopped testing anything. Written as `\r\n`, the line endings
-// are visible in the source and cannot drift.
 var crlfModule = map[string]string{
 	"go.mod": lines(
 		"// SPDX-FileCopyrightText: 2026 go-mutants contributors",
@@ -1006,23 +841,13 @@ var crlfModule = map[string]string{
 	),
 }
 
-// The coordinates of the one candidate in crlfModule's plain.go, counted off
-// the fixture above: the operator is on the twelfth line, and the eleventh
-// byte of it — one tab, then "return a ".
 const (
 	crlfCandidateLine   = 12
 	crlfCandidateColumn = 11
 )
 
-// lines joins fixture lines with CRLF, including a trailing one.
 func lines(text ...string) string { return strings.Join(text, "\r\n") + "\r\n" }
 
-// writeModule materialises a module into a fresh temporary directory.
-//
-// The root is resolved through [filepath.EvalSymlinks] because the go command
-// reports the module directory in its own spelling — a temporary directory is
-// behind a symlink on macOS and can be behind a short name on Windows — and
-// discovery insists the two name the same directory.
 func writeModule(t *testing.T, files map[string]string) string {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -1041,24 +866,8 @@ func writeModule(t *testing.T, files map[string]string) string {
 	return root
 }
 
-// TestDiscoverReadsCRLFSource drives CRLF source through the real loader, which
-// is the only way to find out what go/scanner hands back for a comment on a
-// Windows checkout — the in-memory [TestIsGenerated] case asserts the same
-// thing about a string this package parsed itself.
-//
-// Both halves matter. The generated marker has to be recognised through the
-// carriage return, or every generated file in a Windows checkout would be
-// mutated; and the candidate beside it has to carry a span, a digest, and a
-// line and column measured in the file's own bytes, carriage returns included.
-//
-// The line and column are asserted against literals rather than recomputed.
-// Re-deriving them from the same file the discovery read would agree with any
-// consistent miscount of the line endings, and eleven carriage returns ahead of
-// the operator is exactly the drift that would hide there.
 func TestDiscoverReadsCRLFSource(t *testing.T) {
 	root := writeModule(t, crlfModule)
-	// The whole test rests on the fixture's line endings, and nothing else
-	// here would notice if they were quietly normalised.
 	if src, err := os.ReadFile(filepath.Join(root, "plain.go")); err != nil {
 		t.Fatalf("reading the fixture back: %v", err)
 	} else if !strings.Contains(string(src), "\r\n") {
@@ -1071,9 +880,6 @@ func TestDiscoverReadsCRLFSource(t *testing.T) {
 	if !hasSkip(result.Skips, "gen.go", SkipGenerated, 1) {
 		t.Errorf("the CRLF generated file was not skipped: %v", summarizeSkips(result.Skips))
 	}
-	// The comparison is also the whole of a boolean result, so the return
-	// family offers both of its boolean replacements over the same bytes; they
-	// sort ahead of the operator because their span starts earlier.
 	equalStrings(t, summarize(result.Candidates), []string{
 		"plain.go return-true a > b->true",
 		"plain.go return-false a > b->false",
@@ -1090,10 +896,6 @@ func TestDiscoverReadsCRLFSource(t *testing.T) {
 	}
 }
 
-// candidateOf returns the one candidate of a named rule, and insists there is
-// only one: a caller naming a rule to single out a site would otherwise get
-// whichever of several sorted first, and would keep getting it after the
-// fixture grew a second one.
 func candidateOf(t *testing.T, candidates []Located, rule string) (Located, bool) {
 	t.Helper()
 	var found []Located
@@ -1146,7 +948,6 @@ func TestDiscoverIncludeNarrowsToOnePackage(t *testing.T) {
 	if len(result.Candidates) != 39 {
 		t.Errorf("got %d candidates, want the 39 in compare: %v", len(result.Candidates), summarize(result.Candidates))
 	}
-	// Everything else becomes an excluded skip rather than disappearing.
 	for _, path := range []string{
 		"legacy/legacy.go", "generics/generics.go", "suppressed/suppressed.go",
 		"cgopkg/cgo.go", "cgopkg/pure.go", "generated/generated.go",
@@ -1161,7 +962,6 @@ func TestDiscoverIncludeNarrowsToOnePackage(t *testing.T) {
 	}
 }
 
-// hasSkip reports whether the exact skip is present.
 func hasSkip(skips []Skip, path string, reason SkipReason, count int) bool {
 	for _, s := range skips {
 		if s.Path == path && s.Reason == reason && s.Count == count {
@@ -1183,21 +983,11 @@ func TestDiscoverAppliesOnlyTheSelectedRules(t *testing.T) {
 			t.Errorf("unselected rule produced a candidate: %s at %s", c.Rule.Name, c.Path)
 		}
 	}
-	// Ten, and two of them are the tagless switch's own labels: `a == b` and
-	// the `==` of `ok == false`. A label of a switch with no tag is exactly
-	// `bool`, so it is an ordinary boolean context rather than a suppressed
-	// one -- see the corpus module's Switch for the three shapes. Four more are
-	// in the labels package, whose functions each compare a value before
-	// branching; they are incidental to what that package is for, which is
-	// what a whole-module count of one rule looks like.
 	if len(result.Candidates) != 10 {
 		t.Errorf("got %d eq-to-neq candidates, want 10: %v", len(result.Candidates), summarize(result.Candidates))
 	}
 }
 
-// TestDiscoverSelectsWithinAFamily narrows to one rule of a family that has
-// several, which is where a table keyed by operator token could quietly select
-// the whole table instead of the one entry that was asked for.
 func TestDiscoverSelectsWithinAFamily(t *testing.T) {
 	rule, ok := mutation.CanonicalRegistry().Lookup("add-to-sub")
 	if !ok {
@@ -1238,24 +1028,11 @@ func TestDiscoverRefusesAWorkspace(t *testing.T) {
 	}
 }
 
-// TestDiscoverIgnoresAWorkspaceOutsideTheSnapshot is the other half of the
-// workspace guarantee, and the half a `go.work` at the snapshot root cannot
-// state: the go command finds a workspace file by walking up from the module
-// and by being pointed at one with $GOWORK, and neither of those files is part
-// of the snapshot whose digest the whole run is keyed on.
-//
-// The fixture is the discriminator. testdata/workspace/first imports
-// example.com/second and requires it nowhere, so the module loads if and only
-// if the workspace one directory above it is in effect — which makes "the same
-// failure under both ways of reaching that file" a fact about the loader's
-// environment rather than about the fixture.
 func TestDiscoverIgnoresAWorkspaceOutsideTheSnapshot(t *testing.T) {
 	workspaceRoot := fixture(t, "workspace")
 	root := filepath.Join(workspaceRoot, "first")
 	located := toolchain(t)
 
-	// The two ways the go command reaches a workspace file that is not in the
-	// snapshot, in a fixed order so that the two outcomes can be compared.
 	ways := []struct {
 		name   string
 		gowork string
@@ -1265,8 +1042,6 @@ func TestDiscoverIgnoresAWorkspaceOutsideTheSnapshot(t *testing.T) {
 	}
 	codes := make([]Code, 0, len(ways))
 	for _, way := range ways {
-		// t.Setenv either way, so that the cleanup it registers puts the
-		// developer's own GOWORK back afterwards.
 		t.Setenv("GOWORK", way.gowork)
 		if way.gowork == "" {
 			if err := os.Unsetenv("GOWORK"); err != nil {
@@ -1286,11 +1061,6 @@ func TestDiscoverIgnoresAWorkspaceOutsideTheSnapshot(t *testing.T) {
 		}
 		codes = append(codes, code)
 	}
-	// Which failure it is, is the go command's business: today it is
-	// [CodePackageErrors], because `go list` reports the unresolvable import
-	// against the package, and a caller running with a different module mode
-	// could see the loader itself give up instead. That both ways of reaching
-	// the same workspace file fail identically is this package's business.
 	if codes[0] != codes[1] {
 		t.Errorf("%s reports %s but %s reports %s, so the workspace file still decides something",
 			ways[0].name, codes[0], ways[1].name, codes[1])
@@ -1310,24 +1080,6 @@ func TestDiscoverRequiresATreeThatCompiles(t *testing.T) {
 	}
 }
 
-// TestDiscoverSkipsCgoPackages runs the same assertion under both settings of
-// CGO_ENABLED, which is what makes it deterministic on a machine with no C
-// compiler — and what covers the branch the local machine would otherwise
-// never take.
-//
-// The two settings reach the same verdict along different paths. With cgo off,
-// the go command excludes cgo.go by build constraint and it survives only in
-// the package's ignored files; with cgo on, cgo.go is a cgo file whose compiled
-// form lives in the build cache, and here, with no C compiler installed, the
-// package fails to build at all. Discovery recognises the package from the
-// import in the source in both cases, skips every file it owns, and never lets
-// its build failure reach the load gate.
-//
-// The fixture's plain pure.go is what makes the cgo-off case testable at all:
-// a directory whose *every* file is excluded by build constraints is not
-// matched by `./...`, so a pure cgo package simply does not exist as far as the
-// go command is concerned when cgo is off. Discovery follows the build
-// configuration there and reports nothing, because nothing was in the build.
 func TestDiscoverSkipsCgoPackages(t *testing.T) {
 	for _, enabled := range []string{"0", "1"} {
 		t.Run("CGO_ENABLED="+enabled, func(t *testing.T) {
@@ -1373,16 +1125,6 @@ func TestDiscoverRejectsARootThatIsNotAModuleRoot(t *testing.T) {
 	}
 }
 
-// TestBuildCatalogAcceptsEveryCandidate holds the whole of discovery's output
-// to what the catalogue will take: every candidate is either catalogued or
-// deduplicated against one that was, and nothing is lost between the two.
-//
-// Duplicates are expected now, and are not a defect. Two families can propose
-// the same bytes at the same span — `return-true` over a `false` literal is the
-// same edit `false-to-true` makes — and the catalogue resolves that in favour
-// of the more local rule. That resolution is documented in docs/operators.md
-// and asserted here, because a duplicate arising for any *other* reason would
-// mean two rules quietly doing one rule's work.
 func TestBuildCatalogAcceptsEveryCandidate(t *testing.T) {
 	result := wholeFixture(t)
 	catalog, err := BuildCatalog(result)
@@ -1418,7 +1160,6 @@ func TestSupportedRulesAreRegisteredAndComplete(t *testing.T) {
 			t.Errorf("%s is not the registered rule: %v", rule, err)
 		}
 	}
-	// Registry order, which is what the candidate ordering leans on.
 	positions := make([]int, 0, len(rules))
 	for _, rule := range rules {
 		position, ok := registry.Position(rule.Name)
@@ -1468,21 +1209,6 @@ func TestCodesAreUniqueAndInBlock(t *testing.T) {
 	}
 }
 
-// TestResultCarriesTheDigestOfEveryScannedFile pins the answer the library's
-// own drift check is built on.
-//
-// A mutation catalogue can only speak for the files it catalogued, and a
-// preparation that runs while somebody may be writing the tree needs to know
-// what discovery *read* — including the files it read and found nothing in. A
-// file transiently emptied of everything mutable is the case that matters: it
-// still loads, it is still walked, and it produces no candidate at all, so a
-// check built on candidates alone would never look at it.
-//
-// One narrow rule is selected on purpose. It makes most of the fixture's files
-// candidate-free while every one of them is still read, which is exactly the
-// gap the map exists to cover, and it makes the assertion below — that the map
-// is bigger than the set of catalogued paths — a statement rather than a
-// coincidence.
 func TestResultCarriesTheDigestOfEveryScannedFile(t *testing.T) {
 	t.Parallel()
 
@@ -1529,23 +1255,6 @@ func TestResultCarriesTheDigestOfEveryScannedFile(t *testing.T) {
 	}
 }
 
-// TestTheLoaderParsesEachSourceFileOnceAndNoTestFile is the counted form of
-// what discovery is for.
-//
-// Discovery walks non-test files, once each. The loader it walks them with
-// decides how much type-checking that costs, and the two are not the same
-// number unless somebody says so: asking go/packages for the test variants of
-// every package makes it parse and type-check each package twice — once as
-// itself and once with its in-package test files — and then again for the
-// external test package and the generated test main. On this module that is
-// three files parsed for every one walked, every one of them type-checked, on
-// the critical path of every run.
-//
-// The two claims below are the whole of that waste, and neither is about the
-// loader's spelling: a file discovery parses twice is a file it type-checked
-// twice, and a test file it parses is one it will not walk. Counting them here
-// rather than timing anything is deliberate — how much work a phase does is a
-// property of the phase, how long that takes is a property of the machine.
 func TestTheLoaderParsesEachSourceFileOnceAndNoTestFile(t *testing.T) {
 	t.Parallel()
 	root := fixture(t, "mainmod")
@@ -1582,21 +1291,6 @@ func TestTheLoaderParsesEachSourceFileOnceAndNoTestFile(t *testing.T) {
 	}
 }
 
-// TestDiscoverReadsATreeWhoseTestFilesDoNotCompile draws the boundary of the
-// compiling-tree precondition where the precondition's own argument puts it.
-//
-// A package that does not type-check is refused because discovery reads its
-// types: a rule that cannot tell the universe's `true` from a shadowed one
-// would produce a smaller catalogue instead of an error. Not one of those reads
-// is of a test file. A test file is built and run and never mutated, so a
-// compiler error in one says nothing about the type information this phase
-// takes its answers from, and refusing the whole tree for it refuses a run the
-// tree can perfectly well support -- one whose test command names other
-// packages entirely.
-//
-// The failure is still reported, by the phase whose business it is: the
-// baseline builds and runs the test command, and a test file inside that scope
-// that does not compile fails there, naming the file, before a mutant exists.
 func TestDiscoverReadsATreeWhoseTestFilesDoNotCompile(t *testing.T) {
 	t.Parallel()
 	result := discoverFixture(t, "brokentests", Options{})
@@ -1610,20 +1304,6 @@ func TestDiscoverReadsATreeWhoseTestFilesDoNotCompile(t *testing.T) {
 	}
 }
 
-// TestAWorkspaceMayUseItsOwnRootAsAModule pins the layout every repository
-// takes the day it grows a second module.
-//
-// `use .` beside `use ./inner` is what a tree looks like when a tool module is
-// added next to the library it was already publishing. This repository became
-// one, which is how the gap was found: the workspace pass walks each module in
-// turn and hands [Discover] that module's own directory, and for the `.` module
-// that directory *is* the workspace root — so CheckWorkspace saw the go.work it
-// had just read and refused the pass that was reading it, with GOM4102 telling
-// the caller to point at one of the workspace's modules. It was pointing at one.
-//
-// Nothing here covered it because `fixtures/workspace` uses three
-// subdirectories and no root, so every SnapshotRoot handed to Discover was
-// below the file. A corpus can be complete about the shapes it has.
 func TestAWorkspaceMayUseItsOwnRootAsAModule(t *testing.T) {
 	t.Parallel()
 

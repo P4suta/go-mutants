@@ -29,17 +29,6 @@ const (
 
 	diagnosticsTraceFileName = trace.FileName
 
-	// diagnosticsEngineTraceFileName is the engine's own recording, beside
-	// goatest's rather than merged into it.
-	//
-	// Beside, because the two are different formats that reject each other's
-	// schemas by design, and a reader has to know which one they are holding.
-	// Kept at all, because only one of them was: the engine writes a note
-	// saying why a preparation failed, goatest's own `prepare` event says
-	// `failed` and has no field the reason could go in, and the workspace
-	// holding the engine's account was closed and the account dropped. A run
-	// could end with the sentence that explains it already written down and
-	// nowhere a reader would ever look.
 	diagnosticsEngineTraceFileName = "engine-" + trace.FileName
 )
 
@@ -238,9 +227,6 @@ func diagnosticsPreservedPaths(directory string, events []trace.Event) []byte {
 	return []byte(text.String())
 }
 
-// diagnosticsEngineTrace encodes the engine's recording the way
-// [diagnosticsTrace] encodes goatest's, and separately from it because the two
-// event types are different types with different schemas.
 func diagnosticsEngineTrace(events []enginetrace.Event) ([]byte, error) {
 	if len(events) == 0 {
 		return nil, nil

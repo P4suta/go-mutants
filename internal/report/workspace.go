@@ -15,27 +15,10 @@ import (
 )
 
 const (
-	// WorkspaceDocumentType is what a workspace run publishes instead of a run
-	// report, and the discriminator a consumer branches on.
-	WorkspaceDocumentType = "go-mutants/workspace-report"
-	// WorkspaceSchemaVersion is the version of that document this build writes.
+	WorkspaceDocumentType  = "go-mutants/workspace-report"
 	WorkspaceSchemaVersion = 1
 )
 
-// A WorkspaceReport is one run over a `go.work`, and every module's run report
-// inside it.
-//
-// It exists because `workspace.module_path` is required of a run report and a
-// workspace has no single answer for it: a workspace is measured as one run
-// over one catalogue that spans its modules — so that a mutant is executed
-// against every test that covers it, whichever module compiled that test — and
-// reported one module at a time. See ADR 0012.
-//
-// The module documents are *embedded* rather than filed beside this one, and
-// that is what makes one run one file: a history store names a run's document
-// by its run id, and N documents sharing a run id would name one file. Each of
-// them is a complete, schema-valid run report, so anything that reads one reads
-// one of these, and `jq '.modules[0].report'` is a run report on its own.
 type WorkspaceReport struct {
 	DocumentType  string `json:"document_type"`
 	SchemaVersion int    `json:"schema_version"`
@@ -46,29 +29,15 @@ type WorkspaceReport struct {
 	FinishedAt    string `json:"finished_at"`
 	DurationMS    int64  `json:"duration_ms"`
 
-	// Workspace is what every module's report says about the tree, said once:
-	// the digest the run is keyed on, the platform, the snapshot, and the `go`
-	// directive. What it does not carry is a module path, which is the whole
-	// reason this document type exists.
 	Workspace WorkspaceFacts `json:"workspace"`
 
-	// Summary is the run's, added up across the modules, and the policy verdict
-	// is the one that decided the exit code. A module's own summary is in its
-	// own report, and the two answer different questions: "did this project
-	// pass" and "which part of it did not".
 	Summary Summary `json:"summary"`
 
-	// Expectations are the ledger rows that name no mutant of any module, which
-	// is the only place they can be reported: a row naming another module's
-	// mutant is that module's row, and a row naming nothing is nobody's.
 	Expectations []Expectation `json:"expectations"`
 
-	// Modules are the workspace's modules in `use` order, each with its own
-	// run report.
 	Modules []ModuleReport `json:"modules"`
 }
 
-// WorkspaceFacts is what a workspace report says about the tree it measured.
 type WorkspaceFacts struct {
 	GoVersion       string         `json:"go_version"`
 	WorkspaceDigest string         `json:"workspace_digest"`
@@ -76,25 +45,12 @@ type WorkspaceFacts struct {
 	Snapshot        *SnapshotFacts `json:"snapshot,omitempty"`
 }
 
-// A ModuleReport is one module of a workspace and the run report of it.
 type ModuleReport struct {
-	// Dir is the module root relative to the workspace root, slash-separated,
-	// and "." for a workspace that uses its own root.
-	Dir string `json:"dir"`
-	// ModulePath is the module's import path, which is also
-	// `report.workspace.module_path`.
-	ModulePath string `json:"module_path"`
-	// Report is the module's own run report, complete and valid on its own.
-	Report *Report `json:"report"`
+	Dir        string  `json:"dir"`
+	ModulePath string  `json:"module_path"`
+	Report     *Report `json:"report"`
 }
 
-// A WorkspaceModule is one module the caller wants reported, and what discovery
-// found in it.
-//
-// The catalogue, the results and the rejections are the run's and are given
-// once, in [WorkspaceOptions.Options]; what is per module is only what
-// discovery reported about that module and how much of it the run set out to
-// execute.
 type WorkspaceModule struct {
 	Dir      string
 	Path     string
@@ -103,26 +59,11 @@ type WorkspaceModule struct {
 	Selected int
 }
 
-// WorkspaceOptions is everything [BuildWorkspace] needs.
 type WorkspaceOptions struct {
-	// Options is the run: the catalogue spanning every module, every result and
-	// rejection, and the facts that describe the run rather than a module.
-	// Module, ModulePath, Located, Skips and Selected are filled in per module
-	// and anything set in them here is replaced.
 	Options
-	// Modules are the workspace's modules, in `use` order.
 	Modules []WorkspaceModule
 }
 
-// BuildWorkspace builds one run report per module and the document that holds
-// them.
-//
-// The expectation ledger is partitioned rather than given to every module. A
-// row is evaluated against the mutants of the document it is in, so handing the
-// whole ledger to each module would report every other module's rows as stale
-// in this one and fulfilled in theirs — the same row, two answers, in one run.
-// So a row goes to the module whose mutant it names, and a row that names no
-// mutant of any module is stale in the one place it can be: here.
 func BuildWorkspace(opts WorkspaceOptions) (*WorkspaceReport, error) {
 	if opts.Catalog == nil {
 		return nil, &Error{
@@ -184,21 +125,6 @@ func BuildWorkspace(opts WorkspaceOptions) (*WorkspaceReport, error) {
 	return summarised(doc, opts.Config.Policy, opts.InfrastructureError, expectations, mutants)
 }
 
-// summarised fills in the run's own counts from the modules already in the
-// document, and is the value either constructor returns.
-//
-// The counts come from [WorkspaceReport.Tally] rather than from a derivation of
-// their own, so that the summary this document carries and the total a reader
-// of it computes are the same number by construction: a second derivation could
-// disagree with the documents it is summarising, and then two files of one run
-// would be about two runs.
-//
-// It returns the document rather than filling it in, so that a constructor ends
-// with `return summarised(...)` and no branch of its own. There is one failure
-// here and it is unreachable from either of them -- every module's report has
-// been built or merged by the time this runs, and a report that was is one
-// whose every outcome a tally counted -- so being unreachable in one place
-// rather than three is the difference between one declared row and three.
 func summarised(
 	doc *WorkspaceReport,
 	policy mutation.Policy,
@@ -214,8 +140,6 @@ func summarised(
 	return doc, nil
 }
 
-// partitionLedger sends every expectation row to the module whose mutant it
-// names, and collects the rows that name no catalogued mutant at all.
 func partitionLedger(
 	catalog *mutation.Catalog,
 	ledger []config.Expectation,
@@ -233,7 +157,6 @@ func partitionLedger(
 	return byModule, orphans
 }
 
-// Marshal encodes the workspace report as the bytes that go on disk.
 func (w *WorkspaceReport) Marshal() ([]byte, error) {
 	data, err := json.MarshalIndent(w, "", "  ")
 	if err != nil {
@@ -246,11 +169,6 @@ func (w *WorkspaceReport) Marshal() ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
-// Reports is every run report this document holds, in module order.
-//
-// It exists so that a consumer of a workspace run can do to each module what it
-// would have done to a single-module run, without knowing how a module is
-// spelled here.
 func (w *WorkspaceReport) Reports() []*Report {
 	reports := make([]*Report, 0, len(w.Modules))
 	for _, module := range w.Modules {
@@ -259,13 +177,6 @@ func (w *WorkspaceReport) Reports() []*Report {
 	return reports
 }
 
-// Tally adds up the modules' tallies, which is what [WorkspaceReport.Summary]
-// is built from.
-//
-// Added up rather than re-derived over the mutants, because each module's
-// expectation rows are that module's: a mutant is an expected survivor if its
-// own document says so, and a second derivation over a pooled ledger would
-// answer differently for a row naming a mutant of a module it is not in.
 func (w *WorkspaceReport) Tally() (mutation.Tally, error) {
 	var total mutation.Tally
 	for _, module := range w.Modules {
@@ -290,12 +201,6 @@ func (w *WorkspaceReport) Tally() (mutation.Tally, error) {
 	return total, nil
 }
 
-// ExpectationFailure reports whether any module's ledger failed, or whether
-// this document holds a row that names no mutant at all.
-//
-// Both are failures of the same ledger, which is one file: a row nobody can
-// match is stale wherever it is reported, and a run whose exit code ignored the
-// rows that landed here would be a run that passed because nobody owned them.
 func (w *WorkspaceReport) ExpectationFailure() bool {
 	for _, row := range w.Expectations {
 		if row.State == StateStale {
@@ -310,13 +215,6 @@ func (w *WorkspaceReport) ExpectationFailure() bool {
 	return false
 }
 
-// ParseWorkspace decodes a workspace report, refusing anything else.
-//
-// It is [Parse] for the other document type, and it refuses for the same
-// reasons: an unknown field is a document this build does not understand, a
-// second document in the file is not one document, and a `document_type` or a
-// `schema_version` that is not this one is a file that will decode into
-// something nobody meant.
 func ParseWorkspace(data []byte) (*WorkspaceReport, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -352,12 +250,6 @@ func ParseWorkspace(data []byte) (*WorkspaceReport, error) {
 	return &w, nil
 }
 
-// DocumentTypeOf reads the `document_type` a file declares, without decoding
-// the rest of it.
-//
-// It is what a command that accepts either kind of document branches on, and it
-// is deliberately the document's own field rather than a guess from its shape:
-// the discriminator is there so that nobody has to guess.
 func DocumentTypeOf(data []byte) (string, error) {
 	var head struct {
 		DocumentType string `json:"document_type"`
@@ -378,29 +270,11 @@ func DocumentTypeOf(data []byte) (string, error) {
 	return head.DocumentType, nil
 }
 
-// MergeWorkspaceOptions is everything [MergeWorkspaces] needs.
 type MergeWorkspaceOptions struct {
-	// RunID identifies the merged document, and is minted by the caller for
-	// the reason [MergeOptions.RunID] gives.
-	RunID string
-	// Shards are the workspace documents to merge, in the order the user named
-	// them -- which is the order a discrepancy is reported in.
+	RunID  string
 	Shards []*WorkspaceReport
 }
 
-// MergeWorkspaces combines the workspace documents of a sharded workspace run.
-//
-// A shard of a workspace run publishes a whole workspace document holding its
-// share of every module, so merging one is merging each module's reports across
-// the shards and putting the results back in the same order. The module-level
-// merge is [MergeShards] itself rather than a second implementation of it: the
-// congruence checks, the completeness check and the ownership check are what
-// make a merge trustworthy, and a workspace has no fewer reasons to want them.
-//
-// What this adds is the one check a per-module merge cannot make: every shard
-// has to hold the same modules, in the same order. A shard that measured a
-// different workspace is not a shard of this run, and a merge that quietly
-// dropped a module would publish a smaller denominator and a higher score.
 func MergeWorkspaces(opts MergeWorkspaceOptions) (*WorkspaceReport, error) {
 	if len(opts.Shards) == 0 {
 		return nil, &Error{
@@ -449,15 +323,9 @@ func MergeWorkspaces(opts MergeWorkspaceOptions) (*WorkspaceReport, error) {
 	}
 	expectations = append(expectations, merged.Expectations...)
 
-	// Not an infrastructure failure whatever the shards said. A shard that
-	// stopped on one published a document saying so, and a merge of documents
-	// is not itself a run that could fail that way -- the failure belongs to
-	// the shard's own summary, where it is, and [MergeShards] is what refuses
-	// to merge an incomplete set.
 	return summarised(&merged, policyOf(first.Summary.Policy), false, expectations, mutants)
 }
 
-// sameModules refuses two shards that are not of one workspace.
 func sameModules(first, shard *WorkspaceReport, position int) error {
 	if len(first.Modules) != len(shard.Modules) {
 		return &Error{

@@ -10,19 +10,10 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// span is shorthand for the span literals these tables are made of. The forest
-// speaks the catalogue's span type, so the tests do too; the span type's own
-// behaviour (Len, IsEmpty, String, the reversed case) is pinned in
-// internal/mutation, and what this package depends on — that a span covering no
-// bytes never becomes a site — is pinned through Build in forest_test.go.
 func span(start, end uint32) mutation.Span {
 	return mutation.Span{StartByte: start, EndByte: end}
 }
 
-// TestRelate covers all four relations two non-empty spans can stand in, from
-// both sides: Relate must classify the mirrored pair as the mirrored relation.
-// Note that interval.Contains is strict, where mutation.Span.Contains — the
-// predicate Relate is built on — is reflexive: equal spans are Identical here.
 func TestRelate(t *testing.T) {
 	t.Parallel()
 

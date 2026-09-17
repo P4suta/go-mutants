@@ -11,27 +11,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/gocmd"
 )
 
-// FuzzParseVersion is the promise this package makes about the first thing
-// every run does.
-//
-// `go version` is the output of a program go-mutants does not control, cannot
-// pin, and runs before anything else: a toolchain manager may put something
-// else on PATH entirely, a distribution may wrap the binary in a shim that
-// prints a banner, and gccgo prints a line of its own shape. What comes back is
-// reported in every document a run writes, and a run whose first command
-// crashed the tool would fail with a panic in place of the one sentence that
-// would explain it.
-//
-// Four properties, and the last two are the ones a table of real `go version`
-// lines cannot state:
-//
-//   - it never panics, whatever the executable printed;
-//   - a refusal is a typed error carrying [gocmd.CodeVersionUnparsable], so a
-//     user can look it up rather than read a stack trace;
-//   - an accepted version is one a report can quote: Raw is exactly the
-//     trimmed first line, and it is what String returns;
-//   - every part it split out is non-empty, because a report that named the
-//     target as "/amd64" would be describing a toolchain that does not exist.
 func FuzzParseVersion(f *testing.F) {
 	f.Add("go version go1.26.5 darwin/arm64\n")
 	f.Add("go version go1.26.5 linux/amd64")
@@ -85,8 +64,6 @@ func FuzzParseVersion(f *testing.F) {
 			t.Fatalf("the target split to %q/%q, which is not one os and one arch",
 				version.GOOS, version.GOARCH)
 		}
-		// IsDevel is what a report marks an unreleased toolchain with, and it
-		// is a fact about the release token rather than about the line.
 		if version.IsDevel() != strings.HasPrefix(version.Release, "devel") {
 			t.Fatalf("IsDevel() = %v for the release %q", version.IsDevel(), version.Release)
 		}

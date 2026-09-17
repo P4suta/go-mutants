@@ -255,16 +255,6 @@ func (workspace *fakeMutationWorkspace) Preserved() []string { return workspace.
 
 func (workspace *fakeMutationWorkspace) Recording() []enginetrace.Event { return workspace.recording }
 
-// TestExecKeepsEveryCommandInsideTheModuleItMeasures pins the one place this
-// module answers go-mutants' rule for consumers that run their own go
-// commands: pass GOWORK=off.
-//
-// It matters for the merge. Today the snapshot lives under TMPDIR and no
-// go.work is anywhere near it, so nothing here is observable. Once goatest is a
-// second module beside the engine, a go.work sits at the root of the very tree
-// it measures, and without this the three things it changes - what `go list`
-// answers, what a build resolves, and the identity a cached verdict is keyed on
-// through buildEnvironmentNames - all change at once and in silence.
 func TestExecKeepsEveryCommandInsideTheModuleItMeasures(t *testing.T) {
 	t.Parallel()
 	engine := &fakeMutationWorkspace{}
@@ -290,8 +280,6 @@ func TestExecKeepsEveryCommandInsideTheModuleItMeasures(t *testing.T) {
 	}
 }
 
-// TestExecObeysACallerThatNamesGOWORKItself keeps the rule from being one no
-// caller can opt out of.
 func TestExecObeysACallerThatNamesGOWORKItself(t *testing.T) {
 	t.Parallel()
 	engine := &fakeMutationWorkspace{}
@@ -306,21 +294,7 @@ func TestExecObeysACallerThatNamesGOWORKItself(t *testing.T) {
 	}
 }
 
-// TestCloseKeepsTheEnginesRecording pins the half of a run's account that was
-// being thrown away.
-//
-// The engine records a note saying why a preparation failed. goatest's own
-// recording has a `prepare` event that says `failed` and can say no more: its
-// schema is closed and the reason has no field to sit in. So the sentence that
-// explains the run was already written down, in a recording nobody kept, and
-// the workspace that held it was closed.
-//
-// Before Close there is nothing to hand back, and after it there is no
-// workspace to ask, which is why the recording is taken in Close rather than
-// fetched later.
 func TestCloseKeepsTheEnginesRecording(t *testing.T) {
-	// A sequence number nothing else in this test uses, so that an edit through
-	// the returned slice is visible as itself rather than as a coincidence.
 	const overwrittenSeq = 99
 
 	events := []enginetrace.Event{{Seq: 1, Type: enginetrace.TypeNote}}

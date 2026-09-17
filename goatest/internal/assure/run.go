@@ -162,13 +162,6 @@ type Options struct {
 
 	Trace *trace.Recorder
 
-	// EngineRecording receives the engine's own account of a workspace, once
-	// per workspace, as that workspace closes.
-	//
-	// It is a sink rather than a return value because a run opens a workspace
-	// per round and the last one is not the interesting one: a round that ended
-	// in a refusal is. Nil discards them, which is what every caller but the
-	// diagnostics writer wants.
 	EngineRecording func([]enginetrace.Event)
 
 	KeepTemp bool
@@ -287,8 +280,6 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 	closeWorkspace := func(workspace *mutationbridge.Workspace) error {
 		err := dependencies.closeWorkspace(workspace)
 		recordTemporaryArtifacts(options, artifactMutationWorkspace, workspace.Preserved())
-		// After Close and not before: the engine's recording is complete only
-		// once the workspace it belongs to is.
 		if options.EngineRecording != nil {
 			if recording := workspace.Recording(); len(recording) != 0 {
 				options.EngineRecording(recording)
@@ -550,19 +541,6 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 		baseline, err := dependencies.collectBaseline(ctx, baselineCommands, metadata.model, baselineTargets, baselineOptions)
 		phases.leave()
 		if err != nil || len(baseline.Findings) != 0 {
-			// Normally the preparation's error is the run cancelling it, and
-			// naming that as the cause would blame the run's own cleanup --
-			// see TestRunCoordinatorPrefersBaselineErrorsAndCancelsPreparation.
-			//
-			// gomutants.ErrPrepareFailed is what tells the other case apart.
-			// The engine returns it only from a call made *after* a preparation
-			// has already failed, so it is by construction a consequence and
-			// never a cause: when the baseline saw it, the baseline did not
-			// fail on its own, it failed because preparation did -- and the
-			// preparation's error is the only place the reason is written. It
-			// was going out with the channel, which is how a run ended ERROR
-			// saying "workspace preparation failed" and nothing at all about
-			// what had failed.
 			prepared := settlePreparation(true)
 			if errors.Is(err, gomutants.ErrPrepareFailed) && prepared.err != nil {
 				err = errors.Join(err, prepared.err)
@@ -883,26 +861,6 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 	}
 }
 
-// sessionOriginalControl measures the original program through the prepared
-// session.
-//
-// One path, whatever the run. There used to be two, chosen by whether the run
-// was a replay: an argv this package assembled and handed to a second workspace,
-// or the probe tree's test-failed outcome translated into a command result. The
-// first measured binaries no mutant was ever run against and the second measured
-// the probe tree's; neither was the thing the comparison is about.
-//
-// A control and an execution of the same request are now settled by one function
-// inside the engine, so they cannot come to disagree about the argument vector,
-// the working directory, the paired timeouts, the instrumentation overlay, the
-// reserved flags, the private scratch directory or the fuzz isolation. In a
-// recording of the engine's own the two differ by one name in the environment.
-//
-// The recording this package keeps still writes a control down as a probe with
-// Control set, which is the shape goatest-trace-v1 has. Giving a control its own
-// event type is a change to a closed enum and therefore to the contract version,
-// and go-mutants has the mirror of it to make at the same time, so the two are
-// one change rather than two.
 func sessionOriginalControl(session MutationSession, recorder *trace.Recorder) OriginalControl {
 	return func(ctx context.Context, request gomutants.ExecRequest) (gomutants.ControlResult, error) {
 		control := gomutants.ControlRequest{
@@ -938,19 +896,6 @@ func sessionOriginalControl(session MutationSession, recorder *trace.Recorder) O
 	}
 }
 
-// controlProbeOutcome says what a control did, in the probe vocabulary the
-// recording has.
-//
-// The vocabulary is borrowed and the borrowing is visible: an infection probe
-// answers whether a mutated value would have differed, and a control answers
-// whether the program the user wrote passes its own tests. They are different
-// questions, and goatest-trace-v1 has one payload for both because a control
-// used to be measured by a probe.
-//
-// It stays borrowed until the contract version moves. go-mutants has the mirror
-// of this to make - its own recording carries a control as executions of kind
-// control-run plus a note, because its type enum is closed too - so the two
-// halves are one change to make together rather than two to make apart.
 func controlProbeOutcome(result gomutants.ControlResult) string {
 	switch {
 	case result.TimedOut:
@@ -1225,18 +1170,6 @@ func modeIdentity(options Options) string {
 	return identity + ";execution=" + string(encoded)
 }
 
-// buildEnvironmentNames are the variables of the operator's environment that
-// can change what a build produces, and therefore belong to the identity a
-// cached verdict is keyed on.
-//
-// GOWORK is deliberately absent, for the reason ADR 0018 keeps GOCACHEPROG
-// out: a variable that cannot change what a command does has no business
-// changing what a run is called. Every command this module runs in a frozen
-// workspace carries GOWORK=off - see mutationbridge.Workspace.Exec - so the
-// operator's own GOWORK reaches nothing. Leaving it here would key the cache on
-// a setting the run overrides, which is worse than either answer on its own:
-// two runs that did exactly the same work would miss each other's evidence, and
-// the identity would name a workspace that took no part in it.
 var buildEnvironmentNames = []string{
 	"AR", "CC", "CGO_CFLAGS", "CGO_CPPFLAGS", "CGO_CXXFLAGS", "CGO_ENABLED", "CGO_FFLAGS", "CGO_LDFLAGS",
 	"CXX", "FC", "GCCGO", "GODEBUG", "GOENV", "GOEXPERIMENT", "GOFLAGS", "GO386", "GOAMD64", "GOARM",
@@ -1437,35 +1370,8 @@ func mutationJobLimit(options Options, loaded config.Config) int {
 	return defaultMutationJobLimit()
 }
 
-// defaultMutationJobCap is the ceiling the derived worker count is clamped to,
-// and it is the engine's number rather than a second opinion about the same
-// question.
-//
-// It is written here rather than read from [gomutants.DefaultJobs], which
-// returns exactly this, because a run is built with GOWORK=off against the
-// engine version go.mod pins -- so a symbol the engine gained after that pin
-// cannot be named here at all, and using one would break the runner's own gate
-// while leaving `mise run check` green. The two numbers are held equal by
-// internal/devgates instead, which reads both trees rather than importing
-// either.
-//
-// The reason for the ceiling is the engine's: a mutation run is a background
-// chore rather than the only thing a machine is doing, and a laptop should stay
-// usable through one. It was a bare 4 here with nothing beside it, and because a
-// run always hands the engine an explicit Jobs, the engine's ceiling was never
-// reached -- so on an eighteen-core machine a run took four of them and the
-// number that was supposed to decide that never applied.
 const defaultMutationJobCap = 8
 
-// defaultMutationJobLimit is the worker count a run derives when nothing asked
-// for one.
-//
-// GOMAXPROCS is the other half of the pair. The ceiling is about the machine;
-// an operator who has lowered GOMAXPROCS has said something narrower about this
-// process in particular, and a chore should not talk over that.
-//
-// A run that *is* what the machine is for says so with `jobs` in .goatest.toml,
-// which is taken as given and not clamped against this.
 func defaultMutationJobLimit() int {
 	return max(1, min(runtime.GOMAXPROCS(0), defaultMutationJobCap))
 }

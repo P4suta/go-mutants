@@ -21,66 +21,32 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// varyingFields is the whole of what the committed run-report golden says about
-// the run rather than about the code, as JSON pointers and the values
-// normalisation has to leave behind.
-//
-// It is written out rather than derived, because that is the value of it: adding
-// a row means deciding that two runs may differ in that field, and forgetting
-// one means a report golden that fails on the next machine's Go version.
 var varyingFields = map[string]string{
-	"/tool_version":                 mutantkit.NormalizedToolVersion,
-	"/run_id":                       mutantkit.NormalizedRunID,
-	"/started_at":                   mutantkit.NormalizedTimestamp,
-	"/finished_at":                  mutantkit.NormalizedTimestamp,
-	"/duration_ms":                  "0",
-	"/workspace/go_version":         mutantkit.NormalizedGoVersion,
-	"/workspace/platform/os":        mutantkit.NormalizedOS,
-	"/workspace/platform/arch":      mutantkit.NormalizedArch,
-	"/test/timeout_ms":              "0",
-	"/test/baseline/slowest_ms":     "0",
-	"/test/baseline/durations_ms/0": "0",
-	"/test/baseline/durations_ms/1": "0",
-	"/test/baseline/durations_ms/2": "0",
-	"/mutants/0/duration_ms":        "0",
-	"/mutants/1/duration_ms":        "0",
-	"/mutants/2/duration_ms":        "0",
-	"/mutants/3/duration_ms":        "0",
-	"/mutants/4/duration_ms":        "0",
-	"/mutants/5/duration_ms":        "0",
-	// The seventh mutant was never run, so its duration is already zero: the
-	// pointer is listed because it is a measured duration, not because the
-	// fixture happens to make it move.
-	"/mutants/6/duration_ms": "0",
-	// The toolchain that ran the tests. Its path is a different one on every
-	// machine and its version line changes with every Go release, so both are
-	// facts about the run — and `test.resolved_command` is the same path again,
-	// because it is `test.command` with that executable in place of `go`.
-	"/test/toolchain/go_bin":  mutantkit.NormalizedPath,
-	"/test/toolchain/version": mutantkit.NormalizedToolchainVersion,
-	// The memory budget, both halves. The number is derived from what the
-	// baseline cost and the source says whether this platform can enforce a
-	// bound at all, so the pair is as much a fact about the machine as
-	// `workspace.platform.os` is.
-	"/test/memory_bytes":       "1",
-	"/test/memory_source":      "derived",
-	"/test/resolved_command/0": mutantkit.NormalizedPath,
-	// One row per attempt of every mutant this run executed: how long the pass
-	// took, and which scheduler slot made it. The worker is here because it is
-	// a fact about the run in the strongest sense — which goroutine won the
-	// race to the queue — so two runs on one machine differ in it; several of
-	// the fixture's rows already say 0 and are listed anyway, because a field
-	// that happens not to move is covered by nothing otherwise. The `binaries`
-	// beside them are deliberately absent: which binaries a pass started is
-	// what the run did, and it is the same every time.
-	//
-	// The peak beside them is the third of the same kind, and the one rule that
-	// *adds* a key rather than only replacing one: every platform go-mutants
-	// supports measures a peak for a process that started, so a row without one
-	// is a machine that could not, and a golden that quietly tolerated the
-	// absence would pass there and fail the day somebody looked.
-	// The mutant's own copy of the peak, which a cached mutant carries instead
-	// of rows; every mutant gets one for the reason the rows do.
+	"/tool_version":                             mutantkit.NormalizedToolVersion,
+	"/run_id":                                   mutantkit.NormalizedRunID,
+	"/started_at":                               mutantkit.NormalizedTimestamp,
+	"/finished_at":                              mutantkit.NormalizedTimestamp,
+	"/duration_ms":                              "0",
+	"/workspace/go_version":                     mutantkit.NormalizedGoVersion,
+	"/workspace/platform/os":                    mutantkit.NormalizedOS,
+	"/workspace/platform/arch":                  mutantkit.NormalizedArch,
+	"/test/timeout_ms":                          "0",
+	"/test/baseline/slowest_ms":                 "0",
+	"/test/baseline/durations_ms/0":             "0",
+	"/test/baseline/durations_ms/1":             "0",
+	"/test/baseline/durations_ms/2":             "0",
+	"/mutants/0/duration_ms":                    "0",
+	"/mutants/1/duration_ms":                    "0",
+	"/mutants/2/duration_ms":                    "0",
+	"/mutants/3/duration_ms":                    "0",
+	"/mutants/4/duration_ms":                    "0",
+	"/mutants/5/duration_ms":                    "0",
+	"/mutants/6/duration_ms":                    "0",
+	"/test/toolchain/go_bin":                    mutantkit.NormalizedPath,
+	"/test/toolchain/version":                   mutantkit.NormalizedToolchainVersion,
+	"/test/memory_bytes":                        "1",
+	"/test/memory_source":                       "derived",
+	"/test/resolved_command/0":                  mutantkit.NormalizedPath,
 	"/mutants/0/peak_memory_bytes":              "0",
 	"/mutants/1/peak_memory_bytes":              "0",
 	"/mutants/2/peak_memory_bytes":              "0",
@@ -111,61 +77,33 @@ var varyingFields = map[string]string{
 	"/mutants/7/executions/1/duration_ms":       "0",
 	"/mutants/7/executions/1/worker":            "0",
 	"/mutants/7/executions/1/peak_memory_bytes": "0",
-	// The timeline. Every phase and every stage is a measured duration; their
-	// names are not, and stay.
-	"/timing/phases/0/duration_ms": "0",
-	"/timing/phases/1/duration_ms": "0",
-	"/timing/phases/2/duration_ms": "0",
-	"/timing/phases/3/duration_ms": "0",
-	"/timing/stages/0/duration_ms": "0",
-	"/timing/stages/1/duration_ms": "0",
-	"/timing/stages/2/duration_ms": "0",
-	"/timing/stages/3/duration_ms": "0",
-	"/timing/stages/4/duration_ms": "0",
-	"/timing/stages/5/duration_ms": "0",
-	"/timing/stages/6/duration_ms": "0",
-	"/timing/stages/7/duration_ms": "0",
-	"/timing/stages/8/duration_ms": "0",
-	// The one measured duration that is not a field of its own: `go test`
-	// writes how long each test took into the output beside its name, and
-	// `output_tail` carries that output verbatim. The fixture's tail already
-	// reads `(0.00s)`, so it does not move — and it is listed for exactly that
-	// reason, because a rule whose only evidence is a value that was already
-	// right is a rule nothing checks.
-	// [TestNormalizeRunReportFlattensGoTestElapsedTimes] drives it with a tail
-	// that does.
-	"/mutants/0/output_tail": "--- FAIL: TestAdd " + mutantkit.NormalizedElapsed,
+	"/timing/phases/0/duration_ms":              "0",
+	"/timing/phases/1/duration_ms":              "0",
+	"/timing/phases/2/duration_ms":              "0",
+	"/timing/phases/3/duration_ms":              "0",
+	"/timing/stages/0/duration_ms":              "0",
+	"/timing/stages/1/duration_ms":              "0",
+	"/timing/stages/2/duration_ms":              "0",
+	"/timing/stages/3/duration_ms":              "0",
+	"/timing/stages/4/duration_ms":              "0",
+	"/timing/stages/5/duration_ms":              "0",
+	"/timing/stages/6/duration_ms":              "0",
+	"/timing/stages/7/duration_ms":              "0",
+	"/timing/stages/8/duration_ms":              "0",
+	"/mutants/0/output_tail":                    "--- FAIL: TestAdd " + mutantkit.NormalizedElapsed,
 }
 
-// TestNormalizeRunReportFixesOnlyTheVaryingFields is the claim that makes a
-// report golden possible at all.
-//
-// A run report is mostly a fact about the code — which mutants there are, what
-// happened to each, what the policy decided — and partly a fact about the run:
-// when it started, how long every step took, which toolchain built it, where the
-// snapshot was. A golden of the second kind fails on the next machine. So the
-// second kind is replaced with fixed values, and the assertion here is in both
-// directions: every varying field moved, and *nothing else did* — the digests
-// and the mutant ids in particular, which are content-addressed and are the one
-// part of the document that proves the run measured the same program.
 func TestNormalizeRunReportFixesOnlyTheVaryingFields(t *testing.T) {
 	t.Parallel()
 
 	original := testkit.ReadFile(t, filepath.Join(testkit.Root(t), "internal", "report", "testdata", "run-report.golden.json"))
 	normalized := mutantkit.NormalizeRunReport(t, original)
 
-	// Nothing outside the ledger moved. The mutant ids and the workspace digest
-	// are what this is really about: they are content-addressed, so they are the
-	// same on every machine, and a normaliser that touched one would leave a
-	// golden that passes for a run of a different program.
 	for _, pointer := range changedPointers(t, original, normalized) {
 		if _, listed := varyingFields[pointer]; !listed {
 			t.Errorf("normalising changed %s, which is not one of the fields that vary between runs", pointer)
 		}
 	}
-	// And every field in the ledger now holds the value it should, which is the
-	// half a "nothing else changed" assertion cannot make: a field the fixture
-	// happens to have recorded as zero would otherwise be covered by nothing.
 	after := mutantkit.DecodeJSON(t, normalized)
 	for _, pointer := range slices.Sorted(maps.Keys(varyingFields)) {
 		got, ok := valueAt(after, pointer)
@@ -182,8 +120,6 @@ func TestNormalizeRunReportFixesOnlyTheVaryingFields(t *testing.T) {
 	}
 }
 
-// valueAt resolves a JSON pointer to a scalar, rendered as text so that a
-// json.Number and a string compare the way a reader of the document would.
 func valueAt(doc map[string]any, pointer string) (string, bool) {
 	var node any = doc
 	for _, token := range strings.Split(strings.TrimPrefix(pointer, "/"), "/") {
@@ -207,17 +143,6 @@ func valueAt(doc map[string]any, pointer string) (string, bool) {
 	return fmt.Sprintf("%v", node), true
 }
 
-// TestNormalizeRunReportIsIdempotent is what lets a normalised document be
-// compared with a normalised golden: normalising the golden again has to be a
-// no-op, or the comparison is against a moving target.
-//
-// The committed golden is one document to run it over and a weak one: every
-// field of it is already at the value normalisation would give it, so a rule
-// that rewrote a value into something it then rewrote again would still pass.
-// The second case is that golden with a real machine's facts edited into it —
-// an absolute toolchain path, and a loaded runner's elapsed times inside a
-// failing test's output — so the rules that actually fire have to land on a
-// fixed point.
 func TestNormalizeRunReportIsIdempotent(t *testing.T) {
 	t.Parallel()
 
@@ -254,12 +179,6 @@ func TestNormalizeRunReportIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestNormalizeRunReportReplacesAToolchainPathAndATimestamp drives the one path
-// the committed golden cannot: a real run's `test.command` starts with the
-// located `go` binary — which is `/usr/local/go/bin/go` on one machine and
-// `C:\hostedtoolcache\...` on another — while the fixture's is the `go` the
-// user wrote. (The golden's own absolute paths, in `test.toolchain.go_bin` and
-// `test.resolved_command`, are in the ledger above.)
 func TestNormalizeRunReportReplacesAToolchainPathAndATimestamp(t *testing.T) {
 	t.Parallel()
 
@@ -275,27 +194,11 @@ func TestNormalizeRunReportReplacesAToolchainPathAndATimestamp(t *testing.T) {
 	if !strings.Contains(normalized, mutantkit.NormalizedPath) {
 		t.Errorf("the toolchain path was not replaced by %s:\n%s", mutantkit.NormalizedPath, normalized)
 	}
-	// "./..." is not an absolute path and must survive: a pattern replaced by a
-	// path constant is a report that no longer says what was run.
 	if !strings.Contains(normalized, `"./..."`) {
 		t.Errorf("the package pattern was rewritten as if it were a path:\n%s", normalized)
 	}
 }
 
-// TestNormalizeRunReportFlattensGoTestElapsedTimes closes the last way two
-// reports of one run can differ.
-//
-// `output_tail` is the deciding test binary's own output, and `go test` prints
-// how long each test took beside its name: `--- FAIL: TestClamp (0.01s)`. That
-// number is the loaded CI runner's, not the program's — the same failure is
-// `(0.00s)` on a quiet machine and `(0.01s)` on a busy one — and it is the one
-// measured duration in the document that is not a field of its own but free
-// text in the middle of somebody else's output. It cost a green CI run before
-// this rule existed.
-//
-// Only the parenthesised form `go test` writes is rewritten. Everything else in
-// the tail is what the program under test printed, and a normaliser that went
-// after every number in it would be rewriting the evidence.
 func TestNormalizeRunReportFlattensGoTestElapsedTimes(t *testing.T) {
 	t.Parallel()
 
@@ -327,19 +230,10 @@ func TestNormalizeRunReportFlattensGoTestElapsedTimes(t *testing.T) {
 	}
 }
 
-// mutant returns one row of a decoded document's mutants array.
 func mutant(doc map[string]any, i int) map[string]any {
 	return doc["mutants"].([]any)[i].(map[string]any)
 }
 
-// TestNormalizeRunReportFixesTheHostPlatform is what makes one committed report
-// golden usable on all three platforms CI runs.
-//
-// A run report records the host's GOOS and GOARCH, so a golden generated on
-// ubuntu and compared on macOS differs in two fields that say nothing about the
-// program under test. The ledger above cannot show this on its own — the
-// committed fixture happens to be linux/amd64 already — so the document is
-// edited to another platform first.
 func TestNormalizeRunReportFixesTheHostPlatform(t *testing.T) {
 	t.Parallel()
 
@@ -357,14 +251,6 @@ func TestNormalizeRunReportFixesTheHostPlatform(t *testing.T) {
 	}
 }
 
-// TestDecodeJSONKeepsNumbersExact is the reason there is a decoder here at all.
-//
-// encoding/json decodes every number into a float64 unless it is told not to, so
-// a document read and written back turns 88 into 88 by luck and 66.66666666666666
-// into something shorter by arithmetic. Half the tests that use this decode a
-// valid document, edit one field, and re-encode it to prove the *validator*
-// rejects it — and a decoder that silently rewrote three other fields on the way
-// would make those tests about the wrong thing.
 func TestDecodeJSONKeepsNumbersExact(t *testing.T) {
 	t.Parallel()
 
@@ -391,10 +277,6 @@ func TestDecodeJSONKeepsNumbersExact(t *testing.T) {
 	}
 }
 
-// TestMustMarshalRefusesADocumentTheSchemaRejects keeps the validation inside
-// the helper rather than in a test of its own, which is what makes it impossible
-// to forget: every document any suite produces goes through here, and therefore
-// through the same validator a consumer would use.
 func TestMustMarshalRefusesADocumentTheSchemaRejects(t *testing.T) {
 	t.Parallel()
 
@@ -406,13 +288,6 @@ func TestMustMarshalRefusesADocumentTheSchemaRejects(t *testing.T) {
 	}
 }
 
-// changedPointers lists the JSON pointers whose scalar value differs between two
-// documents, sorted.
-//
-// Comparing the trees rather than the bytes is what makes "only these fields
-// moved" an assertion about the document instead of about its formatting, and
-// walking to the scalars is what makes the report name the field a reader has to
-// go and look at.
 func changedPointers(t *testing.T, before, after []byte) []string {
 	t.Helper()
 	var changed []string
@@ -421,8 +296,6 @@ func changedPointers(t *testing.T, before, after []byte) []string {
 	return changed
 }
 
-// walkJSON records the pointer of every scalar that differs, and of every key or
-// element that is present in one document and not the other.
 func walkJSON(t *testing.T, pointer string, before, after any, changed *[]string) {
 	t.Helper()
 	switch want := before.(type) {
@@ -461,10 +334,6 @@ func walkJSON(t *testing.T, pointer string, before, after any, changed *[]string
 	}
 }
 
-// TestElapsedTimesAreFlattenedOnlyOnGoTestsOwnLines pins the shape rule: the
-// duration `go test` writes beside a test's name or a package's summary is
-// flattened, and a duration the program under test printed itself is evidence
-// and stays exactly as written.
 func TestElapsedTimesAreFlattenedOnlyOnGoTestsOwnLines(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct{ in, want string }{
@@ -483,23 +352,6 @@ func TestElapsedTimesAreFlattenedOnlyOnGoTestsOwnLines(t *testing.T) {
 	}
 }
 
-// TestNormalizeRunReportReplacesAToolchainPathHoldingASpace is the case the
-// generic walk cannot answer, and the one the goldens meet on Windows.
-//
-// [mutantkit.NormalizeRunReport]'s path rewriting is a walk over every string in
-// the document, because an absolute path turns up in a warning, in a command's
-// argv and in the tail of a failing test's output — places nothing can
-// enumerate. A walk has to decide where a path *ends*, and it ends it at
-// whitespace: a sentence is mostly not a path, and a rule that ran on past a
-// space would swallow the words after one. That is right for prose and wrong
-// for `C:\Program Files\Go\bin\go.exe`, which the walk leaves as
-// `/normalized/path Files\Go\bin\go.exe` — a value that still names the machine
-// it was recorded on, in a golden compared on three operating systems.
-//
-// So the fields that carry an *installation* path are replaced by name before
-// the walk runs, and this is the test of that list. A new field holding a
-// program's path has to be added to it; a field holding prose is fine where it
-// is.
 func TestNormalizeRunReportReplacesAToolchainPathHoldingASpace(t *testing.T) {
 	t.Parallel()
 
@@ -520,9 +372,6 @@ func TestNormalizeRunReportReplacesAToolchainPathHoldingASpace(t *testing.T) {
 	if !strings.Contains(normalized, mutantkit.NormalizedPath) {
 		t.Errorf("the toolchain path was not replaced by %s:\n%s", mutantkit.NormalizedPath, normalized)
 	}
-	// The two values beside it are not paths and must survive: a pattern or a
-	// bare program name replaced by a path constant is a report that no longer
-	// says what was run.
 	for _, kept := range []string{`"./..."`, `"go"`, `"test"`} {
 		if !strings.Contains(normalized, kept) {
 			t.Errorf("%s was rewritten as if it were a path:\n%s", kept, normalized)

@@ -17,75 +17,26 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/testkit"
 )
 
-// The ledger for the workflow.
-//
-// docs/ci.md describes this repository's own checks in a table, and a table
-// about a workflow rots the way every other table does. Worse, the thing it
-// describes is the thing that would have caught the rot, so nothing else can.
-
 const (
-	// workflowPath is the workflow that runs the checks, relative to the module
-	// root.
-	// One directory above this module. The workflows moved to the repository
-	// root when the two products came together: GitHub reads only the root
-	// .github, so a copy under goatest/ would be a workflow that never runs
-	// and a gate that checked it would be checking nothing.
 	workflowPath = "../.github/workflows/ci.yml"
 
-	// ciDocumentation is the page that describes them.
 	ciDocumentation = "docs/ci.md"
 
-	// jobTableHeading opens the table of jobs on that page.
 	jobTableHeading = "| Job | What it runs |"
 
-	// miseInvocation is a step running one of this repository's own tasks.
 	miseInvocation = "mise run "
 
-	// miseAction is the step that puts mise on the runner's path.
 	miseAction = "jdx/mise-action@"
 )
 
-// miseTaskInvocation captures the task name of a `mise run` step.
 var miseTaskInvocation = regexp.MustCompile(`mise run ([a-z][a-z0-9-]*)`)
 
-// The workflow this module is checked by is the repository's, one directory up.
-//
-// Two of the gates that lived here are gone rather than repointed:
-// internal/testkit/cidoc_test.go asks the same questions of the same file --
-// every job is documented, every mise task a job runs exists -- and asks them
-// of docs/ci.md, which is where both products' jobs are now described. Two
-// ledgers over one file is two things to keep in step, and the one that reads
-// goatest/docs/ci.md would have reported the engine's jobs as undocumented.
-//
-// What stays is what the engine's does not ask: whether a job that reads
-// history asked for the history, and whether a job that runs a mise task
-// installed mise.
-
-// workflowJob matches a job name: two spaces, a name, a colon, end of line.
-//
-// The same shape appears under `on:`, where `push:` is a trigger rather than a
-// job, so the scan only reads it after the `jobs:` key. The first version did
-// not, and reported the push trigger as a job that checks out a shallow clone -
-// advice that would have had somebody add fetch-depth to an event.
 var workflowJob = regexp.MustCompile(`^  ([a-z][a-z0-9-]*):$`)
 
-// jobsKey opens the mapping of jobs.
 const jobsKey = "jobs:"
 
-// backquotedName matches the first `name` of a documentation row.
 var backquotedName = regexp.MustCompile("`([^`]+)`")
 
-// TestEveryJobThatReadsHistoryAsksForIt is the shallow-clone gate.
-//
-// A checkout without fetch-depth has no tags and a truncated history, so a run
-// asking what changed against a ref it does not hold is told that nothing did.
-// That is the same answer as a clean tree and a completely different fact, and
-// a job that reads it reports a green check for work it never did.
-//
-// The rule is checked here rather than trusted to the workflow file because a
-// workflow file is edited by people who are thinking about something else, and
-// the next edit that drops the line would be silent in exactly the way this gate
-// exists to stop.
 func TestEveryJobThatReadsHistoryAsksForIt(t *testing.T) {
 	t.Parallel()
 	root := repositoryRoot(t)
@@ -116,10 +67,6 @@ func TestEveryJobThatReadsHistoryAsksForIt(t *testing.T) {
 		if strings.Contains(line, "fetch-depth:") {
 			depth = true
 		}
-		// A job that never checks out has no clone to be shallow. The
-		// aggregate job is one: it waits on the others and reads their
-		// conclusions, and asking it for history would be asking it to fetch a
-		// repository it does not look at.
 		if strings.Contains(line, "actions/checkout") {
 			checksOut = true
 		}
@@ -135,13 +82,6 @@ func TestEveryJobThatReadsHistoryAsksForIt(t *testing.T) {
 	}
 }
 
-// TestTheCheckoutIsNotShallowHere is the other half, and the one that runs
-// where it matters.
-//
-// The gate above reads the workflow; this one reads the repository the tests are
-// actually running in. They answer different questions - what the file says, and
-// what the runner did - and only the second one notices a checkout action that
-// changed its defaults.
 func TestTheCheckoutIsNotShallowHere(t *testing.T) {
 	t.Parallel()
 	root := repositoryRoot(t)
@@ -155,7 +95,6 @@ func TestTheCheckoutIsNotShallowHere(t *testing.T) {
 	}
 }
 
-// workflowJobs reads the job names out of the workflow.
 func workflowJobs(t *testing.T, path string) []string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -179,7 +118,6 @@ func workflowJobs(t *testing.T, path string) []string {
 	return jobs
 }
 
-// documentedJobs reads the first column of the job table.
 func documentedJobs(t *testing.T, path string) []string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -205,15 +143,6 @@ func documentedJobs(t *testing.T, path string) []string {
 	return documented
 }
 
-// TestEveryJobThatRunsAMiseTaskInstallsMise is the gate for a failure that can
-// only be found by running the workflow.
-//
-// A job that calls `mise run` without the action that installs it fails on
-// `command not found`, and nothing local notices: the task exists, the task is
-// correct, the task is even pinned by a ledger. Two jobs were written that way
-// here - one of them the dogfood job added to run a task nobody had been
-// running, which would have failed on its first execution for a reason that had
-// nothing to do with what it was meant to check.
 func TestEveryJobThatRunsAMiseTaskInstallsMise(t *testing.T) {
 	t.Parallel()
 	root := repositoryRoot(t)

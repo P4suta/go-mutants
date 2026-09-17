@@ -3,14 +3,6 @@
 
 //go:build integration
 
-// The toolchain-backed half of the selection tests: a real git repository, a
-// real toolchain, and real mutant processes, because everything interesting
-// about `--changed` and `--shard` is whether the narrowing survives the round
-// trip through discovery, validation, execution and the report.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/engine/...
 package engine
 
 import (
@@ -29,12 +21,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// touchedFile and its test are the new work a `--changed` run should find. They
-// are a new file rather than an edit to an existing one for two reasons: git
-// reports every line of it as added, so the expected selection is "every mutant
-// in this file" and needs no line arithmetic; and nothing in the fixture moves,
-// so the rest of the catalogue is exactly what an unsharded, unchanged run
-// would have found.
 const (
 	touchedFile = "touched.go"
 	touchedTest = "touched_test.go"
@@ -72,41 +58,12 @@ func TestTouched(t *testing.T) {
 `
 )
 
-// gitRepo makes the workspace a repository holding the fixture in one commit,
-// under an environment the run's own git reads the same way, and returns that
-// commit.
-//
-// The redirection is of the whole process rather than of a set composed for the
-// test's own commands, and it is the reason the three `--changed` tests do not
-// run in parallel where the rest of this file does. internal/engine resolves
-// the diff through internal/gitdiff without naming an environment, so the git
-// the run drives is this process's git with this process's variables: a
-// developer's ~/.gitconfig that a test neutralised only for its own commands
-// would still be read by the code under test, and `diff.noprefix` alone changes
-// what the engine has to parse.
-//
-// It is [testkit.Env]'s whole policy rather than the two configuration
-// variables strictly needed here, because a second, narrower spelling of "a
-// hermetic environment" in this package is how the copies came to disagree in
-// the first place.
 func gitRepo(t *testing.T, root string) string {
 	t.Helper()
 	testkit.Env(t)
 	return testkit.GitInit(t, root)
 }
 
-// ageWrites puts files just written into a tree, and the directory holding
-// them, an hour into the past.
-//
-// It is [testkit.AgeTree] narrowed to what was written, and the narrowing is the
-// whole reason it exists here: this tree is a git repository, and ageing all of
-// it would reach into `.git`, where the index git decides what is dirty from is
-// a table of the stat data of every file. Rewriting timestamps underneath that
-// to answer a question the go command asks is no way to ask git a question.
-//
-// The directory is aged with the files because cmd/go indexes a package
-// directory only when everything it reads there is at least two seconds old, and
-// writing a file into a directory stamps the directory too.
 func ageWrites(t *testing.T, dir string, names ...string) {
 	t.Helper()
 	when := time.Now().Add(-testkit.TreeAge)
@@ -121,9 +78,6 @@ func ageWrites(t *testing.T, dir string, names ...string) {
 	}
 }
 
-// changedOptions is [optionsAt] for a `--changed` run: two workers, because
-// these tests assert on the document rather than on the order of the events,
-// and a diff against the commit the workspace started from.
 func changedOptions(t *testing.T, root, base string) Options {
 	t.Helper()
 	opts := optionsAt(t, root)
@@ -133,15 +87,6 @@ func changedOptions(t *testing.T, root, base string) Options {
 	return opts
 }
 
-// TestChangedRunExecutesOnlyTheMutantsOnEditedLines is the whole of `--changed`
-// end to end.
-//
-// The assertion is an exact set rather than a count, and it is stated from the
-// document: every mutant in the new file was measured, every mutant anywhere
-// else was reported as not-run with `out-of-selection`, and the catalogue holds
-// both — which is the property the feature rests on. Discovery and validation
-// still cover the whole module, so the ids here are the ids a full run would
-// mint and the two reports can be compared.
 func TestChangedRunExecutesOnlyTheMutantsOnEditedLines(t *testing.T) {
 	root := testkit.Copy(t, "families")
 	base := gitRepo(t, root)
@@ -204,8 +149,6 @@ func TestChangedRunExecutesOnlyTheMutantsOnEditedLines(t *testing.T) {
 	if rep.Summary.NotRun != skipped {
 		t.Errorf("summary.not_run = %d and %d rows say not-run", rep.Summary.NotRun, skipped)
 	}
-	// The tests beside the new file catch some of what it carries, which is what
-	// makes this a mutation run and not merely a selection one.
 	if rep.Summary.Killed == 0 {
 		t.Error("nothing in the edited file was killed, so the run measured nothing meaningful")
 	}
@@ -214,9 +157,6 @@ func TestChangedRunExecutesOnlyTheMutantsOnEditedLines(t *testing.T) {
 	}
 }
 
-// TestChangedRunWithNothingChanged proves the honest empty case: a run whose
-// diff is empty measures nothing and says so, rather than falling back to
-// measuring everything.
 func TestChangedRunWithNothingChanged(t *testing.T) {
 	root := testkit.Copy(t, "killable")
 	base := gitRepo(t, root)
@@ -237,15 +177,7 @@ func TestChangedRunWithNothingChanged(t *testing.T) {
 	}
 }
 
-// TestChangedRunFailsWithoutARepository proves the fail-closed rule: a
-// `--changed` run that cannot read a diff stops rather than quietly measuring
-// everything or nothing.
 func TestChangedRunFailsWithoutARepository(t *testing.T) {
-	// The same hermetic environment the two repositories above are scripted in,
-	// for the same reason: the engine's git is this process's git. The workspace
-	// is a copy under the test's own directory and no repository is made in it,
-	// which is the whole of the arrangement — the corpus module itself lives
-	// inside go-mutants' repository and would resolve a diff.
 	testkit.Env(t)
 	opts := options(t, "killable")
 	opts.Changed = true
@@ -261,20 +193,11 @@ func TestChangedRunFailsWithoutARepository(t *testing.T) {
 	if outcome.Report != nil {
 		t.Error("a run that never started published a report")
 	}
-	// Nothing was copied or built: the diff is resolved before the workspace is.
 	if outcome.SnapshotRoot != "" {
 		t.Errorf("the run snapshotted %s before finding out it could not resolve the diff", outcome.SnapshotRoot)
 	}
 }
 
-// TestShardedRunsMergeIntoTheUnshardedOne is the congruence property `--shard`
-// and `report merge` exist to have.
-//
-// Two shards of one workspace, merged, have to reach the same verdict for every
-// mutant as a run that was not split — otherwise a CI matrix and a laptop
-// measure different things and nobody can say which to believe. The comparison
-// is mutant for mutant rather than score against score: two runs can reach one
-// score by disagreeing about two mutants in opposite directions.
 func TestShardedRunsMergeIntoTheUnshardedOne(t *testing.T) {
 	t.Parallel()
 
@@ -305,8 +228,6 @@ func TestShardedRunsMergeIntoTheUnshardedOne(t *testing.T) {
 		pieces = append(pieces, rep)
 	}
 
-	// Each shard executed its own share and nothing else, which is what makes
-	// the split worth doing at all.
 	executed := make(map[string]int)
 	for _, piece := range pieces {
 		for _, m := range piece.Mutants {
@@ -348,9 +269,6 @@ func TestShardedRunsMergeIntoTheUnshardedOne(t *testing.T) {
 	if got, want := outcomes(merged), outcomes(whole.Report); !slices.Equal(got, want) {
 		t.Errorf("the merged run disagrees with the unsharded one:\n got %v\nwant %v", got, want)
 	}
-	// go-cmp rather than ==, because the summary holds a *float64: two equal
-	// scores in two runs are two pointers, and comparing the structs directly
-	// would compare the addresses.
 	if diff := cmp.Diff(whole.Report.Summary, merged.Summary); diff != "" {
 		t.Errorf("the merged summary is not the unsharded one (-whole +merged):\n%s", diff)
 	}
@@ -365,7 +283,6 @@ func TestShardedRunsMergeIntoTheUnshardedOne(t *testing.T) {
 	}
 }
 
-// mustMarshalReport encodes a report the way it goes on disk.
 func mustMarshalReport(t *testing.T, r *report.Report) []byte {
 	t.Helper()
 	data, err := r.Marshal()

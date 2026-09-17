@@ -16,10 +16,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/tempowner"
 )
 
-// TestSweepTemporaryRemovesTheRunsOwnOrphans pins what a run collects before it
-// writes anything of its own: the snapshot and scratch directories of a run
-// that was killed, and nothing else in a directory it shares with the rest of
-// the machine.
 func TestSweepTemporaryRemovesTheRunsOwnOrphans(t *testing.T) {
 	parent := t.TempDir()
 
@@ -56,13 +52,6 @@ func TestSweepTemporaryRemovesTheRunsOwnOrphans(t *testing.T) {
 	}
 }
 
-// TestSweepTemporaryWarnsWhenAnOrphanSurvives keeps a directory that will not
-// go away from ending a run: the results are unaffected and the remedy is a
-// deletion in the temporary area, which is exactly what the two neighbouring
-// cleanup warnings already say. What makes the orphan refuse is the platform's
-// business — obstructRemoval is defined per platform — because a parent that
-// is not a directory, the obvious obstacle, is reported as absent on Windows
-// and an absent parent is correctly nothing to sweep.
 func TestSweepTemporaryWarnsWhenAnOrphanSurvives(t *testing.T) {
 	parent := t.TempDir()
 	orphan := abandonedDirectory(t, parent, snapshot.DirPrefix+"stuck")
@@ -79,10 +68,6 @@ func TestSweepTemporaryWarnsWhenAnOrphanSurvives(t *testing.T) {
 	}
 }
 
-// TestTempPrefixesCoverEveryDirectoryTheRunCreates is the coupling that keeps
-// the sweep honest: a future directory created under a fourth prefix would be
-// swept by nobody, and the run that leaks it is the run that would have to
-// collect it.
 func TestTempPrefixesCoverEveryDirectoryTheRunCreates(t *testing.T) {
 	for _, prefix := range []string{snapshot.DirPrefix, scratchPrefix} {
 		if !slices.Contains(tempPrefixes, prefix) {

@@ -17,15 +17,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// TestANarrowedMutantIsKilledDirectlyOrByConfirmation is narrowing against a
-// real binary: the same mutant, the same binary, and two selections. Narrowed
-// to the test that reaches the mutated line, it is killed by that test alone
-// and the attempt names it. Narrowed to a test that does *not* reach the line,
-// the narrowed run survives — but RunOne confirms a narrowed survivor against
-// the whole binary, where the covering test kills it, so it is killed all the
-// same and the attempt names no test because it ran the whole binary. The
-// second half is the soundness [RunOne]'s confirmation exists for: narrowing
-// to the wrong tests cannot turn a kill into a survivor.
 func TestANarrowedMutantIsKilledDirectlyOrByConfirmation(t *testing.T) {
 	t.Parallel()
 
@@ -46,8 +37,6 @@ func TestANarrowedMutantIsKilledDirectlyOrByConfirmation(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("instrumenting the snapshot: %v", err)
 	}
-	// The `>` of Positive, which TestPositive's zero row is the only thing
-	// that tells from `>=`.
 	mutant := mutantkit.ByRule(t, catalog, "gt-to-ge")
 
 	work := t.TempDir()
@@ -66,10 +55,8 @@ func TestANarrowedMutantIsKilledDirectlyOrByConfirmation(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
-		test string
-		// wantTests is what the returned attempt names: the covering test when
-		// it killed directly, and none when the whole-binary confirmation did.
+		name      string
+		test      string
 		wantTests []string
 	}{
 		{name: "the covering test kills it directly", test: "TestPositive", wantTests: []string{"TestPositive"}},

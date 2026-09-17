@@ -12,42 +12,19 @@ import (
 	"testing"
 )
 
-// The documentation ledger for the mutant accounting.
-//
-// This is the claim goatest rests on. A report can be read as evidence because
-// every discovered mutant has exactly one disposition and the totals add up,
-// and a single `unknown` makes the verdict ERROR rather than a smaller number.
-//
-// The claim is stated four times: as the constants below, as an enum inside the
-// published JSON Schema, as the arithmetic in audit.go, and as three equations
-// in a fenced block in docs/assurance-contract.md. The equations are the part a
-// reader trusts, and the only one nothing was checking.
-
 const (
-	// contractDocumentation is the page that states the accounting.
 	contractDocumentation = "../../docs/assurance-contract.md"
 
-	// accountingHeading is the sentence that introduces the accounting block.
-	//
-	// The block is found by the sentence rather than by being the first fenced
-	// block on the page, because the page holds four and the first three
-	// describe other things. Taking the first one was this ledger's first
-	// version, and it read an unrelated block as empty of equations and then
-	// reported the page as stating none.
 	accountingHeading = "Every discovered mutant has exactly one report-v1 disposition:"
 )
 
-// accountingEquation matches "left = right + right + ..." in the fenced block.
 var accountingEquation = regexp.MustCompile(`^([a-z-]+)\s*=\s*(.+)$`)
 
-// dispositions is every disposition a discovered mutant can have.
 var dispositions = []MutantStatus{
 	MutantKilled, MutantSurvived, MutantInconclusive, MutantCompileRejected,
 	MutantAccepted, MutantOutOfScope, MutantUnknown,
 }
 
-// TestEveryDispositionIsInThePublishedSchema pins the constants against the
-// schema this module publishes beside every report.
 func TestEveryDispositionIsInThePublishedSchema(t *testing.T) {
 	t.Parallel()
 	published := schemaDispositions(t)
@@ -63,14 +40,6 @@ func TestEveryDispositionIsInThePublishedSchema(t *testing.T) {
 	}
 }
 
-// TestTheDocumentedAccountingIsTheAccountingThatRuns pins the three equations
-// on the page against the arithmetic audit.go performs.
-//
-// The equations are checked by running them: a tally is built in which every
-// disposition holds a different count, audited, and the result compared against
-// what each documented equation says it should be. An equation the page states
-// and the code does not enforce fails here, and so does one the code enforces
-// and the page states differently.
 func TestTheDocumentedAccountingIsTheAccountingThatRuns(t *testing.T) {
 	t.Parallel()
 	equations := documentedEquations(t)
@@ -103,9 +72,6 @@ func TestTheDocumentedAccountingIsTheAccountingThatRuns(t *testing.T) {
 	}
 }
 
-// TestTheAccountingLedgerSeesAnEquationThatIsNotThere proves the ledger can
-// fail, because three equations agreeing with three equations is what it looks
-// like when the block is read as empty.
 func TestTheAccountingLedgerSeesAnEquationThatIsNotThere(t *testing.T) {
 	t.Parallel()
 	equations := documentedEquations(t)
@@ -117,7 +83,6 @@ func TestTheAccountingLedgerSeesAnEquationThatIsNotThere(t *testing.T) {
 	}
 }
 
-// accountingTerms is the arithmetic audit.go enforces, as the page writes it.
 func accountingTerms() map[string][]string {
 	return map[string][]string{
 		"discovered": {"executed", "compile-rejected", "accepted", "out-of-scope", "unknown"},
@@ -126,7 +91,6 @@ func accountingTerms() map[string][]string {
 	}
 }
 
-// termValue resolves one term of an equation against a tally of dispositions.
 func termValue(t *testing.T, term string, counts map[string]int) int {
 	t.Helper()
 	switch term {
@@ -149,7 +113,6 @@ func termValue(t *testing.T, term string, counts map[string]int) int {
 	return value
 }
 
-// documentedEquations reads the fenced block of accounting equations.
 func documentedEquations(t *testing.T) map[string][]string {
 	t.Helper()
 	data, err := os.ReadFile(contractDocumentation)
@@ -187,11 +150,6 @@ func documentedEquations(t *testing.T) map[string][]string {
 	return equations
 }
 
-// schemaDispositions reads the disposition enum out of the published schema.
-//
-// It decodes the bytes JSONSchema publishes rather than reaching into the map
-// that builds them, because the bytes are what a user validates against. A
-// ledger that read the builder would agree with the builder.
 func schemaDispositions(t *testing.T) []string {
 	t.Helper()
 	var document any

@@ -14,13 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/console"
 )
 
-// verboseOptions parses one command line through the real `run` flags and
-// returns what they filled in.
-//
-// It goes through the flag set rather than assigning the field, because the
-// count semantics — `-vv` is two, `-v -v` is two, and neither is a value — are
-// pflag's and not this package's, and a test that set the field would prove
-// nothing about the spelling a user types.
 func verboseOptions(t *testing.T, args ...string) *runOptions {
 	t.Helper()
 	o := &runOptions{}
@@ -47,17 +40,11 @@ func TestVerboseCountsTheTimesItWasTyped(t *testing.T) {
 			t.Errorf("run %v: verbose = %d, want %d", tc.args, got, tc.want)
 		}
 	}
-	// Deeper than the deepest level is the deepest level: `-vvv` is a typo with
-	// one obvious meaning, and refusing it would be pedantry in front of
-	// somebody who is already trying to see more.
 	if got := verboseOptions(t, "-vvv").verbosity(); got != console.VerbosityTrace {
 		t.Errorf("-vvv resolved to verbosity %d, want %d", got, console.VerbosityTrace)
 	}
 }
 
-// TestVerboseAndQuietAreRefused. Neither flag is wrong on its own and each is a
-// complete answer, so the pair is refused rather than resolved — the judgement
-// `--json` with `--quiet` already gets, and the same code.
 func TestVerboseAndQuietAreRefused(t *testing.T) {
 	err := runWith(t, "-v", "--quiet")
 	var coded *Error
@@ -83,8 +70,6 @@ func TestVerboseAndJSONAreRefused(t *testing.T) {
 	}
 }
 
-// TestVerboseImpliesThePlainRenderer. The verbose output is lines to be read,
-// scrolled back through and diffed; a dashboard erases what it draws.
 func TestVerboseImpliesThePlainRenderer(t *testing.T) {
 	t.Setenv("CI", "")
 	t.Setenv("NO_COLOR", "")
@@ -94,17 +79,12 @@ func TestVerboseImpliesThePlainRenderer(t *testing.T) {
 			t.Errorf("-%s chose the dashboard on a colour terminal", strings.Repeat("v", verbosity))
 		}
 	}
-	// And the flag left alone changes nothing about the choice.
 	options := runOptions{}
 	if !wantsDashboard(io.Discard, &options, probing(true, colorprofile.TrueColor)) {
 		t.Error("a run with no -v lost its dashboard")
 	}
 }
 
-// TestVerboseTwoAsksTheEngineToPublishTrace pins the one thing `-vv` needs from
-// the engine: the recording, fanned out onto the event stream the renderer is
-// already draining. That the option reaches [engine.Options] is proven
-// end-to-end by the integration suite, which counts the lines it produces.
 func TestVerboseTwoAsksTheEngineToPublishTrace(t *testing.T) {
 	for _, tc := range []struct {
 		args []string

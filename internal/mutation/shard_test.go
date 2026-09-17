@@ -15,17 +15,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// TestShardIndexGoldenVectors pins the assignment function itself.
-//
-// The property tests below prove that the partition is stable and balanced,
-// which any deterministic hash would satisfy — including a different one. This
-// is what stops the function from changing: `shard.assignment` is "id-hash-v1"
-// in every document go-mutants has ever written, and a build whose id-hash-v1
-// puts a mutant in a different shard from another build's would merge two shard
-// reports that had each executed the same mutant and neither executed another.
-//
-// So the vectors are the specification, spelled out. Changing any number here
-// means minting id-hash-v2, not editing the table.
 func TestShardIndexGoldenVectors(t *testing.T) {
 	t.Parallel()
 
@@ -50,9 +39,6 @@ func TestShardIndexGoldenVectors(t *testing.T) {
 	}
 }
 
-// TestShardIndexIsTheDocumentedFunction states the definition a second time, as
-// arithmetic rather than as a table, so that the doc comment and the schema's
-// description of `id-hash-v1` are checkable rather than merely asserted.
 func TestShardIndexIsTheDocumentedFunction(t *testing.T) {
 	t.Parallel()
 
@@ -72,8 +58,6 @@ func TestShardIndexIsTheDocumentedFunction(t *testing.T) {
 	})
 }
 
-// TestShardIndexIsInRangeAndStable proves the two things every caller relies
-// on: an index that names a real shard, and the same answer every time.
 func TestShardIndexIsInRangeAndStable(t *testing.T) {
 	t.Parallel()
 
@@ -91,16 +75,6 @@ func TestShardIndexIsInRangeAndStable(t *testing.T) {
 	})
 }
 
-// TestAddingMutantsNeverReshufflesTheOthers is the property sharding exists
-// for.
-//
-// A partition by position — every nth mutant in catalogue order — would move
-// most of the catalogue every time somebody added a line to a file, so shard 3
-// would measure a different set on every commit and nothing about a previous
-// run's timings would predict the next one's. Assigning from the id alone means
-// a mutant's shard is a fact about that mutant, and this is the statement of it:
-// grow the catalogue however you like, and everything that was already in it
-// stays where it was.
 func TestAddingMutantsNeverReshufflesTheOthers(t *testing.T) {
 	t.Parallel()
 
@@ -116,8 +90,6 @@ func TestAddingMutantsNeverReshufflesTheOthers(t *testing.T) {
 			assigned[id] = mutation.ShardIndex(id, total)
 		}
 
-		// The catalogue changes: new mutants appear, and some of the old ones
-		// are gone. Neither is allowed to move what remains.
 		added := rapid.SliceOfNDistinct(
 			rapid.StringMatching(`[0-9a-f]{64}`), 0, 40,
 			func(s string) string { return s },
@@ -137,14 +109,6 @@ func TestAddingMutantsNeverReshufflesTheOthers(t *testing.T) {
 	})
 }
 
-// TestEveryShardGetsWork is a sanity check on the arithmetic rather than a
-// statistical claim.
-//
-// A modulo written the wrong way round — or a hash reduced to too few bits —
-// produces a partition that is technically deterministic and useless, with one
-// shard doing everything. A thousand ids over four shards would have to be
-// extraordinarily unlucky to leave one empty, so an empty one here means the
-// function is broken rather than that the sample was small.
 func TestEveryShardGetsWork(t *testing.T) {
 	t.Parallel()
 
@@ -161,8 +125,6 @@ func TestEveryShardGetsWork(t *testing.T) {
 	}
 }
 
-// TestShardIndexRefusesAnImpossibleTotal proves the documented answer for a
-// total no shard can come from, rather than a division by zero.
 func TestShardIndexRefusesAnImpossibleTotal(t *testing.T) {
 	t.Parallel()
 
@@ -173,9 +135,6 @@ func TestShardIndexRefusesAnImpossibleTotal(t *testing.T) {
 	}
 }
 
-// TestShardAssignmentIsVersioned holds the published name in place. It is a
-// promise to every consumer that can recompute the partition, so it changes
-// only when the function does — and then by a new version, never in place.
 func TestShardAssignmentIsVersioned(t *testing.T) {
 	t.Parallel()
 

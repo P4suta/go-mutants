@@ -12,14 +12,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/gocmd"
 )
 
-// TestAppendGoflagsMergesRatherThanOverwrites is the whole contract of the
-// helper in one table.
-//
-// Each row is a shape a real child environment arrives in, and the rule is the
-// same in all of them: whatever GOFLAGS already said still applies afterwards.
-// A helper that set the variable instead would pass the first row and silently
-// throw away a `-mod=readonly` or a `-tags=...` in every other one, which is
-// the failure this exists to prevent rather than a detail of it.
 func TestAppendGoflagsMergesRatherThanOverwrites(t *testing.T) {
 	t.Parallel()
 
@@ -44,11 +36,6 @@ func TestAppendGoflagsMergesRatherThanOverwrites(t *testing.T) {
 			want: []string{"GOFLAGS=-vet=off -mod=readonly"},
 		},
 		{
-			// os/exec resolves a duplicate by keeping the last, so the last is
-			// what the child would have seen and the last is what is merged
-			// into. The entries collapse to one in the first one's position,
-			// which changes no meaning and leaves nothing for a reader to have
-			// to know.
 			name: "duplicate GOFLAGS entries collapse onto the last one's value",
 			env:  []string{"GOFLAGS=-mod=mod", "PATH=/usr/bin", "GOFLAGS=-mod=readonly"},
 			want: []string{"GOFLAGS=-mod=readonly -vet=off", "PATH=/usr/bin"},
@@ -59,16 +46,11 @@ func TestAppendGoflagsMergesRatherThanOverwrites(t *testing.T) {
 			want: []string{"GOFLAGS=-vet=off"},
 		},
 		{
-			// `GOFLAGS=` is a setting and not an absence — it overrides a value
-			// from a `go env -w` file, which is why internal/cache hashes it
-			// differently from an unset one — but it has nothing to keep, so the
-			// merge must not leave a leading space behind.
 			name: "GOFLAGS set to nothing gains the flag without a leading space",
 			env:  []string{"GOFLAGS=", "PATH=/usr/bin"},
 			want: []string{"GOFLAGS=-vet=off", "PATH=/usr/bin"},
 		},
 		{
-			// Field comparison, not substring: `-vet=offline` is not `-vet=off`.
 			name: "a flag that merely contains the wanted one is not it",
 			env:  []string{"GOFLAGS=-vet=offline"},
 			want: []string{"GOFLAGS=-vet=offline -vet=off"},
@@ -90,13 +72,6 @@ func TestAppendGoflagsMergesRatherThanOverwrites(t *testing.T) {
 	}
 }
 
-// TestAppendGoflagsDoesNotAliasItsInput pins the copy rather than the values.
-//
-// The environment handed to this helper is the run's own composed one, shared
-// by the pristine baseline, compile validation and the instrumented baseline —
-// so a returned slice that aliased its input would put `-vet=off` on the
-// *user's* pristine tree the moment anything wrote through it. Equal contents
-// would not catch that; a write does.
 func TestAppendGoflagsDoesNotAliasItsInput(t *testing.T) {
 	t.Parallel()
 
@@ -108,11 +83,6 @@ func TestAppendGoflagsDoesNotAliasItsInput(t *testing.T) {
 	}
 }
 
-// TestAppendGoflagsAddsNothingForAnEmptyFlag covers the degenerate call.
-//
-// It is not hypothetical bookkeeping: the alternative is an environment
-// carrying `GOFLAGS=` where none was set, and an empty GOFLAGS is not the same
-// thing as an unset one to the go command.
 func TestAppendGoflagsAddsNothingForAnEmptyFlag(t *testing.T) {
 	t.Parallel()
 
@@ -124,12 +94,6 @@ func TestAppendGoflagsAddsNothingForAnEmptyFlag(t *testing.T) {
 	}
 }
 
-// TestAppendGoflagsMatchesTheVariableTheWayTheSystemDoes is the Windows half.
-//
-// A variable there answers to any spelling of its name, so an environment
-// holding `Goflags=` and one holding `GOFLAGS=` are one variable to the child.
-// Treating them as two would append a second entry that wins by being last and
-// silently drops whatever the first one said.
 func TestAppendGoflagsMatchesTheVariableTheWayTheSystemDoes(t *testing.T) {
 	t.Parallel()
 
@@ -148,16 +112,6 @@ func TestAppendGoflagsMatchesTheVariableTheWayTheSystemDoes(t *testing.T) {
 	}
 }
 
-// TestSameEnvKeyIsDecidedByThePlatformItIsGiven is the other half of the
-// Windows rule, and the half no Windows runner has to be present for.
-//
-// The test above can only assert what the platform it is running on does, so on
-// a Linux or macOS job the case-folding branch is a line nothing executes —
-// which makes "a variable answers to any spelling of its name" a claim that
-// goes unchecked on every platform but one. Handing the platform in as a value
-// asserts both spellings everywhere, including the pair that matters most: two
-// entries that are one variable to the child, which the merge rule has to
-// collapse rather than append past.
 func TestSameEnvKeyIsDecidedByThePlatformItIsGiven(t *testing.T) {
 	t.Parallel()
 
@@ -183,11 +137,6 @@ func TestSameEnvKeyIsDecidedByThePlatformItIsGiven(t *testing.T) {
 	}
 }
 
-// TestVetOffIsTheFlagTheGoCommandDefines guards the spelling itself.
-//
-// Both call sites take it from here, so a typo would disable nothing and would
-// be invisible until an instrumented tree tripped vet again — which is the bug
-// this constant exists to keep fixed.
 func TestVetOffIsTheFlagTheGoCommandDefines(t *testing.T) {
 	t.Parallel()
 

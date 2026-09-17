@@ -3,14 +3,6 @@
 
 //go:build integration
 
-// Workspace lifecycle against a real toolchain: what Open owns, what it sweeps,
-// what two concurrent runs do to each other, and what Close leaves behind.
-//
-// Every test here is a gomutants.Open over a copied fixture — a snapshot, a
-// version probe and a temporary tree — which is the integration tier by
-// definition. The file was named workspace_test.go until the tiering, and its
-// eleven tests were most of what `go test .` was paying for.
-
 package gomutants_test
 
 import (
@@ -54,11 +46,6 @@ func TestWorkspaceReportsTheToolchainVersionResolvedByOpen(t *testing.T) {
 	}
 }
 
-// TestOpenOwnsEveryTemporaryDirectory is the first half of the promise that
-// nothing a run writes outlives it: every top-level directory Open creates
-// carries a marker saying whose it is and holds a lock saying it is still in
-// use, so that another run can tell a live directory from an abandoned one
-// without guessing at process ids.
 func TestOpenOwnsEveryTemporaryDirectory(t *testing.T) {
 	root := copyFixture(t, "simple")
 	parent := t.TempDir()
@@ -223,9 +210,6 @@ func TestWorkspaceExecRendezvousProcess(t *testing.T) {
 	}
 }
 
-// TestOpenSweepsDeadTemporaryDirectoriesAndSparesTheRest is the second half:
-// what a killed process could not remove is removed by the next run, and
-// nothing else in the temporary directory is.
 func TestOpenSweepsDeadTemporaryDirectoriesAndSparesTheRest(t *testing.T) {
 	root := copyFixture(t, "simple")
 	parent := t.TempDir()
@@ -273,11 +257,6 @@ func TestOpenSweepsDeadTemporaryDirectoriesAndSparesTheRest(t *testing.T) {
 	}
 }
 
-// TestKeepTempPreservesTheTemporaryDirectories covers the deliberate keep. It
-// is the escape hatch for the one case the sweep would otherwise make
-// impossible — looking at the tree a failing mutant ran in — and it has to be
-// deliberate in a way the next run can read, or the directory it leaves behind
-// is exactly the garbage this change removes.
 func TestKeepTempPreservesTheTemporaryDirectories(t *testing.T) {
 	root := copyFixture(t, "simple")
 	parent := t.TempDir()
@@ -321,8 +300,6 @@ func TestKeepTempPreservesTheTemporaryDirectories(t *testing.T) {
 		}
 	}
 
-	// A kept directory is not an orphan, and the next run has to agree: a keep
-	// that the following Open swept away would be a keep in name only.
 	second, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: parent})
 	if err != nil {
 		t.Fatalf("opening a second workspace: %v", err)
@@ -340,16 +317,6 @@ func TestKeepTempPreservesTheTemporaryDirectories(t *testing.T) {
 	}
 }
 
-// TestOpenTwiceYieldsTheSameSnapshotRootAcrossRuns is the workspace's half of
-// the stable snapshot name.
-//
-// The go command hashes the absolute directory of a package into every compile
-// action id unless -trimpath is passed, and go-mutants does not pass it — that
-// flag changes the program under test. A snapshot at a fresh random path per
-// run therefore shares nothing with the last run's build cache and leaves one
-// more full copy of the project's objects in it. Successive Opens of one root
-// consequently have to land on one path, and the module a consumer measures
-// every day is the same root every time.
 func TestOpenTwiceYieldsTheSameSnapshotRootAcrossRuns(t *testing.T) {
 	root := copyFixture(t, "simple")
 	parent := t.TempDir()
@@ -364,14 +331,6 @@ func TestOpenTwiceYieldsTheSameSnapshotRootAcrossRuns(t *testing.T) {
 	}
 }
 
-// TestOpenWhileAnotherRunHoldsTheRootStillWorks is the price the stable name
-// is allowed to charge, and the one it is not.
-//
-// Two runs of one root at once cannot share a directory: they would instrument
-// each other's tree. So the second takes a random name, loses the build-cache
-// hits, and is otherwise a workspace like any other — and the sweep the second
-// Open runs first sees the first run's directories as live and leaves them
-// alone. Both close cleanly and neither leaves anything behind.
 func TestOpenWhileAnotherRunHoldsTheRootStillWorks(t *testing.T) {
 	root := copyFixture(t, "simple")
 	parent := t.TempDir()
@@ -399,9 +358,6 @@ func TestOpenWhileAnotherRunHoldsTheRootStillWorks(t *testing.T) {
 			t.Errorf("%s does not hold a usable copy of the module: %v", name, statErr)
 		}
 	}
-	// The first workspace's snapshot and scratch directories are both locked,
-	// which is what the second Open's sweep has to read as "somebody is using
-	// this" rather than as two orphans to reclaim.
 	if swept := second.Swept(); len(swept.Removed) != 0 || swept.Live != 2 {
 		t.Errorf("the second Open swept %+v, want nothing removed and two live directories", swept)
 	}
@@ -417,9 +373,6 @@ func TestOpenWhileAnotherRunHoldsTheRootStillWorks(t *testing.T) {
 	}
 }
 
-// openedSnapshotName opens a workspace, notes the name of the one snapshot
-// directory it created, and closes it again, so that two calls are two
-// successive runs rather than two live workspaces.
 func openedSnapshotName(t *testing.T, root, parent string) string {
 	t.Helper()
 	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: parent})
@@ -436,8 +389,6 @@ func openedSnapshotName(t *testing.T, root, parent string) string {
 	return names[0]
 }
 
-// claimAndAbandon leaves a directory in the state a SIGKILLed run leaves: the
-// marker written, the lock file present, and nobody holding it.
 func claimAndAbandon(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.Mkdir(dir, 0o755); err != nil {
@@ -452,8 +403,6 @@ func claimAndAbandon(t *testing.T, dir string) {
 	}
 }
 
-// temporaryDirectories returns the absolute paths of every go-mutants
-// directory directly under parent, sorted.
 func temporaryDirectories(t *testing.T, parent string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(parent)
@@ -487,11 +436,6 @@ func sortedPaths(paths []string) []string {
 	return paths
 }
 
-// TestKeepTempThatCannotBeRecordedRemovesRatherThanLeaks holds KeepTemp to the
-// same standard on the way out. A directory whose keep could not be written
-// into its marker is exactly what the next Open would sweep as an orphan, so
-// Close does not report it preserved and does not leave it for that sweep: it
-// removes it, says why, and Preserved names nothing.
 func TestKeepTempThatCannotBeRecordedRemovesRatherThanLeaks(t *testing.T) {
 	root := copyFixture(t, "simple")
 	parent := t.TempDir()

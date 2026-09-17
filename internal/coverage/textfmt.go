@@ -10,80 +10,27 @@ import (
 	"strings"
 )
 
-// modePrefix opens the first line of every textfmt document.
 const modePrefix = "mode: "
 
-// scanBufferLimit is the longest line [ParseTextfmt] will read.
-//
-// bufio.Scanner defaults to 64 KiB and reports anything longer as an error
-// rather than truncating, which would turn one very long import path into an
-// unreadable profile. A block record is a path plus two dozen characters, so a
-// mebibyte is far past any real one and still bounded — the input is a file the
-// toolchain wrote a moment ago, not something to be defensive about, but an
-// unbounded buffer is never the right answer to "how long can a line be".
 const scanBufferLimit = 1 << 20
 
-// A Block is one statement block of a coverage profile.
-//
-// The columns are parsed and carried because the format has them and dropping a
-// field while reading is how a parser stops being a parser. Nothing in this
-// package looks at them; see the package documentation for why the mapping is
-// line-only.
 type Block struct {
-	// File is the block's file, exactly as the profile spells it: the owning
-	// package's import path, a slash, and the file's base name — for example
-	// "example.com/m/internal/alpha/alpha.go". It is not a path on this
-	// machine and must not be opened.
-	File string
-	// StartLine and StartCol are the 1-based coordinates the block opens at.
+	File      string
 	StartLine int
 	StartCol  int
-	// EndLine and EndCol are where it closes. EndLine is never less than
-	// StartLine.
-	EndLine int
-	EndCol  int
-	// NumStmt is how many statements the block holds.
-	NumStmt int
-	// Count is how many times the block was reached. In `set` mode — what
-	// `go test -cover` produces by default, and what go-mutants collects — it
-	// is 0 or 1, and only "greater than zero" is ever asked of it.
-	Count int
+	EndLine   int
+	EndCol    int
+	NumStmt   int
+	Count     int
 }
 
-// Covered reports whether the block was reached at all.
 func (b Block) Covered() bool { return b.Count > 0 }
 
-// A Profile is one parsed `go tool covdata textfmt` document.
 type Profile struct {
-	// Mode is the counter mode the data was collected in: "set", "count", or
-	// "atomic". It is kept because a document that does not declare one is
-	// malformed, and because a reader has to be able to tell a merged profile's
-	// mode without re-parsing it.
-	Mode string
-	// Blocks are the block records, in the order the document listed them.
-	// Nothing here sorts them: the order is the toolchain's, and preserving it
-	// keeps a parsed profile comparable to the file it came from.
+	Mode   string
 	Blocks []Block
 }
 
-// ParseTextfmt reads a `go tool covdata textfmt` document.
-//
-// The format is the same one `go test -coverprofile` has written since Go 1.2,
-// and it is two things: a `mode: <name>` line, then one block record per line —
-//
-//	<import path>/<file>:<startLine>.<startCol>,<endLine>.<endCol> <numStmt> <count>
-//
-// The file name is separated from the coordinates by the *last* colon on the
-// line rather than the first. That is not defensiveness about import paths,
-// which cannot contain one: it is what the Go toolchain's own parser does, and
-// a reader that disagreed with the writer about where a record starts would
-// misread exactly the documents that are hardest to debug.
-//
-// Blank lines are skipped, which makes a trailing newline — and a file
-// concatenated from two profiles by hand — readable rather than a failure.
-// Anything else that is not a block record is [CodeMalformedProfile], with the
-// line number, because a profile that is silently half-read is a coverage
-// mapping that silently loses kills.
 func ParseTextfmt(r io.Reader) (Profile, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), scanBufferLimit)
@@ -125,7 +72,6 @@ func ParseTextfmt(r io.Reader) (Profile, error) {
 	return profile, nil
 }
 
-// parseBlock reads one block record.
 func parseBlock(line string, number int) (Block, error) {
 	colon := strings.LastIndexByte(line, ':')
 	if colon <= 0 || colon == len(line)-1 {
@@ -133,8 +79,6 @@ func parseBlock(line string, number int) (Block, error) {
 	}
 	file, rest := line[:colon], line[colon+1:]
 
-	// "<positions> <numStmt> <count>". Split from the right, because the
-	// positions are one field and the two counters are the last two.
 	fields := strings.Fields(rest)
 	if len(fields) != 3 {
 		return Block{}, malformed(number, strconv.Quote(line)+
@@ -161,9 +105,6 @@ func parseBlock(line string, number int) (Block, error) {
 	if err != nil {
 		return Block{}, err
 	}
-	// A block that ends before it begins would make every interval test below
-	// answer wrongly, silently, and only for the mutants that happen to sit
-	// near it.
 	if endLine < startLine {
 		return Block{}, malformed(number, strconv.Quote(line)+" ends on line "+strconv.Itoa(endLine)+
 			", before it starts on line "+strconv.Itoa(startLine))
@@ -179,8 +120,6 @@ func parseBlock(line string, number int) (Block, error) {
 	}, nil
 }
 
-// parsePosition reads a "<line>.<column>" pair. Both are 1-based in the format,
-// so zero is refused rather than accepted as a coordinate no editor could show.
 func parsePosition(position, line string, number int) (int, int, error) {
 	text, column, ok := strings.Cut(position, ".")
 	if !ok {
@@ -200,7 +139,6 @@ func parsePosition(position, line string, number int) (int, int, error) {
 	return lineNumber, columnNumber, nil
 }
 
-// parseCount reads one of the two trailing counters, which are non-negative.
 func parseCount(text, what, line string, number int) (int, error) {
 	value, err := strconv.Atoi(text)
 	if err != nil || value < 0 {
@@ -210,9 +148,6 @@ func parseCount(text, what, line string, number int) (int, error) {
 	return value, nil
 }
 
-// malformed builds the parse failure, naming the line it happened on. Line 0
-// means "the document as a whole", which is the one complaint that is not about
-// a particular line.
 func malformed(number int, what string) error {
 	if number <= 0 {
 		return &Error{Code: CodeMalformedProfile, Message: what}

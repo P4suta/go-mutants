@@ -12,27 +12,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/devtools/traceaudit"
 )
 
-// auditedRuns are the run/recording pairs committed beside this test.
-//
-// They are committed rather than produced, and that is the decision worth
-// stating. A test that made its own run would need a toolchain, would take the
-// minutes a full mutation run takes, and would only ever check the engine as it
-// is *now* -- so a change that made the report and the recording disagree would
-// be checked by a run that already contained the change. A committed pair is a
-// run this repository made once, on purpose, and every later commit is audited
-// against it in the tier that runs on every push.
-//
-// Regenerate them when the documents change shape:
-//
-//	go run ./cmd/go-mutants run --json --trace > report.json
-//
-// from a copy of the fixture, and copy the report and the `trace.jsonl` beside
-// it. A pair that no longer describes its fixture is not wrong -- the audit is
-// about two documents agreeing with each other -- but it is less interesting,
-// so refresh them when the fixture moves.
 var auditedRuns = []string{"killable", "coverage"}
 
-// TestTheReportAndTheRecordingAgree is the standing self-disagreement check.
 func TestTheReportAndTheRecordingAgree(t *testing.T) {
 	t.Parallel()
 
@@ -52,7 +33,6 @@ func TestTheReportAndTheRecordingAgree(t *testing.T) {
 			for _, finding := range result.Unaudited() {
 				t.Logf("%s: %s", name, finding)
 			}
-			// A pair that settles nothing agrees with everything.
 			if result.Audited == 0 {
 				t.Fatalf("%s: the recording settled none of its %d mutants, so this checks nothing",
 					name, result.Mutants)
@@ -66,13 +46,6 @@ func TestTheReportAndTheRecordingAgree(t *testing.T) {
 	}
 }
 
-// disagreements are the ways the two documents can contradict each other, each
-// with an edit to one of them that produces it.
-//
-// A gate nobody has watched fail is a gate nobody knows the shape of. These are
-// the shapes: each edits the committed report -- never the recording, because
-// the recording is the account and editing it would be inventing a run -- and
-// requires the audit to say so.
 var disagreements = []struct {
 	name  string
 	layer string
@@ -101,8 +74,6 @@ var disagreements = []struct {
 	},
 }
 
-// TestTheAuditNoticesEachKindOfDisagreement is what makes the test above worth
-// having.
 func TestTheAuditNoticesEachKindOfDisagreement(t *testing.T) {
 	t.Parallel()
 
@@ -137,14 +108,6 @@ func TestTheAuditNoticesEachKindOfDisagreement(t *testing.T) {
 	}
 }
 
-// TestARecordingThatCannotSettleAnythingIsUnauditedRatherThanClean is the third
-// answer.
-//
-// A truncated recording -- a run killed before it finished, a stream a
-// collector caught mid-write -- says nothing about anything. Reporting that as
-// agreement would make this gate report green for a run it never read, and
-// reporting it as a violation would make a gate that fails on interrupted runs,
-// which is the kind that gets switched off.
 func TestARecordingThatCannotSettleAnythingIsUnauditedRatherThanClean(t *testing.T) {
 	t.Parallel()
 
@@ -171,7 +134,6 @@ func TestARecordingThatCannotSettleAnythingIsUnauditedRatherThanClean(t *testing
 	}
 }
 
-// audit runs the audit over one committed pair.
 func audit(t *testing.T, name string) traceaudit.Result {
 	t.Helper()
 	result, err := traceaudit.Audit(testdata(t, name+".report.json"), testdata(t, name+".trace.jsonl"))
@@ -181,13 +143,11 @@ func audit(t *testing.T, name string) traceaudit.Result {
 	return result
 }
 
-// testdata is the path of one committed file.
 func testdata(t *testing.T, name string) string {
 	t.Helper()
 	return filepath.Join("testdata", name)
 }
 
-// read is one committed file's contents.
 func read(t *testing.T, name string) string {
 	t.Helper()
 	raw, err := os.ReadFile(testdata(t, name))
@@ -197,7 +157,6 @@ func read(t *testing.T, name string) string {
 	return string(raw)
 }
 
-// contains reports whether a layer was among those reported.
 func contains(layers []string, want string) bool {
 	for _, layer := range layers {
 		if layer == want {
@@ -207,16 +166,6 @@ func contains(layers []string, want string) bool {
 	return false
 }
 
-// TestAuditResolvesARecordingRootByTheReportsRunID lets a caller name the
-// directory recordings live in rather than the file inside it.
-//
-// A run writes its recording to `<root>/<run id>/trace.jsonl`, and the run id
-// is minted while the run is happening. A caller that has the report has the id
-// — it is a field of the document — but a caller writing a command line ahead
-// of time does not, so asking for the file by name means asking somebody to
-// interpolate a value that does not exist yet. That is the shape of a task
-// nobody wires up, which is how this package went un-run: the command its own
-// doc comment gave was wrong, and nothing was calling it to find out.
 func TestAuditResolvesARecordingRootByTheReportsRunID(t *testing.T) {
 	t.Parallel()
 
@@ -253,8 +202,6 @@ func TestAuditResolvesARecordingRootByTheReportsRunID(t *testing.T) {
 	}
 }
 
-// TestAuditSaysWhichRecordingItLookedForWhenARootHoldsNone refuses to read a
-// root that has no recording for this report as a root that agrees with it.
 func TestAuditSaysWhichRecordingItLookedForWhenARootHoldsNone(t *testing.T) {
 	t.Parallel()
 

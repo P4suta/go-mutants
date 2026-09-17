@@ -27,13 +27,6 @@ func TestNoteDetailRemovesTheLeadingToolPrefixHoweverOftenItWasApplied(t *testin
 	}
 }
 
-// TestNoRendererPrintsTheToolPrefixTwice covers what the removal is for.
-//
-// The plain and dashboard renderers open the line with "goatest: " themselves,
-// so a detail that arrived carrying one printed it twice. The JSON Lines
-// renderer prints no prefix at all, so a detail carrying one put it inside a
-// field a consumer parses. The invariant that covers both is the same: the
-// prefix is the renderer's to add, and appears at most once.
 func TestNoRendererPrintsTheToolPrefixTwice(t *testing.T) {
 	t.Parallel()
 	const detail = "goatest: create the layer: permission denied"

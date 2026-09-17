@@ -8,28 +8,6 @@ import (
 	"testing"
 )
 
-// The query [Workspace.Module] refuses before it starts a `go` command, driven
-// against a synthetic workspace.
-//
-// It belongs in the unit tier because the answer is decided before the
-// snapshot, the toolchain or the frozen tree are touched, so a test that opened
-// a workspace to establish it would be paying a snapshot and a version probe
-// for an argument check. The *lifecycle* half of Module's refusals is in
-// workspace_lifecycle_test.go, beside Exec's and Prepare's, because those three
-// are one state machine and a second table for one of them would be a second
-// place to forget a state.
-
-// TestModuleRefusesAbsolutePatterns is the whole of the query check: every
-// pattern shape the engine will not hand to `go list`, refused with
-// [ErrInvalidQuery] and a sentence naming the one that was wrong.
-//
-// It is a refusal rather than an empty answer for the reason
-// [ErrInvalidSelection] is: a pattern nobody can resolve selects no package,
-// and a consumer that asked about `/home/me/project` and was told the module
-// holds nothing would believe it. The leading dash is the one that is not
-// merely wrong but dangerous — the go command reads a first positional
-// argument beginning with `-` as a flag — so it is named separately from the
-// paths.
 func TestModuleRefusesAbsolutePatterns(t *testing.T) {
 	t.Parallel()
 
@@ -48,12 +26,6 @@ func TestModuleRefusesAbsolutePatterns(t *testing.T) {
 			query: ModuleQuery{Packages: []string{"./internal/...", "/etc"}},
 			want:  `gomutants: module: invalid query: package pattern "/etc" is absolute; patterns are module-relative`,
 		},
-		// The Windows shapes, refused on every operating system and with the
-		// same sentence. A query is composed from a consumer's own
-		// configuration, and a path typed on Windows reaches a Linux runner
-		// unchanged — so a refusal that read "is absolute" on one and "is not
-		// module-relative" on the other would be two answers to one mistake, and
-		// only one of them says what is actually wrong with it.
 		{
 			name:  "a drive-letter path with a backslash",
 			query: ModuleQuery{Packages: []string{`C:\src\thing`}},
@@ -75,8 +47,6 @@ func TestModuleRefusesAbsolutePatterns(t *testing.T) {
 			want:  `gomutants: module: invalid query: package pattern "\\\\server\\share\\thing" is absolute; patterns are module-relative`,
 		},
 		{
-			// Drive-*relative*, which is not absolute at all: it is refused for
-			// what it really is rather than mislabelled for looking similar.
 			name:  "a drive-relative path",
 			query: ModuleQuery{Packages: []string{"C:src"}},
 			want:  `gomutants: module: invalid query: package pattern "C:src" is not module-relative; use "." or a "./" pattern`,
@@ -135,26 +105,6 @@ func TestModuleRefusesAbsolutePatterns(t *testing.T) {
 	}
 }
 
-// TestAListingEveryCallerAbandonedIsNotRemembered pins the memo's one race, on
-// the side of it that has to be safe.
-//
-// A listing runs on the caller that started it, and its entry is dropped the
-// moment the last caller interested in it goes away — a cancelled context, a
-// deadline — so that the child can be cut off rather than left holding a
-// workspace nobody is waiting for. The listing goroutine is *still running*
-// when that happens, and what it does next is settle: it comes back with a
-// package set or with the cancellation, and either way it publishes the result
-// for the waiters it no longer has.
-//
-// So settling must not put back an entry the memo has already let go of. If it
-// did, the next caller would be handed a listing that was produced for nobody
-// and was being torn down while it ran — in place of the fresh one it asked
-// for. Both outcomes are driven, because "it failed anyway" is the easy half
-// and "it succeeded anyway" is the one a memo is tempted by.
-//
-// It is driven against the three calls directly rather than through a
-// workspace, because what is under test is their order against one map — an
-// order a real listing reaches only by losing a race.
 func TestAListingEveryCallerAbandonedIsNotRemembered(t *testing.T) {
 	t.Parallel()
 
@@ -175,8 +125,6 @@ func TestAListingEveryCallerAbandonedIsNotRemembered(t *testing.T) {
 			if !leading {
 				t.Fatal("the first caller of an empty memo is not the one that lists")
 			}
-			// The only caller goes away, which is what drops the entry and cuts
-			// the child off; then the listing goroutine, still running, returns.
 			workspace.leaveModule(key, answer)
 			workspace.settleModule(key, answer, c.module, c.err)
 

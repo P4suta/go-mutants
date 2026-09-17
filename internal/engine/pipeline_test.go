@@ -20,9 +20,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/snapshot"
 )
 
-// driftFixture copies a two-file tree into a snapshot and returns it, so that a
-// test can then move bytes around inside the copy and ask the gate what it
-// makes of them.
 func driftFixture(t *testing.T) *snapshot.Snapshot {
 	t.Helper()
 	source := t.TempDir()
@@ -47,7 +44,6 @@ func driftFixture(t *testing.T) *snapshot.Snapshot {
 	return snap
 }
 
-// write puts bytes at a snapshot-relative path, creating the directory.
 func write(t *testing.T, snap *snapshot.Snapshot, rel, content string) {
 	t.Helper()
 	path := filepath.Join(snap.Root, filepath.FromSlash(rel))
@@ -59,8 +55,6 @@ func write(t *testing.T, snap *snapshot.Snapshot, rel, content string) {
 	}
 }
 
-// instrumented describes an instrumentation pass that guarded a.go and wrote
-// the runtime package, which is the state the drift gate is meant to accept.
 func instrumented() instrument.Result {
 	return instrument.Result{
 		RuntimeDir:        "gomutants_rt",
@@ -72,8 +66,6 @@ func instrumented() instrument.Result {
 
 func TestDriftGateAcceptsTheInstrumentationsOwnChanges(t *testing.T) {
 	snap := driftFixture(t)
-	// Exactly what a validated instrumentation pass leaves behind: the guarded
-	// file rewritten, and the generated runtime added.
 	write(t, snap, "a.go", "package m\n\nfunc A() bool { if __gm.M[0] { return false }; return true }\n")
 	write(t, snap, "gomutants_rt/gomutants_rt.go", "package gomutants_rt\n\nvar M [1]bool\n")
 
@@ -86,16 +78,12 @@ func TestDriftGateNamesATestThatWroteIntoItsPackageDirectory(t *testing.T) {
 	snap := driftFixture(t)
 	write(t, snap, "a.go", "package m\n\nfunc A() bool { if __gm.M[0] { return false }; return true }\n")
 	write(t, snap, "gomutants_rt/gomutants_rt.go", "package gomutants_rt\n\nvar M [1]bool\n")
-	// The hazard: a test that updated a golden file in the tree every later
-	// mutant is measured against.
 	write(t, snap, "testdata/golden.txt", "updated\n")
 
 	err := driftGate(snap, instrumented())
 	if CodeOf(err) != CodeWorkspaceDrift {
 		t.Fatalf("the gate returned %v, want %s", err, CodeWorkspaceDrift)
 	}
-	// The files have to be named, or the user is left with an exit code and a
-	// tree that is already gone.
 	if output := OutputOf(err); !strings.Contains(output, "added testdata/golden.txt") {
 		t.Errorf("the drift error does not name the file:\n%s", output)
 	}
@@ -104,10 +92,6 @@ func TestDriftGateNamesATestThatWroteIntoItsPackageDirectory(t *testing.T) {
 	}
 }
 
-// TestDriftGateNoticesAFileTheRewriteDidNotTouch is the same gate from the
-// other side: a file validation restored to pristine — because every candidate
-// in it was rejected — is not in FilesInstrumented, so a change to it is
-// somebody else's doing.
 func TestDriftGateNoticesAFileTheRewriteDidNotTouch(t *testing.T) {
 	snap := driftFixture(t)
 	write(t, snap, "b.go", "package m\n\nfunc B() bool { return true }\n")
@@ -135,12 +119,6 @@ func TestDriftGateNoticesADeletedFile(t *testing.T) {
 	}
 }
 
-// TestNotableIsWorstFirstAndTotallyOrdered pins the summary block's order.
-//
-// Worst first is what makes the block worth reading; the tie-break is what
-// makes it diffable. Two rules can propose an edit on one line, so path and
-// line alone are not a total order and a block built on them would change shape
-// between two runs of the same workspace.
 func TestNotableIsWorstFirstAndTotallyOrdered(t *testing.T) {
 	rows := []struct {
 		id      string
@@ -178,9 +156,9 @@ func TestNotableIsWorstFirstAndTotallyOrdered(t *testing.T) {
 		got = append(got, fmt.Sprintf("%s %s", m.Outcome, m.ID))
 	}
 	want := []string{
-		"survived s2", // a.go:3
-		"survived s0", // b.go:7:1
-		"survived s1", // b.go:7:3, the same line, later column
+		"survived s2",
+		"survived s0",
+		"survived s1",
 		"timed_out t0",
 		"inconclusive i0",
 		"errored e0",
@@ -221,8 +199,6 @@ func TestSelectRulesFollowsTheProfileUntilAnOperatorIsNamed(t *testing.T) {
 		t.Fatal("the balanced profile selected nothing")
 	}
 
-	// A named operator is looked up in the whole catalogue, so a family outside
-	// the profile is honoured rather than silently dropped.
 	named := config.Defaults()
 	named.Mutation.Operators = []string{"bitwise"}
 	rules, err := SelectRules(named)
@@ -237,8 +213,6 @@ func TestSelectRulesFollowsTheProfileUntilAnOperatorIsNamed(t *testing.T) {
 			t.Errorf("selected %s, want only the bitwise family", rule)
 		}
 	}
-	// Canonical registry order, whatever order the names were written in: rule
-	// order is part of what makes a catalogue reproducible.
 	registry := mutation.CanonicalRegistry()
 	if !slices.IsSortedFunc(rules, func(x, y mutation.Rule) int {
 		xp, _ := registry.Position(x.Name)
@@ -257,9 +231,6 @@ func TestSelectRulesRefusesANameTheCatalogueDoesNotKnow(t *testing.T) {
 	}
 }
 
-// TestSelectionErrorCarriesNoCodeAndKeepsTheSentinel pins the one error this
-// package raises without a GOM code, and why that is safe: the command line can
-// still tell what went wrong.
 func TestSelectionErrorCarriesNoCodeAndKeepsTheSentinel(t *testing.T) {
 	err := error(&SelectionError{Prefix: "beef", Err: mutation.ErrAmbiguousPrefix})
 	if code := CodeOf(err); code != "" {
@@ -271,20 +242,11 @@ func TestSelectionErrorCarriesNoCodeAndKeepsTheSentinel(t *testing.T) {
 	if !strings.Contains(err.Error(), `"beef"`) {
 		t.Errorf("Error() = %q, want it to quote the prefix", err.Error())
 	}
-	// It is not a cancellation, which is the other thing internal/cli tests an
-	// engine error for.
 	if interrupted(err) {
 		t.Error("a selection error was read as an interruption")
 	}
 }
 
-// TestRejectedSelectionNamesTheMutantAndQuotesTheCompiler pins the message
-// behind [CodeSelectedMutantRejected].
-//
-// Everything it asserts is what the warning exists to carry: without the id and
-// the coordinates the user cannot tell which of several mutants was refused,
-// and without the compiler's own words the message says only what nothing
-// having run already implied.
 func TestRejectedSelectionNamesTheMutantAndQuotesTheCompiler(t *testing.T) {
 	id := "a1b2c3d4" + strings.Repeat("0", 56)
 	chosen := mutation.Mutant{
@@ -312,8 +274,6 @@ func TestRejectedSelectionNamesTheMutantAndQuotesTheCompiler(t *testing.T) {
 		"flag.go:8:9",
 		"eq-to-neq",
 		"cannot use guard as Flag value",
-		// The second compiler line is the one that often names the type, so it
-		// is folded in rather than dropped.
 		"in argument to f",
 	} {
 		if !strings.Contains(got, needle) {
@@ -327,9 +287,6 @@ func TestRejectedSelectionNamesTheMutantAndQuotesTheCompiler(t *testing.T) {
 		t.Errorf("the message is not one line: %q", got)
 	}
 
-	// A rejection that carried no diagnostic must not produce a message ending
-	// in a dangling colon, and a mutant discovery left without coordinates must
-	// not be located at ":0:0".
 	bare := &state{display: map[string]MutantResult{id: {Path: "flag.go"}}}
 	got = rejectedSelection("a1b2c3d4", chosen, bare)
 	if strings.HasSuffix(got, ":") || strings.Contains(got, ":0:0") {
@@ -339,8 +296,6 @@ func TestRejectedSelectionNamesTheMutantAndQuotesTheCompiler(t *testing.T) {
 		t.Errorf("the message stopped naming the mutant: %q", got)
 	}
 
-	// A user who pasted the whole display id gets it once, not twice: "--mutant
-	// "a1b2c3d4e5f6" selected a1b2c3d4e5f6" is a sentence that reads like a bug.
 	got = rejectedSelection(chosen.DisplayID, chosen, st)
 	if n := strings.Count(got, chosen.DisplayID); n != 1 {
 		t.Errorf("the display id appears %d times, want 1:\n%s", n, got)
@@ -372,8 +327,6 @@ func TestReportTimeoutSourceMapsBothSpellings(t *testing.T) {
 	if got := reportTimeoutSource(TimeoutDerived); got != report.TimeoutDerived {
 		t.Errorf("derived mapped to %q", got)
 	}
-	// An engine that somehow held neither says "derived", which is the truthful
-	// default: nothing was configured.
 	if got := reportTimeoutSource(""); got != report.TimeoutDerived {
 		t.Errorf("the empty source mapped to %q, want %q", got, report.TimeoutDerived)
 	}

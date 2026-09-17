@@ -21,7 +21,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/validate"
 )
 
-// The two modules of the workspace this file validates.
 const (
 	firstModulePath  = "example.com/ws/first"
 	secondModulePath = "example.com/ws/second"
@@ -30,16 +29,6 @@ const (
 	secondBody = "package second\n\nfunc Wider(a, b int) bool { return a > b }\n"
 )
 
-// TestValidatingAWorkspaceInstrumentsEveryModuleWhereItStands is the phase's
-// half of workspace support, and it is three claims that a single-module
-// validation cannot make.
-//
-// Every module is instrumented, each at its own root, because a module's files
-// can only import a runtime its own module declares. Every path the phase
-// reports is relative to the *snapshot*, not to a module, because that is what
-// the drift gate compares against and what the compiler names in a diagnostic
-// when the build runs at the workspace root. And the runtimes are reported one
-// per module, because there is no single one to name.
 func TestValidatingAWorkspaceInstrumentsEveryModuleWhereItStands(t *testing.T) {
 	t.Parallel()
 
@@ -97,14 +86,6 @@ func TestValidatingAWorkspaceInstrumentsEveryModuleWhereItStands(t *testing.T) {
 	}
 }
 
-// TestValidatingRefusesModulesThatDoNotMatchTheCatalogue is fail-closed about
-// the pairings that would validate a tree nobody instrumented.
-//
-// A catalogue naming modules and a single module given would rewrite no file at
-// all -- and every mutant would then be accepted, because a tree with no guards
-// in it compiles. The other way round is the same mistake. Both are a caller
-// that lost track of which kind of run it is in, and neither is a state any run
-// produces.
 func TestValidatingRefusesModulesThatDoNotMatchTheCatalogue(t *testing.T) {
 	t.Parallel()
 
@@ -151,7 +132,6 @@ func TestValidatingRefusesModulesThatDoNotMatchTheCatalogue(t *testing.T) {
 	}
 }
 
-// workspaceSnapshot is a two-module workspace, snapshotted.
 func workspaceSnapshot(t *testing.T) *snapshot.Snapshot {
 	t.Helper()
 
@@ -177,7 +157,6 @@ func workspaceSnapshot(t *testing.T) *snapshot.Snapshot {
 	return snap
 }
 
-// workspaceCatalogAndHints is one mutable comparison in each module.
 func workspaceCatalogAndHints(t *testing.T) (*mutation.Catalog, instrument.Hints) {
 	t.Helper()
 
@@ -202,12 +181,8 @@ func workspaceCatalogAndHints(t *testing.T) (*mutation.Catalog, instrument.Hints
 	return catalog, hints
 }
 
-// sourceOf is a fixture body as it lands on disk: with the header every file of
-// a synthesized module carries, because the digests and spans are of the bytes
-// that are actually there.
 func sourceOf(body string) string { return testkit.SPDXHeader + body }
 
-// workspaceSite is one candidate and the Form C guard that rewrites it.
 func workspaceSite(
 	t *testing.T,
 	module, path, source, rule, site, original, replacement string,
@@ -246,7 +221,6 @@ func workspaceSite(
 	}
 }
 
-// readSnapshotFile reads one snapshot-relative file.
 func readSnapshotFile(t *testing.T, root, rel string) string {
 	t.Helper()
 

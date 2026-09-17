@@ -2,22 +2,6 @@
 # SPDX-FileCopyrightText: 2026 go-mutants contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# The composite action is how a project puts go-mutants in its own CI without
-# writing the six steps by hand, and the reason it exists is the last two of
-# them: a mutation run produces a *score*, and a workflow that cannot read that
-# score can only branch on the exit code.
-#
-# Everything it does is something a caller could write themselves. What it adds
-# is that the numbers come out as step outputs, read from the run report rather
-# than scraped off the console, so a job can comment them on a pull request or
-# compare them with a previous run without parsing prose.
-#
-# The run's own policy decides the exit code -- `policy.strict` and
-# `policy.minimum_score` in the caller's `.go-mutants.toml`, or the flags they
-# pass. This action does not add a threshold of its own: a second place to
-# configure "how good is good enough" is a second answer to a question the
-# configuration file already answers, and the two would disagree the first time
-# somebody changed one.
 name: go-mutants
 description: Measure a Go module with go-mutants and report what it found.
 

@@ -12,10 +12,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/glob"
 )
 
-// matchCase is one row of the contract. The whole documented semantics live in
-// matchCases below, and three consumers read that one table: the table test,
-// the independent reference matcher's own test, and the fuzz seed corpus. A
-// rule that is not a row here is a rule nothing defends.
 type matchCase struct {
 	name    string
 	pattern string
@@ -23,10 +19,7 @@ type matchCase struct {
 	want    bool
 }
 
-// matchCases enumerates every rule in the package documentation, including the
-// edge decisions that other globbers resolve differently.
 var matchCases = []matchCase{
-	// Literal elements.
 	{"literal file", "a.go", "a.go", true},
 	{"literal file mismatch", "a.go", "b.go", false},
 	{"literal path", "internal/glob/glob.go", "internal/glob/glob.go", true},
@@ -34,12 +27,10 @@ var matchCases = []matchCase{
 	{"literal is not a prefix match", "internal", "internal/glob", false},
 	{"literal is not a suffix match", "glob", "internal/glob", false},
 
-	// Case sensitivity: no platform folds anything.
 	{"upper pattern does not match lower path", "A.go", "a.go", false},
 	{"lower pattern does not match upper path", "a.go", "A.go", false},
 	{"case sensitive directory", "Internal/glob.go", "internal/glob.go", false},
 
-	// '*' matches a possibly empty run of non-separator bytes.
 	{"star matches a run", "*.go", "a.go", true},
 	{"star matches a long run", "*.go", "deeply_named_file.go", true},
 	{"star matches an empty run", "*.go", ".go", true},
@@ -59,7 +50,6 @@ var matchCases = []matchCase{
 	{"star matches a literal asterisk in a name", "*", "*", true},
 	{"no escape means a star cannot be demanded", "a*b", "a*b", true},
 
-	// '?' matches exactly one non-separator byte.
 	{"question matches one byte", "?.go", "a.go", true},
 	{"question does not match two bytes", "?.go", "ab.go", false},
 	{"question does not match zero bytes", "?.go", ".go", false},
@@ -71,7 +61,6 @@ var matchCases = []matchCase{
 	{"two questions cover a two-byte rune", "??", "é", true},
 	{"literal multi-byte rune matches itself", "é.go", "é.go", true},
 
-	// '**' matches zero or more whole elements.
 	{"double star matches one element", "**", "a", true},
 	{"double star matches many elements", "**", "a/b/c", true},
 	{"double star with suffix matches zero directories", "**/*.go", "a.go", true},
@@ -92,7 +81,6 @@ var matchCases = []matchCase{
 	{"real world test file pattern at zero depth", "internal/**/*_test.go", "internal/glob_test.go", true},
 	{"real world test file pattern rejects a non-test file", "internal/**/*_test.go", "internal/glob/glob.go", false},
 
-	// The documented directory-tree exclusion shape.
 	{"trailing double star matches the directory itself", "vendor/**", "vendor", true},
 	{"trailing double star matches a child", "vendor/**", "vendor/a.go", true},
 	{"trailing double star matches a grandchild", "vendor/**", "vendor/x/a.go", true},
@@ -100,7 +88,6 @@ var matchCases = []matchCase{
 	{"trailing double star does not float", "vendor/**", "x/vendor/a.go", false},
 	{"trailing double star does not match a prefix of the name", "vendor/**", "vend", false},
 
-	// A pattern without "**" matches element for element.
 	{"too few pattern elements", "a/*", "a/b/c", false},
 	{"too many pattern elements", "a/*", "a", false},
 	{"single element pattern against a path", "*", "a/b", false},
@@ -108,7 +95,6 @@ var matchCases = []matchCase{
 	{"literal longer than path", "a", "a/b", false},
 	{"exact element count matches", "a/*/c", "a/b/c", true},
 
-	// "**" is special only as a complete element.
 	{"embedded double star behaves as one star", "a**b", "aXXb", true},
 	{"embedded double star matches an empty run", "a**b", "ab", true},
 	{"embedded double star does not cross a separator", "a**b", "a/b", false},
@@ -118,16 +104,10 @@ var matchCases = []matchCase{
 	{"three stars do not cross a separator", "***", "a/b", false},
 	{"double star element beside an embedded one", "**/a**b", "x/y/aZb", true},
 
-	// Backslash is an ordinary byte, never a separator.
 	{"backslash is literal", `a\b`, `a\b`, true},
 	{"backslash is not a separator", `a\b`, "a/b", false},
 	{"star does not stop at a backslash", "a*b", `a\b`, true},
 
-	// No character class, no brace expansion, no escape sequence. Every one of
-	// those bytes is an ordinary literal, so a pattern borrowed from another
-	// globber's dialect matches the punctuation itself and nothing else. These
-	// rows exist so that adding any of the three features has to argue with a
-	// test instead of quietly changing which mutants a run produces.
 	{"character class is not expanded", "[ab].go", "a.go", false},
 	{"character class matches itself literally", "[ab].go", "[ab].go", true},
 	{"brace expansion does not happen", "{a,b}.go", "a.go", false},
@@ -135,7 +115,6 @@ var matchCases = []matchCase{
 	{"backslash does not escape a star", `a\*b`, "a*b", false},
 	{"backslash leaves the star a wildcard", `a\*b`, `a\Xb`, true},
 
-	// Malformed candidate paths match nothing.
 	{"empty path matches nothing", "**", "", false},
 	{"empty path matches no star either", "*", "", false},
 	{"leading separator in a path matches nothing", "**", "/a", false},
@@ -161,10 +140,6 @@ func TestPatternMatch(t *testing.T) {
 	}
 }
 
-// TestPatternMatchIsStable guards the property the stable mutant IDs depend
-// on: matching is a pure function of the pattern and the path, so a Pattern
-// reused across files never drifts, and two Patterns compiled from the same
-// text always agree.
 func TestPatternMatchIsStable(t *testing.T) {
 	t.Parallel()
 	for _, testCase := range matchCases {
@@ -181,8 +156,6 @@ func TestPatternMatchIsStable(t *testing.T) {
 	}
 }
 
-// compileErrorCases lists every pattern Compile refuses, with the byte it
-// blames. The column is part of the contract because the CLI underlines it.
 var compileErrorCases = []struct {
 	name    string
 	pattern string
@@ -235,9 +208,6 @@ func TestCompileRejects(t *testing.T) {
 	}
 }
 
-// TestCompileAcceptsUnusualButLegalPatterns pins the patterns that look
-// suspicious but are deliberately legal, so a future tightening of Compile has
-// to argue with a test instead of quietly rejecting user input.
 func TestCompileAcceptsUnusualButLegalPatterns(t *testing.T) {
 	t.Parallel()
 	legal := []string{
@@ -266,8 +236,6 @@ func TestCompileAcceptsUnusualButLegalPatterns(t *testing.T) {
 	}
 }
 
-// TestZeroPatternMatchesNothing documents the zero value rather than leaving a
-// caller to discover it, since a Pattern held in a struct field starts there.
 func TestZeroPatternMatchesNothing(t *testing.T) {
 	t.Parallel()
 	var zero glob.Pattern
@@ -299,13 +267,6 @@ func TestMustCompilePanicsOnAnInvalidPattern(t *testing.T) {
 	glob.MustCompile("a/")
 }
 
-// TestMatchStaysLinearOnPathologicalPatterns is the guard the package
-// documentation promises. Both shapes below are the classic exponential
-// blow-ups: nested "**" elements that a recursive matcher re-splits every way,
-// and star-separated literals that a backtracking element matcher retries from
-// every offset. The dynamic program answers both in microseconds, so a
-// regression to backtracking shows up as the watchdog firing rather than as a
-// package-level timeout with no explanation.
 func TestMatchStaysLinearOnPathologicalPatterns(t *testing.T) {
 	t.Parallel()
 
@@ -359,10 +320,6 @@ func TestMatchStaysLinearOnPathologicalPatterns(t *testing.T) {
 			t.Parallel()
 			pattern := glob.MustCompile(testCase.pattern)
 
-			// The match runs on its own goroutine so that a regression to
-			// exponential behavior is reported here, by name, instead of
-			// hanging the whole package until the go test deadline. Reporting
-			// stays on the test goroutine, which is where t.Fatalf is legal.
 			result := make(chan bool, 1)
 			go func() { result <- pattern.Match(testCase.path) }()
 

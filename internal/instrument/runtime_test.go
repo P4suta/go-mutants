@@ -18,17 +18,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// generatedMarker is the convention every Go code generator follows
-// (https://go.dev/s/generatedcode) and the exact pattern internal/discover
-// refuses to mutate on. The generated runtime has to match it: a later run over
-// a tree that somehow kept it must skip it rather than mutate the machinery it
-// is mutating with.
 var generatedMarker = regexp.MustCompile(`(?m)^// Code generated .* DO NOT EDIT\.$`)
 
-// runtimeSample is the source the runtime fixture's catalogue is built from. It
-// is inline rather than a testdata file because the fixture pins mutant IDs,
-// which are hashed from these bytes: keeping them next to the assertion is what
-// makes a fixture diff explainable.
 const runtimeSample = `// SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -42,14 +33,6 @@ func Less(a, b int) bool {
 }
 `
 
-// TestRuntimeGolden pins the generated activation package for a three-mutant
-// catalogue.
-//
-// Everything in it is load-bearing somewhere else: the dense indices are what
-// the guards read, the full IDs are what the runner sets in the environment,
-// and the exit status is what tells the supervisor a stale catalogue was
-// activated rather than a mutant surviving. A fixture is how a change to any of
-// them becomes a diff somebody has to justify.
 func TestRuntimeGolden(t *testing.T) {
 	t.Parallel()
 
@@ -93,12 +76,6 @@ func TestRuntimeGolden(t *testing.T) {
 	}
 }
 
-// TestRuntimeIsGeneratedForAnEmptyCatalogue proves the activation array is
-// never zero-length.
-//
-// An empty catalogue is a real case — a run whose filters selected nothing —
-// and `var M [0]bool` is legal Go that leaves the package's only export
-// unusable. One element keeps the generated source one shape instead of two.
 func TestRuntimeIsGeneratedForAnEmptyCatalogue(t *testing.T) {
 	t.Parallel()
 
@@ -117,12 +94,6 @@ func TestRuntimeIsGeneratedForAnEmptyCatalogue(t *testing.T) {
 	}
 }
 
-// TestRuntimeDirectoryIsBumpedOnCollision keeps the instrumenter out of a
-// directory the snapshot already had.
-//
-// The snapshot is a copy of somebody's repository, and a directory named after
-// this tool in it is theirs until proven otherwise. Bumping is also why the
-// import path is reported back rather than assumed by the caller.
 func TestRuntimeDirectoryIsBumpedOnCollision(t *testing.T) {
 	t.Parallel()
 
@@ -152,10 +123,6 @@ func TestRuntimeDirectoryIsBumpedOnCollision(t *testing.T) {
 	}
 }
 
-// TestRuntimeDirectoryIsVisibleToTheGoTool guards the one thing about the
-// directory name that is not cosmetic: the go tool ignores directories whose
-// name begins with "_" or "." outright, so a runtime hidden in one would never
-// be built and every instrumented package would fail to resolve its import.
 func TestRuntimeDirectoryIsVisibleToTheGoTool(t *testing.T) {
 	t.Parallel()
 
@@ -171,8 +138,6 @@ func TestRuntimeDirectoryIsVisibleToTheGoTool(t *testing.T) {
 	}
 }
 
-// threeAlternatives is the three-rule catalogue the runtime fixture pins: one
-// operator, three distinct replacements, three dense indices.
 func threeAlternatives(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 

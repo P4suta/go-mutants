@@ -45,9 +45,6 @@ the first step of a CI job.
 --json prints the same findings as a go-mutants/doctor v1 document, validated
 against the schema this binary carries before it is printed.`
 
-// The check names. They are constants because they are the interface: the table
-// prints them, the JSON document carries them, and a consumer may branch on
-// them, so renaming one is a change to what go-mutants publishes.
 const (
 	checkToolchain     = "go toolchain"
 	checkModule        = "module"
@@ -58,42 +55,24 @@ const (
 	checkConfiguration = "configuration"
 )
 
-// gitProbeTimeout bounds `git --version`. Like [gocmd.DefaultProbeTimeout], it
-// is generous for a command that prints a constant: anything approaching it
-// means git is not answering rather than that it is busy.
 const gitProbeTimeout = 10 * time.Second
 
-// probePattern is the name the cache-directory check writes its probe file
-// under. The prefix is deliberately recognisable: anything matching it is a
-// leftover from an interrupted `doctor` and is safe to delete.
 const probePattern = "go-mutants-doctor-*.probe"
 
-// A checkStatus is one row's verdict.
 type checkStatus string
 
-// The verdicts. They are the schema's spellings, lowercase, because the
-// document is the published artefact; the table renders "fail" as FAIL and
-// nothing else differs.
 const (
-	// statusOK is a check that passed.
-	statusOK checkStatus = "ok"
-	// statusWarn is a check that failed on something only an opt-in feature
-	// needs. It is reported and never fatal: a machine with no git can still
-	// mutation-test everything except `run --changed`.
+	statusOK   checkStatus = "ok"
 	statusWarn checkStatus = "warn"
-	// statusFail is a check go-mutants cannot work without.
 	statusFail checkStatus = "fail"
 )
 
-// A check is one row of the diagnosis.
 type check struct {
 	Name   string      `json:"name"`
 	Status checkStatus `json:"status"`
 	Detail string      `json:"detail"`
 }
 
-// A doctorDocument is `doctor --json`: the go-mutants/doctor v1 document, in
-// the field order the schema documents.
 type doctorDocument struct {
 	DocumentType  string  `json:"document_type"`
 	SchemaVersion int     `json:"schema_version"`
@@ -101,12 +80,10 @@ type doctorDocument struct {
 	Checks        []check `json:"checks"`
 }
 
-// doctorOptions holds the flag destinations for one `doctor`.
 type doctorOptions struct {
 	json bool
 }
 
-// newDoctorCommand builds `doctor`.
 func newDoctorCommand() *cobra.Command {
 	o := &doctorOptions{}
 	cmd := &cobra.Command{
@@ -120,14 +97,6 @@ func newDoctorCommand() *cobra.Command {
 	return cmd
 }
 
-// execute is `doctor`'s body.
-//
-// The findings are printed and then the failure is returned, which is the shape
-// `cache gc` uses for the same reason: the whole point of the command is the
-// table, and a machine with two problems should be told about both rather than
-// about the fact that it has some. The returned error carries no detail of its
-// own — every row has already said its piece — and exists to make the exit
-// status 2.
 func (o *doctorOptions) execute(cmd *cobra.Command, _ []string) error {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -156,7 +125,6 @@ func (o *doctorOptions) execute(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// render turns the findings into what this invocation prints.
 func (o *doctorOptions) render(checks []check) (string, error) {
 	if !o.json {
 		return renderChecks(checks), nil
@@ -174,24 +142,12 @@ func (o *doctorOptions) render(checks []check) (string, error) {
 	if err := encoder.Encode(document); err != nil {
 		return "", err
 	}
-	// Checked before it is printed, exactly as `report merge` checks the
-	// document it is about to publish. A diagnosis that does not satisfy the
-	// schema go-mutants itself defines would be a poor thing to hand a script
-	// that is deciding whether to trust this machine.
 	if err := schemas.Validate(schemas.DoctorV1, buf.Bytes()); err != nil {
 		return "", err
 	}
 	return buf.String(), nil
 }
 
-// diagnose runs every check, in the order the table prints them.
-//
-// Every check runs, whatever the ones before it found: a machine with no Go
-// toolchain and an unparsable configuration file has two problems, and being
-// told about one of them at a time is how a five-minute fix becomes three CI
-// rounds. The toolchain is located once and its answer is shared with the
-// platform row, because probing `go version` twice would be the only work here
-// worth avoiding.
 func diagnose(ctx context.Context, dir string) []check {
 	toolchain, toolchainErr := gocmd.LocateContext(ctx, gocmd.Options{})
 	return []check{
@@ -205,16 +161,6 @@ func diagnose(ctx context.Context, dir string) []check {
 	}
 }
 
-// withoutCode drops a leading "GOMxxxx: " from one line.
-//
-// The code belongs on the error path, where [RenderError] puts one in front of
-// every line it writes to standard error so that all of them stay greppable. It
-// does not belong in a cell of a table whose first column is already the
-// verdict, and it does not belong in the `detail` of a published document: a
-// consumer of `doctor --json` branches on `name` and `status`, which this
-// package promises are stable, and reads `detail` as the sentence it claims to
-// be. internal/report's reasonOf drops the code from a listing's rows for the
-// same reason.
 func withoutCode(line string) string {
 	if _, rest, coded := splitCode(line); coded {
 		return rest
@@ -222,32 +168,19 @@ func withoutCode(line string) string {
 	return line
 }
 
-// detailOf renders a failure for a table cell: its first line, without the code
-// in front of it. See [withoutCode].
 func detailOf(err error) string { return withoutCode(firstLine(err.Error())) }
 
-// toolchainCheck reports the Go toolchain go-mutants would build and test with.
 func toolchainCheck(toolchain gocmd.Toolchain, err error) check {
 	if err != nil {
 		return check{checkToolchain, statusFail, detailOf(err)}
 	}
 	detail := toolchain.Version.Release + " at " + toolchain.GoBin
 	if toolchain.Version.IsDevel() {
-		// Not a warning: an unreleased toolchain is a perfectly good one to
-		// mutation-test with. It is said out loud because a surprising result
-		// six months from now is easier to attribute when the report says which
-		// build produced it.
 		detail += " (an unreleased build)"
 	}
 	return check{checkToolchain, statusOK, detail}
 }
 
-// moduleCheck reports the module this directory is the root of, or the
-// workspace it is the root of.
-//
-// A `go.work` is a tree go-mutants measures -- as one run over every module it
-// joins, see ADR 0012 -- so a check that only knew about `go.mod` would tell a
-// user standing in a workspace that the tool cannot run where it can.
 func moduleCheck(dir string) check {
 	workspace, err := discover.DetectWorkspace(dir)
 	if err != nil {
@@ -268,20 +201,8 @@ func moduleCheck(dir string) check {
 	return check{checkModule, statusOK, module + " (" + filepath.Join(dir, moduleFileName) + ")"}
 }
 
-// moduleFileName is the file that makes a directory a module root.
 const moduleFileName = "go.mod"
 
-// moduleAt returns the module path declared by the go.mod in dir.
-//
-// There is no search up the directory tree, for the same reason the
-// configuration file is not looked for up one: go-mutants measures the module
-// it was invoked in, and a tool that quietly walked upwards would snapshot,
-// build, and score a tree the user was not standing in — or, for the history
-// commands, delete the records of one.
-//
-// Only the `module` line is read, by golang.org/x/mod, which is the same parser
-// the Go tool uses. Everything else in the file — requirements, replacements,
-// the toolchain line — is the compiler's business and never this one's.
 func moduleAt(dir string) (string, error) {
 	path := filepath.Join(dir, moduleFileName)
 	data, err := os.ReadFile(path)
@@ -309,12 +230,6 @@ func moduleAt(dir string) (string, error) {
 	return module, nil
 }
 
-// gitCheck reports whether git is there, and never fails the command.
-//
-// `run --changed` is the only feature that needs git, so a machine without it
-// can still do everything else go-mutants does. Saying that in the row is the
-// point: "warn" with no explanation would send somebody installing git to fix a
-// run that was never going to ask for it.
 func gitCheck(ctx context.Context) check {
 	const only = "; only `run --changed` needs it"
 	program, err := exec.LookPath("git")
@@ -338,15 +253,6 @@ func gitCheck(ctx context.Context) check {
 	return check{checkGit, statusOK, firstLine(strings.TrimSpace(string(result.Output))) + " at " + program}
 }
 
-// cacheCheck proves go-mutants can write where it keeps run history and stored
-// outcomes.
-//
-// The probe is a temporary file created and removed inside go-mutants' own
-// directory under the operating system's cache root, and nowhere else. That
-// directory is created if it is not there, which is what a first run would do
-// anyway; nothing outside it is touched, because the cache root is shared with
-// every other tool on the machine and a diagnostic has no business writing into
-// somebody else's directory to find out whether it could.
 func cacheCheck() check {
 	base, err := os.UserCacheDir()
 	if err != nil {
@@ -373,25 +279,7 @@ func cacheCheck() check {
 	return check{checkCacheDir, statusOK, "writable: " + dir}
 }
 
-// platformCheck reports the host, and notices a toolchain built for another
-// one.
-//
-// Build constraints decide which files a package even has, so a report is a
-// statement about one platform — and a `go` on PATH that targets a different
-// one would make every such statement about a tree this machine cannot build.
-// It is a warning rather than a failure because the toolchain is the authority
-// on what it can produce, and a cross-compiling setup that works is not
-// go-mutants' business to refuse.
-// memoryCheck says whether a per-mutant memory bound is enforced here.
-//
-// A bound is part of every request and enforced on some platforms, and a
-// developer on one of the others is running with a number that does nothing.
-// The warning is for that case and not for a missing feature: the run is
-// correct either way, and what changes is whether a runaway mutant is stopped
-// or waited on.
 func memoryCheck() check {
-	//exhaustive:total MemoryUnenforced is the warning the default renders, which is what a
-	// platform that enforces nothing is.
 	switch bound := runner.MemoryBound(); bound {
 	case runner.MemoryEnforcedByKernel:
 		return check{checkMemory, statusOK,
@@ -399,11 +287,11 @@ func memoryCheck() check {
 	case runner.MemoryEnforcedBySampler:
 		return check{checkMemory, statusOK,
 			"enforced by sampling the process tree every " + runner.MemorySampleInterval.String()}
-	default:
-		return check{checkMemory, statusWarn,
-			"not enforced on " + runtime.GOOS + ": a bound is accepted and nothing acts on it, " +
-				"so a mutant that runs away is stopped by its timeout rather than by its memory"}
+	case runner.MemoryUnenforced:
 	}
+	return check{checkMemory, statusWarn,
+		"not enforced on " + runtime.GOOS + ": a bound is accepted and nothing acts on it, " +
+			"so a mutant that runs away is stopped by its timeout rather than by its memory"}
 }
 
 func platformCheck(toolchain gocmd.Toolchain, err error) check {
@@ -419,15 +307,6 @@ func platformCheck(toolchain gocmd.Toolchain, err error) check {
 	return check{checkPlatform, statusOK, host}
 }
 
-// configurationCheck reports what `.go-mutants.toml` in this directory says, if
-// anything.
-//
-// An absent file is ok rather than a warning: go-mutants works out of the box
-// and the defaults are a complete, valid configuration. A file that is there
-// and cannot be understood is a failure, and the row carries the position the
-// configuration layer worked out — the whole value of that layer is that it
-// says which line, and a diagnosis that dropped it would send somebody reading
-// the file by eye.
 func configurationCheck(dir string) check {
 	path := filepath.Join(dir, config.FileName)
 	file, err := config.LoadFile(path)
@@ -438,10 +317,6 @@ func configurationCheck(dir string) check {
 		return check{checkConfiguration, statusOK,
 			"no " + config.FileName + " here, so the built-in defaults apply"}
 	}
-	// Validated as a resolved configuration and not only as a file, because the
-	// two catch different things: `report.low` above `report.high` is a pair of
-	// perfectly good values that cannot both be right, and a run started here
-	// would refuse it.
 	resolved := config.Merge(config.Defaults(), file, config.Overlay{})
 	if err = resolved.Validate(); err != nil {
 		return check{checkConfiguration, statusFail, problemLine(err)}
@@ -450,14 +325,6 @@ func configurationCheck(dir string) check {
 		path + ": valid, " + countNoun(len(file.Keys()), "key") + " set"}
 }
 
-// problemLine reduces a configuration failure to one line for a table row.
-//
-// A file with three mistakes renders as three coded lines, and the row keeps
-// the first and counts the rest: the table is a diagnosis of the machine, and
-// the remedy for all three is the same — open the file at the position named
-// and run `go-mutants doctor` again. The code goes and the position stays —
-// see [withoutCode] — because the position is the whole value of what the
-// configuration layer worked out, and the code is what stderr is for.
 func problemLine(err error) string {
 	lines := strings.Split(strings.TrimRight(err.Error(), "\n"), "\n")
 	first := withoutCode(strings.TrimSpace(lines[0]))
@@ -467,13 +334,6 @@ func problemLine(err error) string {
 	return first
 }
 
-// renderChecks lays the findings out as the aligned table.
-//
-// The name column is padded to the widest name, which is safe here and would
-// not be in a listing: these names are a fixed, constant set, so the width is a
-// property of this build rather than of what a particular machine happens to be
-// called. A listing of user data pads nothing, for the reason internal/console
-// gives.
 func renderChecks(checks []check) string {
 	width := 0
 	for _, c := range checks {
@@ -496,9 +356,6 @@ func renderChecks(checks []check) string {
 	return b.String()
 }
 
-// label renders a status for the table. A failure is shouted and the other two
-// are not: it is the one row a reader must not skim past, and it is the one the
-// exit status is about.
 func label(status checkStatus) string {
 	if status == statusFail {
 		return "FAIL"
@@ -506,7 +363,6 @@ func label(status checkStatus) string {
 	return string(status)
 }
 
-// countStatus is how many checks reported one verdict.
 func countStatus(checks []check, status checkStatus) int {
 	n := 0
 	for _, c := range checks {

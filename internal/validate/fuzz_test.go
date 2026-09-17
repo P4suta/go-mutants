@@ -8,31 +8,6 @@ import (
 	"testing"
 )
 
-// FuzzParseDiagnostics is the promise this package makes about the compiler's
-// output.
-//
-// What this parser reads is written by cmd/compile and cmd/go, which go-mutants
-// neither controls nor pins: a toolchain release may change how a diagnostic is
-// worded, indented, or located, and a run under a toolchain manager may be
-// reading output from a version nobody here has seen. What the parser's answer
-// decides is which mutant is blamed for a snapshot that will not build, and
-// therefore which mutants a run goes on to measure — so a reader that panicked
-// on an unfamiliar line would take the run down, and one that invented a
-// coordinate would blame the wrong file.
-//
-// Four properties, and the last two are what a table of real compiler output
-// cannot state:
-//
-//   - it never panics, whatever the build printed;
-//   - every diagnostic it produces carries the line it was read from, because
-//     a rejection quotes it back to the user;
-//   - a coordinate is never negative, since the pattern admits digits only and
-//     a negative line is one no file has;
-//   - a path it reports as inside the snapshot is slash-separated and
-//     relative, which is the coordinate system a catalogue path lives in. A
-//     diagnostic that claimed to be inside and named an absolute path would be
-//     compared against catalogue paths that can never match it, and the mutant
-//     that broke the build would go unblamed.
 func FuzzParseDiagnostics(f *testing.F) {
 	const root = "/tmp/snap"
 
@@ -59,9 +34,6 @@ func FuzzParseDiagnostics(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, output, snapshotRoot string) {
 		diags := parseDiagnostics(output, snapshotRoot)
-		// The same reading the parser does: split on newlines and drop a
-		// trailing carriage return from each line, which is what makes output
-		// written on Windows and read here one text rather than two.
 		var lines []string
 		for _, line := range strings.Split(output, "\n") {
 			lines = append(lines, strings.TrimSuffix(line, "\r"))
@@ -92,8 +64,6 @@ func FuzzParseDiagnostics(f *testing.F) {
 			}
 		}
 
-		// And the consumer of all this: the search asks which file to blame,
-		// and it has to answer with something it was given or with nothing.
 		blamed := blamedPaths(diags)
 		for _, path := range blamed {
 			if path == "" {
@@ -106,7 +76,6 @@ func FuzzParseDiagnostics(f *testing.F) {
 	})
 }
 
-// contains reports whether a line is one of the output's own.
 func contains(lines []string, want string) bool {
 	for _, line := range lines {
 		if line == want {

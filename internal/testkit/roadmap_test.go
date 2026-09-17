@@ -15,44 +15,13 @@ import (
 )
 
 const (
-	// roadmapDoc is the page that says what is work and what is not.
-	roadmapDoc = "docs/roadmap.md"
-	// limitationsDoc is where a boundary goes when it turns out to be a fact
-	// about Go rather than about go-mutants.
-	limitationsDoc = "docs/limitations.md"
-	// runReportSchema declares the reasons a skip may carry.
+	roadmapDoc      = "docs/roadmap.md"
+	limitationsDoc  = "docs/limitations.md"
 	runReportSchema = "schema/run-report-v1.schema.json"
-	// discoverReasons is where the Go constants for those reasons live.
 	discoverReasons = "internal/discover/discover.go"
-	// reservedHeading opens the roadmap's index of reserved reasons.
-	//
-	// The section rather than the page, because the page mentions `struct-tag`
-	// in its own opening paragraph as the example of a boundary that moved --
-	// and a rule satisfied by any mention anywhere is one a passing reference
-	// silently satisfies.
 	reservedHeading = "## Reserved and unemitted"
 )
 
-// TestEveryReservedSkipReasonIsAccountedFor keeps the schema's superset honest.
-//
-// internal/mutation/outcome.go argues for that superset: the run-report
-// enumeration lists reasons no build emits "so that landing them is a code
-// change and not a schema change". The argument is good and the consequence is
-// a set nothing was watching -- a reason could be reserved for years with no
-// page saying whether it is work somebody will do or a thing that cannot be
-// done.
-//
-// The rule is that **the roadmap names every reserved reason**, because it is
-// the index of them, and that a reason which is a boundary rather than work
-// also appears on the limitations page -- where the roadmap's row for it is the
-// one that says so. A name on neither page is unexplained. A name on
-// limitations and not on the roadmap is one a reader looking for it in the
-// index cannot find.
-//
-// This test is also how a reserved name is retired: land it, and the name
-// leaves the reserved set, and the row that described it fails here until it is
-// deleted. A green deletion prompt rather than a page that quietly describes
-// something already done.
 func TestEveryReservedSkipReasonIsAccountedFor(t *testing.T) {
 	t.Parallel()
 
@@ -79,8 +48,6 @@ func TestEveryReservedSkipReasonIsAccountedFor(t *testing.T) {
 				"\ta name reserved and unexplained is one nobody can tell work from impossibility about",
 				runReportSchema, reason, roadmapDoc, limitationsDoc)
 		case onRoadmap:
-			// Named in the index. Whether the row says "work" or "not work" is
-			// prose a reader judges; what is checked is that the row is there.
 		case onLimitations:
 			t.Errorf("%s names %q and %s does not;\n"+
 				"\ta boundary that is a fact about Go still belongs on the roadmap, as the row\n"+
@@ -90,8 +57,6 @@ func TestEveryReservedSkipReasonIsAccountedFor(t *testing.T) {
 	}
 }
 
-// reservedReasons is the skip reasons the run-report schema allows and no
-// package declares, in name order.
 func reservedReasons(t *testing.T, root string) []string {
 	t.Helper()
 
@@ -114,11 +79,6 @@ func reservedReasons(t *testing.T, root string) []string {
 	return reserved
 }
 
-// schemaSkipReasons reads the `reason` enumeration out of the run-report
-// schema.
-//
-// encoding/json rather than a schema library, because this package may import
-// nothing from this module and the shape wanted is one enumeration.
 func schemaSkipReasons(t *testing.T, root string) []string {
 	t.Helper()
 
@@ -143,7 +103,6 @@ func schemaSkipReasons(t *testing.T, root string) []string {
 	return document.Defs.Skip.Properties.Reason.Enum
 }
 
-// declaredSkipReasons is the value of every exported SkipReason constant.
 func declaredSkipReasons(t *testing.T, root string) []string {
 	t.Helper()
 
@@ -156,23 +115,8 @@ func declaredSkipReasons(t *testing.T, root string) []string {
 	return reasons
 }
 
-// roadmapCodeCount is how the first roadmap row states the size of the job.
 var roadmapCodeCount = regexp.MustCompile(`(\d+) constants across (\d+) packages`)
 
-// TestTheRoadmapCountsTheDiagnosticCodesThisModuleDeclares pins a number in
-// prose to the thing it counts.
-//
-// The row said "213 constants across sixteen packages" while the module
-// declared 215 across 15, and nothing had ever compared them. It is the failure
-// this repository's ledger discipline exists for, in the one document whose
-// whole purpose is to be read before somebody decides what to spend a week on:
-// a number in a roadmap is an estimate somebody plans against, and an estimate
-// that drifts silently is worse than none, because it reads like measurement.
-//
-// Both directions are checked by construction -- two numbers compared with two
-// numbers -- so the counterpart other ledgers here carry is the assertion that
-// the pattern matched at all. A row this stopped recognising would otherwise
-// pass by having nothing to compare.
 func TestTheRoadmapCountsTheDiagnosticCodesThisModuleDeclares(t *testing.T) {
 	t.Parallel()
 
@@ -188,9 +132,6 @@ func TestTheRoadmapCountsTheDiagnosticCodesThisModuleDeclares(t *testing.T) {
 			"\tneeds this test rewritten with it", roadmapDoc, roadmapCodeCount)
 	}
 
-	// The same reader errordocs_test.go uses, rather than a second one. Two
-	// counts of the same set would be two things to keep in step, and the row
-	// this test is about drifted precisely because nothing counted it twice.
 	found := declaredCodes(t, root)
 	declaring := map[string]bool{}
 	for _, code := range found {

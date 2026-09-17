@@ -480,16 +480,6 @@ func TestAddAcceptanceRejectsEveryIncompleteFieldAndPropagatesLoadFailure(t *tes
 	}
 }
 
-// TestAddAcceptancePersistsTheOrderItRecordedThemIn pins what an appended
-// acceptance does to the file, which is the other half of keeping the comments.
-//
-// It used to require sorted IDs, and sorting is what made the whole
-// configuration have to be written back out -- which deleted every comment in
-// it. Insertion order is as deterministic as sorted order and moves less: a new
-// acceptance lands at the end and nothing above it changes, where a sort can
-// push an existing entry down the file and make the diff about two things.
-//
-// The order acceptances were recorded in is also the more useful one to read.
 func TestAddAcceptancePersistsTheOrderItRecordedThemIn(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

@@ -70,10 +70,6 @@ func TestUnexpectedFiltersOnlyTheInstrumentationOwnedChanges(t *testing.T) {
 	}
 }
 
-// TestUnexpectedDriftsCarriesBothSidesOfEveryChange is the claim the public
-// API's DriftError rests on: the filtering is the same one [drift.Unexpected]
-// does, and what survives it is the drift itself — kind, path, and the digests
-// on both sides — rather than a sentence about it.
 func TestUnexpectedDriftsCarriesBothSidesOfEveryChange(t *testing.T) {
 	source := t.TempDir()
 	for name, contents := range map[string]string{

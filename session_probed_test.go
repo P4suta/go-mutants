@@ -13,23 +13,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/validate"
 )
 
-// TestProbedImpliesAccepted pins the one reading of [Mutant.Probed] that must
-// never be possible: a mutant the mutant tree rejected claiming a probe.
-//
-// The two validations are independent passes over two trees. A mutant can
-// compile as a probe — the probe rewrite is a different edit at the same site,
-// and often a smaller one — while the mutant tree's compiler refuses the
-// mutation itself, and the probe set is built from the probe tree's own
-// accepted IDs. A rejected mutant is never executed, so "the probe tree speaks
-// for it" is not a fact about anything that will ever run; a consumer reading
-// it as one would carry a probe status for a mutant whose absence from every
-// measurement means only that it was never a candidate.
-//
-// The invariant is stated the way a consumer reads it — Probed implies
-// Accepted — and it is established here rather than in an integration test
-// because reaching the state through a real preparation needs a fixture whose
-// mutation does not compile and whose probe does, which is a property of the Go
-// compiler rather than of this package.
 func TestProbedImpliesAccepted(t *testing.T) {
 	t.Parallel()
 
@@ -86,16 +69,6 @@ func TestProbedImpliesAccepted(t *testing.T) {
 	}
 }
 
-// TestFilterInfectedDropsRejectedMutants is the other half of the same
-// invariant, at the seam where a probe pass becomes a [ProbeResult].
-//
-// Marking a rejected mutant unprobed is not enough on its own. The probe tree is
-// instrumented from the whole catalogue and its runtime knows nothing about the
-// mutant tree's verdict, so the log can name a site whose mutation does not
-// compile. Reported unfiltered, that index would name a mutant whose Probed is
-// false — precisely the pair [ProbeResult.Infected] promises never to hold —
-// and a consumer looking the index up would find a mutant it is told to treat
-// as infected by every test.
 func TestFilterInfectedDropsRejectedMutants(t *testing.T) {
 	t.Parallel()
 
@@ -115,9 +88,6 @@ func TestFilterInfectedDropsRejectedMutants(t *testing.T) {
 			want:     []uint32{0, 2},
 		},
 		{
-			// The empty set is a fact — this target infected nothing — and nil
-			// is the absence of facts. A pass whose every index was rejected
-			// reports the first and never the second.
 			name:     "every index rejected is still a set",
 			infected: []uint32{1},
 			want:     []uint32{},
@@ -140,9 +110,6 @@ func TestFilterInfectedDropsRejectedMutants(t *testing.T) {
 		})
 	}
 
-	// Nil is the one input that must come back unchanged: every no-fact outcome
-	// carries it, and turning it into an empty set would turn "this pass proves
-	// nothing" into "this pass proves nothing was infected".
 	if got := filterInfected(nil, mutants); got != nil {
 		t.Errorf("filterInfected(nil) = %v, want nil", got)
 	}

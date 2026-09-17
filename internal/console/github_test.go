@@ -13,17 +13,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// Both halves of the GitHub output are goldens.
-//
-// They are read by a machine — GitHub parses the workflow commands and renders
-// the Markdown — so the exact spelling of `::warning file=` and the exact shape
-// of a table row are the whole of what makes them work, and a test that
-// asserted "contains the word survived" would pass through every way of getting
-// them wrong.
-
-// githubFixture is a run with one killed mutant, two survivors, one of which
-// the expectations ledger predicted, and a not-run mutant that must not be
-// annotated at all.
 func githubFixture() *report.Report {
 	score := 50.0
 	return &report.Report{
@@ -48,9 +37,6 @@ func githubFixture() *report.Report {
 				Original: "||", Replacement: "&&", Outcome: report.OutcomeSurvived,
 			},
 			{
-				// Declared equivalent, with a reason, and therefore not
-				// annotated: a warning on this line would teach a reviewer to
-				// scroll past all of them.
 				ID: strings.Repeat("33", 32), DisplayID: "33445566",
 				Path: "internal/beta/beta.go", Line: 4, Column: 2,
 				Family: "statement-deletion", Rule: "delete-call-statement",
@@ -71,7 +57,6 @@ func githubFixture() *report.Report {
 	}
 }
 
-// TestGitHubAnnotationsGolden pins the workflow commands, byte for byte.
 func TestGitHubAnnotationsGolden(t *testing.T) {
 	t.Parallel()
 
@@ -81,8 +66,6 @@ func TestGitHubAnnotationsGolden(t *testing.T) {
 	}
 }
 
-// TestGitHubAnnotationsSkipTheThreeThatAreNotUnexpectedSurvivors states, one
-// mutant at a time, which rows produce a marker in a reviewer's diff.
 func TestGitHubAnnotationsSkipTheThreeThatAreNotUnexpectedSurvivors(t *testing.T) {
 	t.Parallel()
 
@@ -98,8 +81,6 @@ func TestGitHubAnnotationsSkipTheThreeThatAreNotUnexpectedSurvivors(t *testing.T
 	}
 }
 
-// TestGitHubAnnotationsEscape covers the characters that would otherwise end a
-// workflow command early or start a property nobody wrote.
 func TestGitHubAnnotationsEscape(t *testing.T) {
 	t.Parallel()
 
@@ -112,9 +93,9 @@ func TestGitHubAnnotationsEscape(t *testing.T) {
 		t.Errorf("the annotation spans more than one line:\n%q", got)
 	}
 	for _, want := range []string{
-		"file=internal/od%2Cd%3Aname/x.go", // the separators of the property list
-		"%25",                              // the per cent sign
-		`\n`,                               // the newline, already quoted by FormatText
+		"file=internal/od%2Cd%3Aname/x.go",
+		"%25",
+		`\n`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the annotation does not contain %q:\n%s", want, got)
@@ -122,13 +103,6 @@ func TestGitHubAnnotationsEscape(t *testing.T) {
 	}
 }
 
-// TestEscapeDataAndProperty states the two escapes on their own.
-//
-// A mutant's text reaches the message through [FormatText], which quotes
-// anything with a newline in it, so the raw-newline case cannot arrive from a
-// run go-mutants performed. It is escaped anyway and tested here: a report is a
-// file, a file can be edited, and one raw newline in the wrong place turns the
-// rest of a command into a line GitHub tries to interpret.
 func TestEscapeDataAndProperty(t *testing.T) {
 	t.Parallel()
 
@@ -137,12 +111,11 @@ func TestEscapeDataAndProperty(t *testing.T) {
 		data     string
 		property string
 	}{
-		"nothing to do": {in: "plain", data: "plain", property: "plain"},
-		"per cent":      {in: "50%", data: "50%25", property: "50%25"},
-		"newline":       {in: "a\nb", data: "a%0Ab", property: "a%0Ab"},
-		"carriage":      {in: "a\r\nb", data: "a%0D%0Ab", property: "a%0D%0Ab"},
-		"separators":    {in: "a,b:c", data: "a,b:c", property: "a%2Cb%3Ac"},
-		// The per cent is escaped first, so its own escape is not escaped again.
+		"nothing to do":          {in: "plain", data: "plain", property: "plain"},
+		"per cent":               {in: "50%", data: "50%25", property: "50%25"},
+		"newline":                {in: "a\nb", data: "a%0Ab", property: "a%0Ab"},
+		"carriage":               {in: "a\r\nb", data: "a%0D%0Ab", property: "a%0D%0Ab"},
+		"separators":             {in: "a,b:c", data: "a,b:c", property: "a%2Cb%3Ac"},
 		"an escape in the input": {in: "%0A", data: "%250A", property: "%250A"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -157,7 +130,6 @@ func TestEscapeDataAndProperty(t *testing.T) {
 	}
 }
 
-// TestGitHubStepSummaryGolden pins the Markdown.
 func TestGitHubStepSummaryGolden(t *testing.T) {
 	t.Parallel()
 
@@ -182,8 +154,6 @@ func TestGitHubStepSummaryGolden(t *testing.T) {
 	}
 }
 
-// TestGitHubStepSummaryWithNoScore proves the summary says so plainly rather
-// than printing a sentinel percentage. Both plausible sentinels are lies.
 func TestGitHubStepSummaryWithNoScore(t *testing.T) {
 	t.Parallel()
 
@@ -198,8 +168,6 @@ func TestGitHubStepSummaryWithNoScore(t *testing.T) {
 	}
 }
 
-// TestGitHubStepSummaryWithNothingToAct on states the good news in a sentence
-// rather than as an empty table.
 func TestGitHubStepSummaryWithNothingToActOn(t *testing.T) {
 	t.Parallel()
 
@@ -216,9 +184,6 @@ func TestGitHubStepSummaryWithNothingToActOn(t *testing.T) {
 	}
 }
 
-// TestGitHubStepSummaryCapsTheTable keeps a job page readable when a run finds
-// hundreds of survivors, and says how many were left out rather than trailing
-// off.
 func TestGitHubStepSummaryCapsTheTable(t *testing.T) {
 	t.Parallel()
 
@@ -244,17 +209,11 @@ func TestGitHubStepSummaryCapsTheTable(t *testing.T) {
 	if !strings.Contains(got, "16 more in the full report.") {
 		t.Errorf("the summary does not say how many were left out:\n%s", got)
 	}
-	// Every one of them still gets an annotation: those are attached to the
-	// lines they belong to, and a reviewer only sees the ones in the file they
-	// are looking at.
 	if lines := strings.Count(GitHubAnnotations(fixture), "\n"); lines != 26 {
 		t.Errorf("%d annotations were emitted, want 26", lines)
 	}
 }
 
-// TestEmitGitHubAppends is the file half, against a real file with something
-// already in it: several steps of one job write to the same summary, and a
-// mutation run that truncated it would be a bad neighbour.
 func TestEmitGitHubAppends(t *testing.T) {
 	t.Parallel()
 
@@ -283,8 +242,6 @@ func TestEmitGitHubAppends(t *testing.T) {
 	}
 }
 
-// TestEmitGitHubCreatesAMissingSummaryFile covers running the same workflow
-// outside a runner, where nothing has made the file.
 func TestEmitGitHubCreatesAMissingSummaryFile(t *testing.T) {
 	t.Parallel()
 
@@ -297,8 +254,6 @@ func TestEmitGitHubCreatesAMissingSummaryFile(t *testing.T) {
 	}
 }
 
-// TestEmitGitHubWithoutASummaryPathStillAnnotates keeps the two halves
-// independent: the markers are the half a reviewer actually sees.
 func TestEmitGitHubWithoutASummaryPathStillAnnotates(t *testing.T) {
 	t.Parallel()
 
@@ -311,8 +266,6 @@ func TestEmitGitHubWithoutASummaryPathStillAnnotates(t *testing.T) {
 	}
 }
 
-// TestEmitGitHubWithNoReport is the caller's slip, which writes nothing rather
-// than dereferencing nothing.
 func TestEmitGitHubWithNoReport(t *testing.T) {
 	t.Parallel()
 

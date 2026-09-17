@@ -12,22 +12,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// The document's vocabulary, asked directly.
-//
-// Every enumerated value in this package renders itself with a `String` method
-// and answers `Valid` about itself, and both are read by somebody: `String` by
-// every message that names a mode or an outcome, `Valid` by the builder before
-// it writes one down. The golden documents pin the spellings that end up in a
-// file and nothing else — a `String` that returned "" would leave the golden
-// byte-identical, because the encoder writes the underlying string rather than
-// calling the method — so the methods themselves are asked here.
-
-// TestEveryStringRendersItsOwnValue walks the seven enumerated types and asks
-// each to render one of its values.
-//
-// The expectation is written out rather than derived from the value, so that a
-// `String` that returned the empty string, a constant, or another member's
-// spelling is a failure rather than a tautology.
 func TestEveryStringRendersItsOwnValue(t *testing.T) {
 	t.Parallel()
 
@@ -53,13 +37,6 @@ func TestEveryStringRendersItsOwnValue(t *testing.T) {
 	}
 }
 
-// TestEveryValidAcceptsItsOwnAndRefusesTheRest asks each `Valid` both
-// questions.
-//
-// One direction alone proves nothing: a `Valid` that always answered true
-// passes every acceptance and a `Valid` that always answered false passes every
-// refusal, and the builder that reads these is the thing standing between a
-// caller's typo and a document that states a value no consumer can read.
 func TestEveryValidAcceptsItsOwnAndRefusesTheRest(t *testing.T) {
 	t.Parallel()
 
@@ -112,9 +89,6 @@ func TestEveryValidAcceptsItsOwnAndRefusesTheRest(t *testing.T) {
 	}
 }
 
-// TestObservedIsTheFourOutcomesOnePassCanSee pins the other predicate over the
-// outcome vocabulary: the two verdicts that are statements about several
-// passes are not things one pass observed.
 func TestObservedIsTheFourOutcomesOnePassCanSee(t *testing.T) {
 	t.Parallel()
 
@@ -132,8 +106,6 @@ func TestObservedIsTheFourOutcomesOnePassCanSee(t *testing.T) {
 	}
 }
 
-// TestOutcomeRoundTripsThroughTheCoreVocabulary asks both translations, in both
-// directions, and refuses a spelling neither knows.
 func TestOutcomeRoundTripsThroughTheCoreVocabulary(t *testing.T) {
 	t.Parallel()
 
@@ -155,14 +127,6 @@ func TestOutcomeRoundTripsThroughTheCoreVocabulary(t *testing.T) {
 	}
 }
 
-// TestOneShardOwnsEachMutant asks [report.Shard.Owns] the only question that
-// does not depend on the assignment function's hash: of the n shards a run is
-// split into, exactly one owns any given id.
-//
-// It is written that way on purpose. Asserting that a particular id belongs to
-// a particular shard would pin the hash rather than the predicate, and would
-// have to be rewritten the day the assignment changes; "exactly one" is what
-// the partition promises and is what a merge relies on.
 func TestOneShardOwnsEachMutant(t *testing.T) {
 	t.Parallel()
 
@@ -185,10 +149,6 @@ func TestOneShardOwnsEachMutant(t *testing.T) {
 	}
 }
 
-// TestStoredRunScoreReportsThePercentageAndItsAbsence covers both answers of
-// the listing's score accessor: a run that measured something reports the
-// percentage the document holds, and a run that measured nothing says so rather
-// than reporting a zero it never computed.
 func TestStoredRunScoreReportsThePercentageAndItsAbsence(t *testing.T) {
 	t.Parallel()
 
@@ -206,15 +166,6 @@ func TestStoredRunScoreReportsThePercentageAndItsAbsence(t *testing.T) {
 	}
 }
 
-// TestMarshalRefusesADocumentJSONCannotHold is the encoder's own failure,
-// reached through the one field of a report that can hold a value JSON has no
-// spelling for.
-//
-// `score_percent` is a `*float64`, and a non-finite float is exactly what
-// encoding/json refuses. It cannot come out of [report.Build] — the score is
-// computed from integer counts — so the report is assembled by hand, which is
-// the only way to ask what [report.Report.Marshal] does when the encoder says
-// no. What it must not do is hand back half a document with no error.
 func TestMarshalRefusesADocumentJSONCannotHold(t *testing.T) {
 	t.Parallel()
 
@@ -234,15 +185,6 @@ func TestMarshalRefusesADocumentJSONCannotHold(t *testing.T) {
 	}
 }
 
-// TestTallyRefusesAnOutcomeItCannotCount is the counting side of the same
-// vocabulary, asked of a document rather than of a value.
-//
-// [report.Report.Tally] is how the exit decision is made from the file rather
-// than beside it, and the file can have been written by another build or edited
-// by hand — `report merge` reads four of them off a CI runner's disk. An
-// outcome this build has no spelling for must stop the count rather than be
-// folded into one of the six, because a mutant counted as not-run leaves the
-// score's denominator and flatters the suite.
 func TestTallyRefusesAnOutcomeItCannotCount(t *testing.T) {
 	t.Parallel()
 

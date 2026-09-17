@@ -217,11 +217,6 @@ func (session *resumeMutationSession) Probe(context.Context, gomutants.ProbeRequ
 	return gomutants.ProbeResult{Outcome: gomutants.ProbeUnavailable}, nil
 }
 
-// Control reports a clean original of a measurable duration.
-//
-// These tests are about what a resumed run re-executes, and a control that
-// reported nothing would make every mutant inconclusive for a reason none of
-// them is about.
 func (session *resumeMutationSession) Control(context.Context, gomutants.ControlRequest) (gomutants.ControlResult, error) {
 	return gomutants.ControlResult{Duration: time.Millisecond}, nil
 }

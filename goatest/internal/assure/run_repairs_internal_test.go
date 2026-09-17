@@ -19,19 +19,8 @@ import (
 )
 
 const (
-	finalInputScanCount = 2
-	// preparedFailureWorkspaceCount is how many workspaces a round closes when
-	// the preparation itself fails, which is the same one it opened.
-	preparedFailureWorkspaceCount = 1
-	// completedRoundWorkspaceCount is how many workspaces one round opens and
-	// closes.
-	//
-	// It was two. A round opened a second workspace over the same root - a
-	// second snapshot, a second discovery pass, a second compile of every test
-	// binary - so that `go vet`, `go build` and the baseline could run while the
-	// first workspace was preparing. go-mutants runs a command beside a
-	// preparation now, waiting only for the instrumentation window, so there is
-	// one.
+	finalInputScanCount             = 2
+	preparedFailureWorkspaceCount   = 1
 	completedRoundWorkspaceCount    = 1
 	completedRoundGraphPersistCount = 1
 	completedRepairRoundCount       = 2

@@ -10,16 +10,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// The conversion from byte offsets to UTF-16 positions is the one piece of
-// arithmetic in the projection that can be wrong without anything noticing:
-// the published schema requires a line and a column to be at least 1 and
-// nothing more, so an off-by-a-multibyte-rune document validates, renders, and
-// highlights the wrong half of a line.
-//
-// So it is pinned as a table over the three cases that differ, plus the one
-// file shape that looks like it should need a special case and must not.
-
-// The single-rune widths every count in this file is built from.
 func TestUTF16UnitsPerRune(t *testing.T) {
 	t.Parallel()
 
@@ -47,13 +37,6 @@ func TestUTF16UnitsPerRune(t *testing.T) {
 	}
 }
 
-// utf16Source mixes every width on one line and then starts a second, so that
-// a conversion that forgot to reset the column at a newline and one that
-// counted bytes are both visible in the same table.
-//
-//	byte  0        1  2   3   4     5  6  7     8   9  10 11
-//	rune  a        ¥      b         🎉             c
-//	utf16 1        2      3         4  5          6
 const utf16Source = "a¥b🎉c\nz\n"
 
 func TestUTF16PositionTable(t *testing.T) {
@@ -88,30 +71,16 @@ func TestUTF16PositionTable(t *testing.T) {
 	}
 }
 
-// TestUTF16PositionCountsBytesNeitherAsRunesNorAsBytes is the assertion the
-// table above exists to make, stated once on its own so that a future reader
-// sees the three numbers side by side.
 func TestUTF16PositionCountsBytesNeitherAsRunesNorAsBytes(t *testing.T) {
 	t.Parallel()
 
 	src := []byte(utf16Source)
-	// The offset just past "a¥b🎉": 1 + 2 + 1 + 4 = 8 bytes, 4 runes, 5 UTF-16
-	// code units — so the column is 6, and a byte count would say 9 and a rune
-	// count 5.
 	got := report.UTF16Position(src, 8)
 	if got.Column != 6 {
 		t.Errorf("column after \"a¥b🎉\" = %d, want 6 (a byte count would say 9, a rune count 5)", got.Column)
 	}
 }
 
-// TestUTF16PositionOnCRLF pins that a carriage return is an ordinary character
-// on the line it terminates and never a line of its own.
-//
-// A viewer that split the same source on '\n' counts it exactly this way, so
-// anything cleverer here would put the report and the page it is rendered in
-// out of step on every file written on Windows — which, in a project whose
-// .gitattributes exists because line endings change mutant identities, is not a
-// hypothetical file.
 func TestUTF16PositionOnCRLF(t *testing.T) {
 	t.Parallel()
 
@@ -137,16 +106,10 @@ func TestUTF16PositionOnCRLF(t *testing.T) {
 	}
 }
 
-// TestUTF16OffsetAtRoundTrips proves the reverse conversion — the one a
-// rejected mutant's (line, byte column) has to make — lands where the forward
-// one started, for every offset in a file with all three widths in it.
 func TestUTF16OffsetAtRoundTrips(t *testing.T) {
 	t.Parallel()
 
 	src := []byte("package p\n\nconst ¥ = \"🎉\"\nvar x = 1\n")
-	// Byte columns are what discovery records, so the round trip is
-	// offset -> (line, byte column) -> offset, and it must be the identity on
-	// every rune boundary.
 	line, column := 1, 1
 	for offset := 0; offset < len(src); offset++ {
 		if got := report.UTF16OffsetAt(src, line, column); got != offset {
@@ -160,17 +123,11 @@ func TestUTF16OffsetAtRoundTrips(t *testing.T) {
 	}
 }
 
-// TestUTF16PositionOnALongFile is the performance property stated as a
-// correctness one: the index is built once and every lookup is a search, so a
-// file with many lines and many mutants stays linear rather than quadratic. The
-// assertion is on the answers, since a wrong answer is the way an "optimised"
-// lookup usually breaks.
 func TestUTF16PositionOnALongFile(t *testing.T) {
 	t.Parallel()
 
 	const lines = 5000
 	src := []byte(strings.Repeat("x🎉\n", lines))
-	// Each line is 1 + 4 + 1 = 6 bytes and 4 UTF-16 code units of text.
 	for _, n := range []int{0, 1, 17, 2499, lines - 1} {
 		offset := n * 6
 		got := report.UTF16Position(src, offset)
@@ -183,46 +140,26 @@ func TestUTF16PositionOnALongFile(t *testing.T) {
 	}
 }
 
-// TestUTF16OffsetAtClampsALineTheFileDoesNotHave is the other half of the
-// clamping rule, and it is about a crash rather than a coordinate.
-//
-// A rejected mutant carries the (line, column) discovery printed, and the file
-// it points into can have been edited or truncated since. The index is a slice
-// of line starts, so a line number one past the end is an index one past the
-// end — and the whole reason this is clamped rather than refused is that a
-// panic here would lose a run's results at the very last step, to produce a
-// coordinate that is merely imprecise.
 func TestUTF16OffsetAtClampsALineTheFileDoesNotHave(t *testing.T) {
 	t.Parallel()
 
 	src := []byte("package p\nvar x = 1\n")
-	// Three line starts: 0, 10, 20. The last line is the empty one after the
-	// final newline, so every line past the third clamps onto its start.
 	lastLineStart := len(src)
 	for _, line := range []int{3, 4, 99, 1 << 20} {
 		if got := report.UTF16OffsetAt(src, line, 1); got != lastLineStart {
 			t.Errorf("UTF16OffsetAt(line %d) = %d, want %d — the last line's start", line, got, lastLineStart)
 		}
 	}
-	// And the mirror image, which is what a zero or negative line number is.
 	for _, line := range []int{0, -1, -1 << 20} {
 		if got := report.UTF16OffsetAt(src, line, 1); got != 0 {
 			t.Errorf("UTF16OffsetAt(line %d) = %d, want 0 — the first line's start", line, got)
 		}
 	}
-	// A column past the end of the file clamps onto the end of it.
 	if got := report.UTF16OffsetAt(src, 1, 1<<20); got != len(src) {
 		t.Errorf("UTF16OffsetAt(column past the end) = %d, want %d", got, len(src))
 	}
 }
 
-// TestUTF16CountsTheLastBasicMultilingualPlaneRune pins the boundary the
-// surrogate rule turns on.
-//
-// U+FFFF is the highest rune that is one UTF-16 code unit, and U+10000 is the
-// lowest that is two. A rule written with the comparison one off would place
-// every mutant after a U+FFFF one column too far right — and U+FFFF is not a
-// character anybody types, which is exactly why nothing else would catch it.
 func TestUTF16CountsTheLastBasicMultilingualPlaneRune(t *testing.T) {
 	t.Parallel()
 

@@ -4,8 +4,6 @@
 package interval_test
 
 import (
-	// The standard cmp is aliased because go-cmp claims the plain name in
-	// every test file of this package.
 	stdcmp "cmp"
 	"slices"
 	"testing"
@@ -17,13 +15,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// The generators stay inside a small coordinate space on purpose: with starts
-// in [0,40] and lengths in [0,20], a dozen spans reliably produce every
-// relation that matters — identical spans, deep nesting, shared boundaries,
-// partial overlap and the empty spans Build refuses — instead of a scattering
-// of disjoint ranges that would exercise one rule. The bounds also keep
-// Start+Len far below the uint32 ceiling, so no case is an overflow in
-// disguise.
 func spanGen() *rapid.Generator[mutation.Span] {
 	return rapid.Custom(func(t *rapid.T) mutation.Span {
 		start := rapid.Uint32Range(0, 40).Draw(t, "start")
@@ -32,8 +23,6 @@ func spanGen() *rapid.Generator[mutation.Span] {
 	})
 }
 
-// itemsGen numbers the payloads by insertion index, which is what lets the
-// invariants below tell every item apart even when spans coincide.
 func itemsGen() *rapid.Generator[[]interval.Item[int]] {
 	return rapid.Custom(func(t *rapid.T) []interval.Item[int] {
 		spans := rapid.SliceOfN(spanGen(), 0, 12).Draw(t, "spans")
@@ -45,8 +34,6 @@ func itemsGen() *rapid.Generator[[]interval.Item[int]] {
 	})
 }
 
-// TestForestInvariants asserts the properties the instrumenter depends on for
-// any set of spans at all, rather than the handful the tables enumerate.
 func TestForestInvariants(t *testing.T) {
 	t.Parallel()
 
@@ -64,11 +51,6 @@ func TestForestInvariants(t *testing.T) {
 	})
 }
 
-// TestBuildIsOrderIndependent is the determinism property: mutant identities
-// are hashed from these spans, so the same candidates discovered in a different
-// order must produce the same forest. The one documented exception is the order
-// of a node's alternatives (and, for identical spans, of their conflicts),
-// which is canonicalised away by payload before comparing.
 func TestBuildIsOrderIndependent(t *testing.T) {
 	t.Parallel()
 
@@ -88,8 +70,6 @@ func TestBuildIsOrderIndependent(t *testing.T) {
 	})
 }
 
-// flatten walks the forest through the exported fields alone, so that the
-// traversal methods can be checked against it instead of against themselves.
 func flatten(forest interval.Forest[int]) (nodes []*interval.Node[int], parents map[*interval.Node[int]]*interval.Node[int]) {
 	parents = make(map[*interval.Node[int]]*interval.Node[int])
 
@@ -106,9 +86,6 @@ func flatten(forest interval.Forest[int]) (nodes []*interval.Node[int], parents 
 	return nodes, parents
 }
 
-// checkAccounting is the promise that nothing is lost: every item shows up
-// exactly once, either as an alternative on the node for its own span or as a
-// conflict carrying the item unchanged.
 func checkAccounting(rt *rapid.T, items []interval.Item[int], nodes []*interval.Node[int], conflicts []interval.Conflict[int]) {
 	rt.Helper()
 
@@ -150,10 +127,6 @@ func checkAccounting(rt *rapid.T, items []interval.Item[int], nodes []*interval.
 	}
 }
 
-// checkContainment covers the three relations that survive into the forest:
-// children are contained by their parent, siblings are disjoint, and — the
-// "smallest enclosing span" rule — a node that contains another is always its
-// ancestor, never a cousin.
 func checkContainment(rt *rapid.T, forest interval.Forest[int], nodes []*interval.Node[int], parents map[*interval.Node[int]]*interval.Node[int]) {
 	rt.Helper()
 
@@ -211,8 +184,6 @@ func checkSiblings(rt *rapid.T, siblings []*interval.Node[int]) {
 	}
 }
 
-// checkConflicts pins the fourth relation: an evicted item either covers no
-// bytes or genuinely straddles the boundary of a site that is in the forest.
 func checkConflicts(rt *rapid.T, nodes []*interval.Node[int], conflicts []interval.Conflict[int]) {
 	rt.Helper()
 
@@ -238,9 +209,6 @@ func checkConflicts(rt *rapid.T, nodes []*interval.Node[int], conflicts []interv
 	}
 }
 
-// checkInnerFirst asserts the guarantee the splicer rests on: a site is handed
-// over only after everything nested inside it, and sites at one level arrive
-// left to right.
 func checkInnerFirst(rt *rapid.T, forest interval.Forest[int], nodes []*interval.Node[int]) {
 	rt.Helper()
 
@@ -259,7 +227,6 @@ func checkInnerFirst(rt *rapid.T, forest interval.Forest[int], nodes []*interval
 	}
 }
 
-// checkWalk asserts the mirror image, which is what a nesting report wants.
 func checkWalk(rt *rapid.T, forest interval.Forest[int], nodes []*interval.Node[int], parents map[*interval.Node[int]]*interval.Node[int]) {
 	rt.Helper()
 
@@ -276,8 +243,6 @@ func checkWalk(rt *rapid.T, forest interval.Forest[int], nodes []*interval.Node[
 	}
 }
 
-// visitOrder runs a traversal and records when each node was reached, failing
-// if the traversal skips a node or reaches one twice.
 func visitOrder(rt *rapid.T, traverse func(func(*interval.Node[int])), nodes []*interval.Node[int]) map[*interval.Node[int]]int {
 	rt.Helper()
 
@@ -304,8 +269,6 @@ func checkLeftToRight(rt *rapid.T, traversal string, order map[*interval.Node[in
 	}
 }
 
-// canonicalNode is the forest reduced to what may not vary with insertion
-// order: the shape, the spans, and the set — not the sequence — of payloads.
 type canonicalNode struct {
 	Span     mutation.Span
 	Payloads []int

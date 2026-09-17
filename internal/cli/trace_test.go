@@ -20,14 +20,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// resolvedTempDir is a temporary directory with every symbolic link on the way
-// to it already followed.
-//
-// macOS puts a test's temporary directory under /var, which is a link to
-// /private/var, so a path built from t.TempDir() and the same path read back
-// through [filepath.EvalSymlinks] are two different strings for one directory.
-// Every test here compares one against the other, and the ones about symbolic
-// links have to be about the link they created rather than about that one.
 func resolvedTempDir(t *testing.T) string {
 	t.Helper()
 	resolved, err := filepath.EvalSymlinks(t.TempDir())
@@ -37,10 +29,6 @@ func resolvedTempDir(t *testing.T) string {
 	return resolved
 }
 
-// recordInto drives one whole recording through the sink a run would be given:
-// a recorder over it, the notes the CLI decided before the run — which is what
-// the engine does with them — one event, and the run-end that closes the
-// account.
 func recordInto(t *testing.T, recording *traceRecording, runID string) {
 	t.Helper()
 	recorder := trace.New(recording.sink, time.Now, trace.StartRecord{
@@ -57,13 +45,6 @@ func recordInto(t *testing.T, recording *traceRecording, runID string) {
 	recorder.RunEnd("ok", 0, nil)
 }
 
-// TestTraceDirectoryDefaultsToTheReportDirectory pins where a recording lands
-// when nobody names a directory.
-//
-// It is under `report.directory` and not beside it, because that is the one
-// directory in a workspace the snapshot already excludes: a stream written
-// anywhere else in the tree grows while the run reads the tree, and the run
-// would report its own recording as drift.
 func TestTraceDirectoryDefaultsToTheReportDirectory(t *testing.T) {
 	root := resolvedTempDir(t)
 
@@ -87,8 +68,6 @@ func TestTraceDirectoryDefaultsToTheReportDirectory(t *testing.T) {
 		})
 	}
 
-	// And the run directory underneath it is the run's own id, so that the
-	// recording and the report the run filed can be paired afterwards.
 	runID := "20260907T120000Z-a1b2"
 	recording, err := openTrace(traceRequest{
 		workspace:       root,
@@ -109,14 +88,6 @@ func TestTraceDirectoryDefaultsToTheReportDirectory(t *testing.T) {
 	}
 }
 
-// TestTraceDirectoryInsideTheWorkspaceOutsideTheReportDirectoryIsRefused is the
-// rule that keeps a diagnostic from costing a run its evidence.
-//
-// internal/snapshot digests the workspace and excludes `report.directory` and
-// nothing else inside it. A recording grows while the run is measuring, so a
-// stream written anywhere else in the tree is a file that changed during the
-// run — and the run would fail with drift it caused itself. Refusing the
-// directory is what keeps the trace from failing the run.
 func TestTraceDirectoryInsideTheWorkspaceOutsideTheReportDirectoryIsRefused(t *testing.T) {
 	root := resolvedTempDir(t)
 	elsewhere := resolvedTempDir(t)
@@ -185,12 +156,6 @@ func TestTraceDirectoryInsideTheWorkspaceOutsideTheReportDirectoryIsRefused(t *t
 	}
 }
 
-// TestTraceDirectoryRefusalIsSymlinkAware keeps the refusal a statement about
-// where the directory lands rather than about how it was spelled.
-//
-// A name outside the workspace that resolves into it would put the stream in
-// the tree the snapshot digests, which is exactly what the refusal exists to
-// prevent — and a link is the one spelling that hides it.
 func TestTraceDirectoryRefusalIsSymlinkAware(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symbolic links need a privilege this test cannot assume on Windows")
@@ -207,15 +172,10 @@ func TestTraceDirectoryRefusalIsSymlinkAware(t *testing.T) {
 		t.Fatalf("linking %s to %s: %v", alias, inside, err)
 	}
 
-	// The link is outside the workspace by name and inside it by resolution:
-	// only the part of the path that already exists can be resolved, and that
-	// is the part that decides where the directory the sink creates will land.
 	if got, err := traceRoot(root, config.DefaultReportDirectory, filepath.Join(alias, "recordings")); err == nil {
 		t.Errorf("traceRoot through a link into the workspace = %q, want a refusal", got)
 	}
 
-	// And the other direction: a name under the report directory that resolves
-	// out of the workspace is somebody's deliberate arrangement, not a mistake.
 	reportDirectory := filepath.Join(root, "reports", "mutation")
 	if err := os.MkdirAll(reportDirectory, 0o755); err != nil {
 		t.Fatalf("creating the report directory: %v", err)
@@ -229,21 +189,6 @@ func TestTraceDirectoryRefusalIsSymlinkAware(t *testing.T) {
 	}
 }
 
-// TestARefusedTraceFallsBackToTheRing is the promise that a trace never costs a
-// run.
-//
-// Three things are refused — a directory inside the workspace, one that cannot
-// be created, and a run directory another recording already owns — and each
-// leaves the same three things behind: a run that records into memory as every
-// untraced run does, a note saying why there is no file, and a warning the user
-// can read.
-//
-// The note travels to the engine rather than into the sink here, which is what
-// puts it immediately after the run-start when the run records it. The CLI never
-// writes an event of its own into a recording: sequence numbers, timestamps and
-// the position of the last line all belong to the recorder, and a caller
-// splicing an event into a stream it does not number is a caller that can break
-// every one of them. [recordInto] does with the notes what the engine does.
 func TestARefusedTraceFallsBackToTheRing(t *testing.T) {
 	root := resolvedTempDir(t)
 	occupied := filepath.Join(root, "reports", "mutation", "taken")
@@ -259,8 +204,6 @@ func TestARefusedTraceFallsBackToTheRing(t *testing.T) {
 		"cannot be created":     occupied,
 		"a run directory taken": filepath.Join(root, "reports", "mutation", "trace"),
 	}
-	// The third case needs the run directory to exist already, which is what a
-	// second recording of one run id would collide with.
 	runID := "20260907T120000Z-a1b2"
 	if err := os.MkdirAll(filepath.Join(cases["a run directory taken"], runID), 0o755); err != nil {
 		t.Fatalf("occupying the run directory: %v", err)
@@ -314,9 +257,6 @@ func TestARefusedTraceFallsBackToTheRing(t *testing.T) {
 			if !noted {
 				t.Errorf("the ring holds no %s note:\n%s", trace.NoteTraceUnavailable, describeEvents(events))
 			}
-			// The account still reads as one recording: the note goes in ahead
-			// of the run-end rather than after it, because a reader who found
-			// the last line has read the whole run.
 			if last := events[len(events)-1]; last.Type != trace.TypeRunEnd {
 				t.Errorf("the recording ends with a %s, want the run-end last:\n%s", last.Type, describeEvents(events))
 			}
@@ -325,20 +265,6 @@ func TestARefusedTraceFallsBackToTheRing(t *testing.T) {
 	}
 }
 
-// TestTracePruningKeepsTheNewestRunsAndNeverTouchesForeignNames is the
-// collector half of "every byte a run writes has an owner and a collector".
-//
-// Collection is what keeps a diagnostic directory from growing without limit,
-// and the rule that makes it safe is that it removes only what it can prove is
-// a finished go-mutants recording: a directory named by [engine.RunIDPattern]
-// holding a stream that ends with its run-end. A directory somebody else put
-// there, a file, a run-id-shaped directory with no stream, and a recording no
-// run finished are all left exactly as they were found.
-//
-// The recordings are real ones, written through a recorder into a [trace.DirSink]
-// rather than faked with a file of the right name. What makes a recording
-// collectable is now a property of its last line, and a fixture that only looked
-// like one would have made this test agree with any implementation at all.
 func TestTracePruningKeepsTheNewestRunsAndNeverTouchesForeignNames(t *testing.T) {
 	root := filepath.Join(resolvedTempDir(t), "trace")
 
@@ -348,24 +274,15 @@ func TestTracePruningKeepsTheNewestRunsAndNeverTouchesForeignNames(t *testing.T)
 		recordings = append(recordings, id)
 		record(t, root, id, false, nil)
 	}
-	// Everything that is not a recording, and must survive being beside twelve
-	// of them.
 	foreign := []string{"notes", "20260907T120000Z-zzzz"}
 	for _, name := range foreign {
 		if err := os.MkdirAll(filepath.Join(root, name, "keep"), 0o755); err != nil {
 			t.Fatalf("creating %s: %v", name, err)
 		}
 	}
-	// A run-id-shaped directory with no stream at all is not a recording: it is
-	// a run that is about to open one, and this collector has nothing to say
-	// about it.
 	if err := os.MkdirAll(filepath.Join(root, "20260908T120000Z-c3d4"), 0o755); err != nil {
 		t.Fatalf("creating the streamless directory: %v", err)
 	}
-	// And a recording whose stream stops without a run-end: a run in progress,
-	// or one that died. It is the oldest name in the root, so it would be the
-	// first thing collected if the rule were age alone — and it is the recording
-	// somebody most wants to keep.
 	unfinished := "20260801T120000Z-dead"
 	recordUnfinished(t, root, unfinished)
 	if err := os.WriteFile(filepath.Join(root, "README"), []byte("mine"), 0o600); err != nil {
@@ -399,21 +316,6 @@ func TestTracePruningKeepsTheNewestRunsAndNeverTouchesForeignNames(t *testing.T)
 	}
 }
 
-// TestPruningRemovesThePlanItWasGivenAndNotWhatItFindsLater keeps one sweep to
-// one look at the directory.
-//
-// A collector that decided what to remove and then decided again as it removed
-// would be acting on a directory it had not measured. A run finishing between
-// the two looks is enough: its recording is protected by the first decision and
-// collectable by the second, so it would be deleted having never been counted —
-// `trace clean` would report the bytes of everything else and, with nothing else
-// to remove, "removed 1 recording (0 B)". A recording appearing between them
-// moves which ones the newest N are, so a `--keep` could take one the first
-// decision had kept.
-//
-// So planning is a decision and pruning is an action, and the action takes the
-// plan. The race is then not one that is unlikely to happen; it is one that
-// cannot be expressed.
 func TestPruningRemovesThePlanItWasGivenAndNotWhatItFindsLater(t *testing.T) {
 	root := filepath.Join(resolvedTempDir(t), "trace")
 	finished := "20260901T120000Z-0001"
@@ -421,8 +323,6 @@ func TestPruningRemovesThePlanItWasGivenAndNotWhatItFindsLater(t *testing.T) {
 	record(t, root, finished, false, nil)
 	recordUnfinished(t, root, running)
 
-	// The decision: everything collectable goes, which is the finished
-	// recording and not the one still being written.
 	plan, err := planSweep(traceRootAt(root), retention{keep: 0})
 	if err != nil {
 		t.Fatalf("planSweep: %v", err)
@@ -431,9 +331,6 @@ func TestPruningRemovesThePlanItWasGivenAndNotWhatItFindsLater(t *testing.T) {
 		t.Fatalf("the plan collects %q, want only the finished recording %q", plan.stale, finished)
 	}
 
-	// And then the run that was in progress finishes, which is exactly what a
-	// concurrent go-mutants does between one command's two looks at a
-	// directory.
 	finishTheRecording(t, root, running)
 
 	removed, err := prune(traceRootAt(root), plan)
@@ -449,8 +346,6 @@ func TestPruningRemovesThePlanItWasGivenAndNotWhatItFindsLater(t *testing.T) {
 	}
 }
 
-// finishTheRecording appends the run-end a recording still being written has not
-// reached yet, which is what makes it collectable.
 func finishTheRecording(t *testing.T, root, runID string) {
 	t.Helper()
 	stream := filepath.Join(root, runID, trace.FileName)
@@ -466,14 +361,6 @@ func finishTheRecording(t *testing.T, root, runID string) {
 	}
 }
 
-// TestTraceFlagRequiresAnEqualsSign reports the one mistake a correct-looking
-// command line produces, and says how to write it instead.
-//
-// `--trace` takes an optional value, which pflag can only express as
-// `--trace=DIR`: written with a space, the directory becomes a positional
-// argument and the run would record into the default directory instead of the
-// one the user named. It is the mistake `--changed` already makes possible, so
-// it gets the same answer.
 func TestTraceFlagRequiresAnEqualsSign(t *testing.T) {
 	t.Chdir(t.TempDir())
 	code, _, stderr := execute(t, "run", "--trace", "recordings")
@@ -488,16 +375,6 @@ func TestTraceFlagRequiresAnEqualsSign(t *testing.T) {
 	}
 }
 
-// TestAnEmptyTraceDirectoryIsRefused is the one spelling of the flag that can
-// only be a mistake.
-//
-// `--trace=` is a typed flag with nothing after the equals sign, which in a
-// script is almost always a shell variable that expanded to nothing. Reading it
-// as a bare `--trace` would record somewhere the author did not name, and
-// reading it as the workspace root would be refused for a reason that has
-// nothing to do with the mistake they made. An empty GO_MUTANTS_TRACE is the
-// opposite case and stays "off": that is how a job switches an inherited
-// request back off, and it never becomes a flag at all.
 func TestAnEmptyTraceDirectoryIsRefused(t *testing.T) {
 	t.Chdir(t.TempDir())
 	for _, value := range []string{"--trace=", "--trace=   "} {
@@ -514,20 +391,11 @@ func TestAnEmptyTraceDirectoryIsRefused(t *testing.T) {
 			}
 		})
 	}
-	// And the environment's empty value is not this: it asks for nothing at all
-	// and never reaches the command line.
 	if flag, requested := traceFlag(""); requested {
 		t.Errorf("GO_MUTANTS_TRACE= asked for %q, want no flag", flag)
 	}
 }
 
-// TestCollectionRunsWhenTheRecordingIsOpened pins when the collector runs, which
-// is what makes it safe.
-//
-// Pruning before this run's own directory exists means the directory cannot be a
-// candidate for its own collector — the rule needs no exception carved out for
-// the recording being written — and the note it produces belongs to the run that
-// did the collecting, at the moment it did it.
 func TestCollectionRunsWhenTheRecordingIsOpened(t *testing.T) {
 	workspace := resolvedTempDir(t)
 	root := filepath.Join(workspace, filepath.FromSlash(config.DefaultReportDirectory), traceDirectoryName)
@@ -553,8 +421,6 @@ func TestCollectionRunsWhenTheRecordingIsOpened(t *testing.T) {
 	if !strings.Contains(recording.notes[0].Detail, "2 recordings") {
 		t.Errorf("the note says %q, want what the collection removed", recording.notes[0].Detail)
 	}
-	// The newest ten of the old ones, and this run's own, which was created
-	// after the collector had already decided.
 	left := entriesOf(t, root)
 	if len(left) != trace.RetainRuns+1 {
 		t.Errorf("the trace root holds %q, want the newest %d and this run's own", left, trace.RetainRuns)
@@ -563,9 +429,6 @@ func TestCollectionRunsWhenTheRecordingIsOpened(t *testing.T) {
 		t.Errorf("the run collected its own recording: %q", left)
 	}
 
-	// A root with nothing to collect says nothing. A note in every recording
-	// reporting that nothing happened is noise where a reader is looking for
-	// signal.
 	quiet, err := openTrace(traceRequest{
 		workspace:       workspace,
 		reportDirectory: config.DefaultReportDirectory,
@@ -581,8 +444,6 @@ func TestCollectionRunsWhenTheRecordingIsOpened(t *testing.T) {
 	}
 }
 
-// recordUnfinished writes the recording a killed run leaves: a stream that opens
-// and stops, with no run-end on the end of it.
 func recordUnfinished(t *testing.T, root, runID string) string {
 	t.Helper()
 	sink, err := trace.NewDirSink(root, runID, trace.Filesystem{})
@@ -603,7 +464,6 @@ func recordUnfinished(t *testing.T, root, runID string) string {
 	return sink.Directory()
 }
 
-// entriesOf is the names in a directory.
 func entriesOf(t *testing.T, directory string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(directory)
@@ -617,7 +477,6 @@ func entriesOf(t *testing.T, directory string) []string {
 	return names
 }
 
-// describeEvents renders a recording for a failure message.
 func describeEvents(events []trace.Event) string {
 	var b strings.Builder
 	for _, event := range events {
@@ -632,10 +491,6 @@ func describeEvents(events []trace.Event) string {
 	return b.String()
 }
 
-// requireReadableRecording writes the events out as a stream and reads them
-// back through the published reader, which is the check a note the CLI added
-// has to pass: a recording is a contract, and an event inserted into one has to
-// keep it.
 func requireReadableRecording(t *testing.T, events []trace.Event) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), trace.FileName)
@@ -656,20 +511,6 @@ func requireReadableRecording(t *testing.T, events []trace.Event) {
 	}
 }
 
-// TestRunHelpMentionsTrace keeps the third diagnostic option discoverable where
-// the other two already are.
-//
-// `--keep-temp` and `--no-diagnostics` are pinned by
-// TestRunHelpMentionsKeepTempAndDiagnostics, `-v`/`-vv` by
-// TestRunHelpMentionsVerbose, and `explain` by TestExplainIsInTheRootHelp. The
-// flag this test is about was the one with no pin, and it is the one a reader
-// reaches for first: everything the other three show is a view of the account
-// `--trace` writes down.
-//
-// The variable is named for the same reason [keepTempEnvironmentVariable] is
-// named in the help beside it. The invocation that most needs a recording — a
-// CI step whose command line is generated by something else — is the one nobody
-// can add a flag to.
 func TestRunHelpMentionsTrace(t *testing.T) {
 	code, stdout, stderr := execute(t, "run", "--help")
 	if code != int(mutation.ExitOK) {

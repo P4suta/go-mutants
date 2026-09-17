@@ -50,15 +50,8 @@ type doctorProcessTree interface {
 	Close() error
 }
 
-// startDoctorProcess starts one child and returns its process tree.
-//
-// A nil value starts a real one. It travels on Service beside the other
-// replaceable behaviours rather than living in package scope, because a
-// package-level variable is shared by every test in the package whether or not
-// it touches this.
 type startDoctorProcess func(command *exec.Cmd) (doctorProcessTree, error)
 
-// resolved fills in the real process tree for a nil starter.
 func (start startDoctorProcess) resolved() startDoctorProcess {
 	if start == nil {
 		return func(command *exec.Cmd) (doctorProcessTree, error) {
@@ -146,10 +139,6 @@ func (service Service) doctor(ctx context.Context, root string) (report.Report, 
 	result.Evidence = append(result.Evidence, report.Evidence{Kind: "doctor", ID: "race-detector", Status: "ready", Detail: values[doctorGOOSField] + "/" + values[doctorGOARCHField]})
 	if git, err := doctorCommand(ctx, service.doctorProcess, root, environment, doctorQuickCommandTimeout, "git", "rev-parse", "--is-inside-work-tree"); err != nil || strings.TrimSpace(git) != "true" {
 		result.Evidence = append(result.Evidence, report.Evidence{Kind: "doctor", ID: "git", Status: "unavailable", Detail: doctorErrorDetail(err)})
-		// The same code a run uses for the same fact. This said
-		// "git-unavailable" and a run said "git-metadata-unavailable", which
-		// meant a reader who had grepped one could not find the other, for a
-		// condition where the two reports are about the same missing tool.
 		result.Limitations = append(result.Limitations, report.Limitation{
 			Code: report.LimitationGitMetadataUnavailable, Summary: "changeset scope and Git identity cannot be resolved",
 		})

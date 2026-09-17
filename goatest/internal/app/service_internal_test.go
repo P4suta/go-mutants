@@ -49,26 +49,10 @@ func TestFinalizeReportMarksUnreadableConfigurationMetadata(t *testing.T) {
 	}
 }
 
-// absentGit is a repository that is not one, for a test that is about
-// something else.
-//
-// Every test here used to start a real git for this, which always failed
-// because a temporary directory is not a repository, and always settled into
-// the same limitation. The child changed no answer and cost the test a
-// dependency on a tool it needed nothing from.
 func absentGit(context.Context, string, ...string) ([]byte, error) {
 	return nil, errors.New("not a git repository")
 }
 
-// TestGitMetadataComesFromTheServiceGitHook proves the seam is load-bearing:
-// the report's repository identity is whatever this hook says, and no child
-// process is started to obtain it.
-//
-// Before the hook existed there was no way to write this test. Every operation
-// reached a package-level function that ran the real git, so a test could
-// observe the unavailable branch and nothing else - the branch where git
-// answers was reachable only by building a repository first, which is why the
-// only tests that covered it were the end-to-end ones that take minutes.
 func TestGitMetadataComesFromTheServiceGitHook(t *testing.T) {
 	t.Parallel()
 	const commit = "0123456789abcdef0123456789abcdef01234567"
@@ -106,8 +90,6 @@ func TestGitMetadataComesFromTheServiceGitHook(t *testing.T) {
 	}
 }
 
-// TestGitMetadataIsUnavailableWhenTheHookRefuses covers the other side, which
-// is the branch every test in this package used to take by accident.
 func TestGitMetadataIsUnavailableWhenTheHookRefuses(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)

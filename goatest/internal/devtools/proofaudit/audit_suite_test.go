@@ -79,13 +79,12 @@ func TestAuditHoldsSuiteReachToCoveredAndUncoveredPackageSuiteKills(t *testing.T
 			if row.audited != 1 {
 				t.Fatalf("suite reach audited %+v, want one unique pair", row)
 			}
-			//exhaustive:total This table builds fixtures for two conclusions and asserts about those.
-			switch testCase.want {
-			case kept:
+			switch {
+			case testCase.want == kept:
 				if row.kept != 1 || len(result.violations) != 0 {
 					t.Fatalf("suite reach audited %+v with violations %+v, want a kept pair", row, result.violations)
 				}
-			case discharged:
+			case testCase.want == discharged:
 				if row.violations != 1 || len(result.violations) != 1 {
 					t.Fatalf("suite reach audited %+v with violations %+v, want one violation", row, result.violations)
 				}

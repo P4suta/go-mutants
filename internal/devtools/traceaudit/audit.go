@@ -1,45 +1,7 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// Package traceaudit re-derives a run's conclusions from the recording beside
-// it, with code that never calls the engine's.
-//
-// # Why this is not a second implementation
-//
-// A run publishes two documents about itself. The run report is the claim: what
-// every mutant is, what happened to it, and what the policy made of the whole.
-// The recording is the account: every phase, every child process, every
-// execution of every mutant, in order. They are written by the same run and
-// they are meant to describe the same thing.
-//
-// Nothing checked that they did. A bug in the reporting layer -- a tally
-// computed from the wrong slice, a cached outcome filed under the wrong id, an
-// uncovered mutant that was in fact executed -- would produce a report that is
-// internally consistent, validates against its schema, and is wrong. The
-// account beside it would say so, and no reader would ever compare them.
-//
-// So this package reads both and asks whether they agree, and it does it
-// **without importing anything the engine uses to produce either**. The shapes
-// below are declared here rather than reused from internal/report, which is the
-// whole point: a re-derivation that shared the code would agree for the same
-// reasons rather than for independent ones.
-//
-// # A trace is still not evidence
-//
-// ADR 0001 says a recording takes no part in a verdict, in an identity, or in a
-// cache key, and this does not change that. The question asked here is not
-// "which of the two is right" -- it is "do they agree", and a disagreement is a
-// bug in go-mutants rather than a verdict about anybody's code.
-//
-// # Fail-closed means three answers and not two
-//
-// A check has three outcomes, not two. It can find the two documents agreeing,
-// find them disagreeing, or find that the recording cannot settle the question
-// -- a mutant it holds no events for, a stream that dropped events, a run that
-// was interrupted before it finished. The third is reported as `unaudited` and
-// counted separately, because turning "I cannot check this" into "this is fine"
-// and turning it into "this is broken" are both wrong, and the second is the
-// one that makes a gate get switched off.
+// Package traceaudit re-derives a run's conclusions from the recording beside it.
 package traceaudit
 
 import (
@@ -54,20 +16,13 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// A Finding is one thing the audit noticed.
 type Finding struct {
-	// Layer names the question that was being asked.
-	Layer string
-	// Subject is what it was asked about: a mutant id, or "the run".
-	Subject string
-	// Detail says what did not add up.
-	Detail string
-	// Unaudited is true when the recording could not settle the question,
-	// rather than settling it the wrong way.
+	Layer     string
+	Subject   string
+	Detail    string
 	Unaudited bool
 }
 
-// String renders one finding as a line.
 func (f Finding) String() string {
 	kind := "violation"
 	if f.Unaudited {
@@ -76,16 +31,12 @@ func (f Finding) String() string {
 	return fmt.Sprintf("%s\t%s\t%s\t%s", kind, f.Layer, f.Subject, f.Detail)
 }
 
-// A Result is what one audit found.
 type Result struct {
 	Findings []Finding
-	// Audited is how many mutants the recording could settle.
-	Audited int
-	// Mutants is how many the report holds.
-	Mutants int
+	Audited  int
+	Mutants  int
 }
 
-// Violations are the findings that are disagreements.
 func (r Result) Violations() []Finding {
 	var out []Finding
 	for _, finding := range r.Findings {
@@ -96,7 +47,6 @@ func (r Result) Violations() []Finding {
 	return out
 }
 
-// Unaudited are the findings that are questions the recording could not settle.
 func (r Result) Unaudited() []Finding {
 	var out []Finding
 	for _, finding := range r.Findings {
@@ -107,11 +57,6 @@ func (r Result) Unaudited() []Finding {
 	return out
 }
 
-// report is the half of a run report this audit reads.
-//
-// Declared here rather than imported. A re-derivation that decoded the report
-// with the engine's own types would inherit the engine's understanding of them,
-// which is the thing being checked.
 type report struct {
 	DocumentType string `json:"document_type"`
 	RunID        string `json:"run_id"`
@@ -138,7 +83,6 @@ type report struct {
 	} `json:"mutants"`
 }
 
-// recording is the half of a stream this audit reads.
 type event struct {
 	Seq    int64  `json:"seq"`
 	Type   string `json:"type"`
@@ -157,13 +101,6 @@ type event struct {
 	} `json:"run,omitempty"`
 }
 
-// recordingFor is the recording to read, given either the file itself or the
-// directory recordings are collected in.
-//
-// A directory holding no run of this name is an error and not an empty
-// recording. The two are the same number of findings and opposite statements:
-// one says the run made no events worth auditing, and the other says nobody
-// looked at the run at all.
 func recordingFor(tracePath, runID string) (string, error) {
 	info, err := os.Stat(tracePath)
 	if err != nil {
@@ -180,32 +117,10 @@ func recordingFor(tracePath, runID string) (string, error) {
 	return recording, nil
 }
 
-// sameOutcome reports whether a report's outcome and a recording's are the same
-// outcome, across the spelling the two documents use.
-//
-// They differ on purpose and both spellings are frozen: docs/library.md says so
-// under "The outcome vocabulary is not the report's" -- the live API is
-// snake_case (`timed_out`, `not_run`) and the published run report is kebab-case
-// (`timed-out`, `not-run`). A recording carries the API's spelling because it is
-// written by the engine; a report carries the published one.
-//
-// Comparing them as strings made every timed-out mutant a disagreement, which is
-// what this audit found the first time anything ran it: three violations on a
-// run whose report and recording agreed about everything. The rule the two
-// documents share is that a hyphen and an underscore separate the same words, so
-// that is the comparison, rather than a table of pairs that would have to be
-// maintained beside the vocabularies it joins.
 func sameOutcome(reported, recorded string) bool {
 	return strings.ReplaceAll(reported, "-", "_") == strings.ReplaceAll(recorded, "-", "_")
 }
 
-// Audit reads a report and a recording and says whether they agree.
-//
-// tracePath is either the recording itself or the directory recordings are
-// collected in, in which case the one this report describes is the run
-// directory named after its run id. Naming the directory is what a task or a
-// workflow step can write down: the run id is minted while the run happens, so
-// a command line spelled ahead of time cannot contain it.
 func Audit(reportPath, tracePath string) (Result, error) {
 	var claim report
 	raw, err := os.ReadFile(reportPath)
@@ -252,8 +167,6 @@ func Audit(reportPath, tracePath string) (Result, error) {
 	return result, nil
 }
 
-// decodeStream reads the JSON Lines and says whether the recording is one a
-// question can be asked of at all.
 func decodeStream(stream string) (events []event, lossy string, err error) {
 	var last int64
 	var sawEnd bool
@@ -283,13 +196,6 @@ func decodeStream(stream string) (events []event, lossy string, err error) {
 	return events, "", nil
 }
 
-// auditExecutions asks, per mutant, whether the report's account of how it was
-// measured matches the events.
-//
-// Three claims, and each is one the report could get wrong on its own:
-// a mutant said to be uncovered was never executed; a mutant said to be
-// answered from the cache was never executed and has a cache hit; and a mutant
-// said to have been executed N times has N executions in the stream.
 func auditExecutions(claim report, events []event, result *Result) []Finding {
 	execs := map[string]int{}
 	hits := map[string]bool{}
@@ -331,9 +237,6 @@ func auditExecutions(claim report, events []event, result *Result) []Finding {
 				})
 			}
 		case len(mutant.Executions) == 0:
-			// Neither executed nor explained by a flag the report carries.
-			// That is a `not-run` mutant, whose reason is the report's own and
-			// is nothing the recording restates.
 			findings = append(findings, Finding{
 				Layer: "executions", Subject: mutant.ID, Unaudited: true,
 				Detail: "the report records no execution and no reason the recording could confirm",
@@ -352,12 +255,6 @@ func auditExecutions(claim report, events []event, result *Result) []Finding {
 	return findings
 }
 
-// auditTally recomputes the summary from the events.
-//
-// The last attempt of a mutant is its verdict, which is the rule the engine
-// applies and is restated here rather than borrowed. A mutant the recording
-// never ran contributes nothing, which is why the counts are compared only for
-// the outcomes the stream can see.
 func auditTally(claim report, events []event) []Finding {
 	last := map[string]string{}
 	attempt := map[string]int{}
@@ -401,11 +298,6 @@ func auditTally(claim report, events []event) []Finding {
 	return findings
 }
 
-// auditNothingUnknown asks the question from the other end: does the recording
-// name a mutant the report does not catalogue?
-//
-// A report that dropped a row would pass every check above, because every check
-// above starts from the report.
 func auditNothingUnknown(claim report, events []event) []Finding {
 	catalogued := make(map[string]bool, len(claim.Mutants))
 	for _, mutant := range claim.Mutants {

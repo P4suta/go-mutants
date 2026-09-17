@@ -18,116 +18,34 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// A ProbeRun is one test target to run against the probe tree.
-//
-// It is [MutantRun] with the activation identity taken out and the log put in,
-// which is the whole difference between the two passes: a probe tree activates
-// nothing and records everything it would have changed.
 type ProbeRun struct {
-	// Timeout bounds one attempt at one test binary, exactly as
-	// [MutantRun.Timeout] does, and is required for the same reason: a pass
-	// that never ends is worse than a mutant measured wrongly.
 	Timeout time.Duration
 
-	// MemoryLimit bounds the resident memory of each test binary's whole
-	// process tree, exactly as [MutantRun.MemoryLimit] does and with the same
-	// meaning for zero. A pass is only evidence about a mutant run if the same
-	// tests ran the same way, and a pass given more of the machine than the
-	// executions it licenses skipping is not that.
 	MemoryLimit int64
 
-	// Binaries narrows the pass to a subset of the test binaries, as indices
-	// into the `bins` slice, exactly as [MutantRun.Binaries] does. Nil means
-	// every binary.
-	//
-	// A non-nil but empty subset is refused rather than obeyed, and here the
-	// refusal is a soundness rule rather than a policy: a pass that started
-	// nothing would come back with the empty set of infected mutants, which is
-	// the same string of bytes as "every probed mutant is untouched by this
-	// test" and licenses skipping every execution of it.
 	Binaries []int
 
-	// Args are passed verbatim to each selected test binary after the
-	// harness-owned timeout flag, as [MutantRun.Args] are, and `-test.timeout`
-	// is reserved for the same reason.
 	Args []string
 
-	// OutputLimit caps the combined output kept from each binary of the pass,
-	// exactly as [MutantRun.OutputLimit] does and with the same defaults. A
-	// probe pass runs the same tests as a mutant run does, so a caller that
-	// bounded one and not the other would be holding a megabyte it had already
-	// said it did not want.
 	OutputLimit int
 
-	// LogPath is the file the probe runtime appends its infection log to, as
-	// [instrument.ProbeEnv] names it. It is required: a pass with nowhere to
-	// record would exit zero having written nothing, which reads exactly like a
-	// pass that recorded nothing.
-	//
-	// Every binary of one pass is given the *same* path. Several processes
-	// appending to one log is what the format is built for, and it is what
-	// makes the answer a statement about the target rather than about one of
-	// the binaries that ran it. The caller owns the file: it must be private to
-	// this pass, because a log two passes appended to cannot be told apart.
 	LogPath string
 
-	// RecordTestLog asks each binary of the pass to write down what it
-	// consulted, exactly as [MutantRun.RecordTestLog] does. It is unrelated to
-	// LogPath: that is go-mutants' own infection log, written by the probe
-	// runtime, and this is the testing package's action log.
 	RecordTestLog bool
 
-	// Digest and Mutants are the catalogue the indices are dense in — its
-	// [mutation.Catalog.Digest] and [mutation.Catalog.Len] — and are what
-	// [instrument.ReadInfectionLog] checks the log's header against. They are
-	// the catalogue's own, not the runtime's array width; the reader derives
-	// the width from the size through the rule the generators use.
 	Digest  string
 	Mutants int
 }
 
-// A ProbeOutcome is how one pass over the probe tree ended.
-//
-// Exactly one of the four is a measurement. That asymmetry is the design: an
-// infection fact is a licence not to execute a test, so anything the pass
-// cannot vouch for has to be reported as "no facts" and never as "nothing was
-// infected", which is the same answer spelled in a way a caller would act on.
 type ProbeOutcome string
 
-// The probe outcomes.
 const (
-	// ProbeMeasured is a pass whose every binary exited zero and whose log
-	// could be read. It is the only outcome carrying [ProbeAttempt.Infected].
-	ProbeMeasured ProbeOutcome = "measured"
-	// ProbeTestFailed is a pass in which a test binary exited non-zero. The
-	// probe tree is semantics-preserving, so a red suite there is a flaky test
-	// or a bug in go-mutants — and in either case the run cannot be trusted to
-	// have reached the sites it would have reached.
-	ProbeTestFailed ProbeOutcome = "test-failed"
-	// ProbeTimedOut is a pass the supervisor had to kill, for its deadline or
-	// for its memory bound — [ProbeAttempt.MemoryExceeded] says which. The
-	// sites it had not reached yet are indistinguishable from the ones it would
-	// never reach, and that is true of both kills, which is why they share an
-	// outcome: this vocabulary says what a pass established, and neither
-	// established anything.
-	ProbeTimedOut ProbeOutcome = "timed-out"
-	// ProbeUnavailable is a pass whose runtime exited
-	// [instrument.ProbeUnavailableExit]: it could not open or write the log it
-	// was told to. The process refuses to run rather than run silently, because
-	// silence is the one lie a probe must never tell.
+	ProbeMeasured    ProbeOutcome = "measured"
+	ProbeTestFailed  ProbeOutcome = "test-failed"
+	ProbeTimedOut    ProbeOutcome = "timed-out"
 	ProbeUnavailable ProbeOutcome = "unavailable"
 )
 
-// ProbeOutcomes returns every outcome a pass can end with, in declaration
-// order.
-//
-// A probe pass ends one of four ways and the four are not interchangeable: one
-// of them carries an infection set and three of them are reasons there is none.
-// The list exists so that the published vocabulary beside it can be pinned to
-// this one instead of being spelled a second time, and so that adding a fifth
-// is a change to one list rather than a discovery somebody makes downstream.
-//
-// Each call returns a fresh slice.
 func ProbeOutcomes() []ProbeOutcome {
 	return []ProbeOutcome{
 		ProbeMeasured,
@@ -137,89 +55,22 @@ func ProbeOutcomes() []ProbeOutcome {
 	}
 }
 
-// A ProbeAttempt is one pass over the test binaries of the probe tree.
 type ProbeAttempt struct {
-	// Outcome is how the pass ended. It is meaningful only when Err is nil.
-	Outcome ProbeOutcome
-	// Infected are the catalogue indices whose site produced a value the
-	// mutant would not have, sorted ascending and distinct.
-	//
-	// It is non-nil exactly when Outcome is [ProbeMeasured], the empty set
-	// included — a target that ran and infected nothing is a fact, and the one
-	// a caller acts on most. Every other outcome, and every error, carries nil,
-	// so a caller that forgets to look at the outcome ranges over nothing
-	// rather than over a set that means something else.
-	Infected []uint32
-	// ExitCode is the status of the binary that decided the pass: the failing
-	// one, or the last one when every binary passed.
-	ExitCode int
-	// Duration is the wall-clock time the child processes took, summed over the
-	// binaries this pass actually ran.
-	Duration time.Duration
-	// Output is what [ProbeRun.OutputLimit] kept of the deciding binary's
-	// combined output, OutputBytes is everything that binary wrote whether kept
-	// or not, and Truncated reports that the cap dropped some of it — in which
-	// case Output begins with [runner.OutputTruncatedPrefix].
-	//
-	// A pass that could not be made at all carries none of the three, as it
-	// carries no outcome: it is the pass, and not one binary of it, that failed.
-	Output      []byte
-	OutputBytes int64
-	Truncated   bool
-	// PeakMemory is the highest memory any binary of this pass was
-	// observed to hold, in bytes, and MemoryExceeded reports that one of them
-	// passed [ProbeRun.MemoryLimit] and had its tree killed for it. They are
-	// [Attempt.PeakMemory] and [Attempt.MemoryExceeded] exactly.
-	//
-	// MemoryExceeded is only ever set beside [ProbeTimedOut], which is the
-	// outcome both of the supervisor's kills report.
+	Outcome        ProbeOutcome
+	Infected       []uint32
+	ExitCode       int
+	Duration       time.Duration
+	Output         []byte
+	OutputBytes    int64
+	Truncated      bool
 	PeakMemory     int64
 	MemoryExceeded bool
-	// Binaries are the test binaries this pass started, in launch order, by
-	// import path, and ExecSeqs the `exec` events they were recorded at. They
-	// are [Attempt.Binaries] and [Attempt.ExecSeqs] exactly, and mean the same
-	// thing: what was run, and where the account of it is. A pass that stopped
-	// at a binary that proved nothing names the binaries up to and including
-	// that one.
-	Binaries []string
-	ExecSeqs []int64
-	// TestLogs are what each binary of the pass recorded about what it
-	// consulted, one per element of Binaries and in the same order. It is
-	// [Attempt.TestLogs] exactly, and nil unless [ProbeRun.RecordTestLog] asked
-	// for it.
-	TestLogs []TestLog
-	// Err is set when the pass could not be made at all, and always carries a
-	// [Code] from this package. It is never set alongside facts.
-	Err error
+	Binaries       []string
+	ExecSeqs       []int64
+	TestLogs       []TestLog
+	Err            error
 }
 
-// RunProbe runs one test target against the probe tree and reports which
-// catalogued mutants that target could have observed.
-//
-// It is [RunOne]'s sibling and shares its process core — see [startTarget] —
-// because the evidence is only evidence if the same tests ran the same way.
-// What differs is everything above that: no mutant is activated, the
-// environment names a log instead of an identity, and the binaries are the
-// probe tree's rather than the mutant tree's.
-//
-// The pass stops at the first binary that does not exit zero, and that is a
-// soundness rule rather than a saving. The indices the remaining binaries would
-// append cannot be combined with a pass that already failed: the result would
-// be a subset of the truth wearing the shape of the whole of it, and a subset
-// here is a test skipped that should have run. For the same reason the log is
-// read only after every selected binary has passed.
-//
-// A missing log after a clean exit is the empty set rather than a failure. The
-// generated runtime writes its header in `init`, before any test code runs, so
-// a binary that produced no file is a binary that never linked a probe — and
-// one that never linked a probe ran no probed site. An *existing* log that
-// cannot be read is [CodeProbeLog]: it is a measurement nobody can interpret,
-// and the part of it that still parses is exactly what a smaller, wrong answer
-// looks like.
-//
-// RunProbe is safe for concurrent use as long as each caller passes a distinct
-// [Options.ScratchDir] and a distinct [ProbeRun.LogPath]. Two passes appending
-// to one log would each read the other's indices as their own.
 func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) ProbeAttempt {
 	switch {
 	case p.Timeout <= 0:
@@ -257,20 +108,12 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 	logs := planTestLog(p.RecordTestLog, scratch, p.Args)
 	attempt := ProbeAttempt{Outcome: ProbeMeasured}
 	for i, bin := range selected {
-		// Asked before each binary, as [RunOne] asks, so a cancelled run stops
-		// rather than starting the rest of the queue to have each refused.
-		// Nothing is running at this point — whatever came before has been
-		// reaped — so the failure names no command.
 		if ctx.Err() != nil {
 			return attempt.failed(probeInterrupted(ctx, "", nil))
 		}
 
 		logPath := logs.path(i)
 		spec, result := startTarget(ctx, opts, trace.ExecKindProbeRun, subject, bin, env,
-			// Never stopped at a failure: a probe pass's product is the set
-			// of mutants every test that ran could have ruled out, and a pass
-			// that stopped early would record a smaller one and license
-			// skipping the executions that would have found the kills.
 			p.Timeout, p.MemoryLimit, p.Args, nil, logPath, p.OutputLimit, false)
 		attempt.Duration += result.Duration
 		attempt.PeakMemory = max(attempt.PeakMemory, result.PeakMemory)
@@ -282,34 +125,19 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 		if result.TraceSeq != 0 {
 			attempt.ExecSeqs = append(attempt.ExecSeqs, result.TraceSeq)
 		}
-		// Read as soon as the binary is gone, as [RunOne] reads it, so that a
-		// pass which then proves nothing still says what its binaries touched.
 		var record TestLog
 		if logs.record {
 			record = logs.read(bin, logPath, result)
 			attempt.TestLogs = append(attempt.TestLogs, record)
 		}
 
-		// The order of these cases is [RunOne]'s, and the third is the one that
-		// is easy to get wrong: internal/runner reports no exit status only for
-		// a tree it killed itself, so — the timeout having been ruled out
-		// already — [runner.ExitCodeUnavailable] means the child was cancelled.
-		// Reading it as an ordinary non-zero status would turn every probe in
-		// flight at Ctrl-C into a "test-failed", which is harmless, and reading
-		// it as a pass would turn it into a licence.
 		switch {
 		case result.Err != nil:
 			return attempt.failed(&Error{
-				Code:    CodeProbeStart,
-				Message: "the probe tree's test binary for " + bin.ImportPath + " could not be run",
-				Output:  tail(result.Output),
-				Err:     result.Err,
-				// The same reasoning as [CodeMutantStart]'s: an import path names
-				// no process, and the probe tree's binaries are as temporary as
-				// the mutants'. The package is carried for the reason it is
-				// there too — it is the half of the diagnosis that outlives the
-				// tree, and it is this binary's rather than the pass's subject,
-				// which names nothing when a pass spans several packages.
+				Code:       CodeProbeStart,
+				Message:    "the probe tree's test binary for " + bin.ImportPath + " could not be run",
+				Output:     tail(result.Output),
+				Err:        result.Err,
 				Invocation: runner.CommandOf(spec, result),
 				Package:    bin.ImportPath,
 			})
@@ -319,33 +147,18 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 			return attempt
 
 		case result.MemoryExceeded:
-			// The probe tree activates nothing, so a pass that reached the
-			// bound says the bound is too small for this suite rather than that
-			// anything ran away. Either way it established nothing, which is
-			// what the outcome has to say — and it is said here rather than one
-			// branch further down, where a killed tree's missing exit status
-			// would be read as a cancellation.
 			attempt.Outcome = ProbeTimedOut
 			attempt.MemoryExceeded = true
 			return attempt
 
 		case result.ExitCode == runner.ExitCodeUnavailable:
-			// This one *was* running when the signal arrived, so it is named.
 			return attempt.failed(probeInterrupted(ctx, bin.ImportPath, runner.CommandOf(spec, result)))
 
 		case result.ExitCode == instrument.ProbeUnavailableExit:
-			// The generated runtime refusing to run because it cannot record.
-			// Never a failed suite: the tests were not the thing that went
-			// wrong, and the difference is what tells a broken machine from a
-			// broken test.
 			attempt.Outcome = ProbeUnavailable
 			return attempt
 
 		case testLogUnsupported(logPath, result, record):
-			// Ahead of the failing-suite branch below, for the reason [RunOne]
-			// puts it ahead of the kill: exit 2 from a refused flag is a binary
-			// that ran no test at all, and reading it as a red suite would
-			// blame the probe tree for a flag nobody asked it about.
 			return attempt.failed(testLogUnsupportedError("probe pass", bin, spec, result))
 
 		case result.ExitCode != 0:
@@ -362,12 +175,6 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 	return attempt
 }
 
-// readInfection reads back the log every binary of the pass appended to.
-//
-// The missing file is the whole subtlety and is argued at [RunProbe]. Note that
-// it is answered with an *allocated* empty slice rather than nil: this
-// package's contract is that nil means "no facts", and "no site was infected"
-// is a fact.
 func readInfection(p ProbeRun) ([]uint32, error) {
 	file, err := os.Open(p.LogPath)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -398,24 +205,8 @@ func readInfection(p ProbeRun) ([]uint32, error) {
 	return infected, nil
 }
 
-// ProbePassRecord is one probe pass as the recording holds it.
-//
-// It is [AttemptRecord]'s sibling and exists for the same reason: a pass and
-// the summary of it are built in one place, so that no caller can record a pass
-// that ran three binaries as one that ran two. It is exported because the only
-// caller that records a pass is outside this package — the library API's
-// session — while everything the record says about the pass is this package's.
-//
-// Two fields are deliberately left to that caller, because this package does
-// not know them. `package` is what the *request* narrowed the pass to, which is
-// a fact about the call rather than about the children; and `infected` names
-// mutants by identity, while a pass records the catalogue indices it was
-// instrumented against. Both belong to the layer that owns the catalogue.
 func ProbePassRecord(p ProbeRun, attempt ProbeAttempt) trace.ProbeRecord {
 	record := trace.ProbeRecord{
-		// Cloned on the way in, for the reason [AttemptRecord] clones its own:
-		// the record is handed to a sink that may keep it, and the caller may
-		// reuse the arguments for the next pass.
 		Binaries:   slices.Clone(attempt.Binaries),
 		Args:       slices.Clone(p.Args),
 		TimeoutMS:  p.Timeout.Milliseconds(),
@@ -430,17 +221,6 @@ func ProbePassRecord(p ProbeRun, attempt ProbeAttempt) trace.ProbeRecord {
 	return record
 }
 
-// probeSubject names what a pass is about, for the recording.
-//
-// A probe pass is one measurement over the binaries it selected — the log every
-// one of them appends to is read once, at the end, and the infection facts
-// belong to the pass rather than to any child in it — so the subject is a fact
-// about the pass and is stamped on every execution of it. A pass narrowed to a
-// single binary is a measurement of that package and says so; a pass over
-// several is a measurement of no single one, and naming an arbitrary member of
-// the set would be worse than naming none. Which binaries ran is not lost by
-// that: [ProbeAttempt.Binaries] holds them, and the `probe-exec` event the
-// session records carries them all.
 func probeSubject(selected []TestBinary) string {
 	if len(selected) == 1 {
 		return selected[0].ImportPath
@@ -448,12 +228,6 @@ func probeSubject(selected []TestBinary) string {
 	return ""
 }
 
-// validateProbeArgs protects the two flags the pass owns, exactly as
-// [validateArgs] protects [RunOne]'s and for the same reasons: the outer
-// process-tree supervisor and the in-process deadline are a paired boundary,
-// and a target that turned half of it off would leave a probe process able to
-// outlive the budget the caller was promised; and a second -test.testlogfile
-// would decide which of the two logs the pass then reads back as its own.
 func validateProbeArgs(p ProbeRun) error {
 	switch {
 	case overridesTimeout(p.Args):
@@ -471,9 +245,6 @@ func validateProbeArgs(p ProbeRun) error {
 	return nil
 }
 
-// selectProbeBinaries resolves [ProbeRun.Binaries] against the binaries this
-// pass was given, as [selectBinaries] does for a mutant. Both go through
-// [selectSubset], which is where the nil and empty cases are argued.
 func selectProbeBinaries(p ProbeRun, bins []TestBinary) ([]TestBinary, error) {
 	return selectSubset(p.Binaries, bins,
 		func() error {
@@ -492,15 +263,6 @@ func selectProbeBinaries(p ProbeRun, bins []TestBinary) ([]TestBinary, error) {
 		})
 }
 
-// probeInterrupted builds the failure of a pass a cancelled context ended. The
-// cause stays reachable, which is how a caller tells a Ctrl-C from a machine
-// that broke.
-//
-// pkg and command are the binary that was cut off, and are empty and nil when
-// the pass stopped between binaries with nothing running. Naming the command it
-// was *about* to start would be the one kind of wrong a diagnostic must never
-// be: a reader would go looking for a process that never existed, and the same
-// goes for its package.
 func probeInterrupted(ctx context.Context, pkg string, command *runner.Invocation) error {
 	return &Error{
 		Code:       CodeInterrupted,
@@ -511,27 +273,10 @@ func probeInterrupted(ctx context.Context, pkg string, command *runner.Invocatio
 	}
 }
 
-// probeErrored builds the attempt that reports a pass which yielded no facts at
-// all, before any binary was started. Infected stays nil, which is the whole
-// contract.
 func probeErrored(err error) ProbeAttempt {
 	return ProbeAttempt{Err: err}
 }
 
-// failed is [probeErrored] for a pass that had already started something: it
-// reports no facts, and it keeps the account of what it ran.
-//
-// The two halves are deliberately different. Infected is cleared along with the
-// outcome, because a pass that could not be completed licenses nothing and a
-// partial set of indices is exactly what a wrong smaller answer looks like. The
-// binaries and their executions are kept, because "which binaries had already
-// run" is the first question a failed pass raises and the one thing nothing
-// downstream could reconstruct — the recording holds the output of every one of
-// them, and this is what points at it.
-//
-// The test logs stay for the same reason the binaries do: they are an account
-// of what ran and not a measurement of anything, so a pass that failed keeps
-// them without keeping a verdict.
 func (a ProbeAttempt) failed(err error) ProbeAttempt {
 	return ProbeAttempt{Binaries: a.Binaries, ExecSeqs: a.ExecSeqs, TestLogs: a.TestLogs, Err: err}
 }

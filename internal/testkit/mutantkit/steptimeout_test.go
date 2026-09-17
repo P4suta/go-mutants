@@ -16,25 +16,10 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// timeoutSubjects are the tests whose subject is the bound itself, and which
-// therefore set one of their own.
-//
-// It is a ledger rather than a heuristic for the reason every other ledger in
-// this repository is one: a test that opts out says so by name, in a list a
-// reader can count, and a name that has gone stale fails as loudly as an
-// offender. It may shrink and should never grow — a new test that wants a
-// bound of its own is a new test that has to argue for it here.
 var timeoutSubjects = map[string]string{
 	"TestFakeGoSleepIsCutOffByTheCallersTimeout": "its subject is the deadline, so the deadline has to be short enough to wait for",
 }
 
-// TestTheStepAlarmIsOneNumber keeps the two names for it from drifting.
-//
-// They were two constants with a comment asserting they were equal, which is
-// the shape a documentation ledger exists to replace: a claim in prose that
-// nothing reads. They are now one constant under two names, and this says so,
-// so that splitting them again is a visible decision rather than an edit to one
-// of them.
 func TestTheStepAlarmIsOneNumber(t *testing.T) {
 	t.Parallel()
 
@@ -44,23 +29,6 @@ func TestTheStepAlarmIsOneNumber(t *testing.T) {
 	}
 }
 
-// TestEveryChildThisPackageStartsIsBoundedByStepTimeout holds this package to
-// the claim its own documentation makes.
-//
-// [mutantkit.StepTimeout]'s doc comment says it "bounds every child a test
-// starts through this package", and until this test existed nothing checked it.
-// Seven literals in fakego_test.go carried a hand-written thirty seconds instead
-// — well under the stated bound, and enough that copying a forty-megabyte Mach-O
-// and exec'ing it, which makes the macOS kernel hash the whole image, timed out
-// on a loaded machine while passing in ten seconds on an idle one. The stated
-// bound has since stopped being a number of its own: see
-// [testkit.DefaultTimeout] for why it is an alarm rather than a budget.
-//
-// The rule is about the number rather than about the duration: a bound written
-// twice is a bound that can disagree with itself, and which of the two a
-// particular machine trips is not something a suite should depend on. So the
-// check is that every runner.Spec in this package's tests names the constant,
-// and the one test whose subject is a deadline is named in a ledger above.
 func TestEveryChildThisPackageStartsIsBoundedByStepTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -123,17 +91,11 @@ func TestEveryChildThisPackageStartsIsBoundedByStepTimeout(t *testing.T) {
 	}
 }
 
-// boundedLiterals are the composite literals that carry a bound on a child this
-// package starts: the spec internal/runner supervises one with, and the options
-// internal/gocmd probes a toolchain with. Both start a process; both are
-// therefore "a child a test starts through this package".
 var boundedLiterals = map[string]string{
 	"runner": "Spec",
 	"gocmd":  "Options",
 }
 
-// timeoutOf reports the source spelling of a bounded literal's Timeout field,
-// when the node is one and it sets the field.
 func timeoutOf(n ast.Node) (string, bool) {
 	composite, ok := n.(*ast.CompositeLit)
 	if !ok {
@@ -161,8 +123,6 @@ func timeoutOf(n ast.Node) (string, bool) {
 	return "", false
 }
 
-// spell renders an expression the way the source wrote it, for a message a
-// reader can grep the file for.
 func spell(expr ast.Expr) string {
 	var b strings.Builder
 	var walk func(ast.Expr)

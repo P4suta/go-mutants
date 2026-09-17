@@ -11,26 +11,14 @@ import (
 	"testing"
 )
 
-// The documentation ledger for the run phases.
-//
-// docs/trace-v1.md states them as a sentence rather than a table, because a
-// sequence reads better as one. That makes it the page's most quietly rottable
-// paragraph: a table row that goes missing leaves a gap, and a name dropped
-// from the middle of a sentence leaves a sentence.
-
 const (
-	// phaseDocumentation is the page that states the phases.
 	phaseDocumentation = "../../docs/trace-v1.md"
 
-	// phaseSentenceOpening is where the sentence begins.
 	phaseSentenceOpening = "The phases are "
 )
 
-// phaseName matches one `name` of the sentence.
 var phaseName = regexp.MustCompile("`([^`]+)`")
 
-// TestEveryRunPhaseIsDocumented pins the constants against the page, in both
-// directions.
 func TestEveryRunPhaseIsDocumented(t *testing.T) {
 	t.Parallel()
 	documented := documentedPhases(t)
@@ -52,8 +40,6 @@ func TestEveryRunPhaseIsDocumented(t *testing.T) {
 	}
 }
 
-// TestThePhaseLedgerSeesANameTheSentenceDoesNotHold proves the ledger can fail,
-// which two agreeing lists cannot show on their own.
 func TestThePhaseLedgerSeesANameTheSentenceDoesNotHold(t *testing.T) {
 	t.Parallel()
 	documented := documentedPhases(t)
@@ -65,8 +51,6 @@ func TestThePhaseLedgerSeesANameTheSentenceDoesNotHold(t *testing.T) {
 	}
 }
 
-// documentedPhases reads the names out of the sentence, which runs across
-// several lines and ends at the first full stop.
 func documentedPhases(t *testing.T) []string {
 	t.Helper()
 	data, err := os.ReadFile(phaseDocumentation)

@@ -19,8 +19,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// TestWriteStoresTheRunAndThePointer walks one write end to end: the layout on
-// disk, the marker, and the two identical documents.
 func TestWriteStoresTheRunAndThePointer(t *testing.T) {
 	t.Parallel()
 
@@ -59,8 +57,6 @@ func TestWriteStoresTheRunAndThePointer(t *testing.T) {
 	}
 }
 
-// TestWorkspaceKeyIsTheHashOfTheDigest pins the naming rule, which a `report
-// list` in another package will have to reproduce.
 func TestWorkspaceKeyIsTheHashOfTheDigest(t *testing.T) {
 	t.Parallel()
 
@@ -77,8 +73,6 @@ func TestWorkspaceKeyIsTheHashOfTheDigest(t *testing.T) {
 	}
 }
 
-// TestLatestFollowsTheNewestRun proves the pointer moves, that the older run
-// stays where it was, and that both remain readable.
 func TestLatestFollowsTheNewestRun(t *testing.T) {
 	t.Parallel()
 
@@ -124,11 +118,6 @@ func TestLatestFollowsTheNewestRun(t *testing.T) {
 	}
 }
 
-// TestWriteLeavesNothingBehind proves that the temporary files a write goes
-// through are gone by the time it returns.
-//
-// It matters beyond tidiness: `report list` and `report clean` treat everything
-// under runs/ as a run, and a leftover temporary file would be reported as one.
 func TestWriteLeavesNothingBehind(t *testing.T) {
 	t.Parallel()
 
@@ -153,13 +142,6 @@ func TestWriteLeavesNothingBehind(t *testing.T) {
 	}
 }
 
-// TestACrashedWriteDoesNotPoisonTheNextOne pre-creates the leftovers of an
-// interrupted write and proves the next write is unaffected by them.
-//
-// A killed process leaves a temporary file with a partial document in it. That
-// file must not be readable as a run, must not be mistaken for one, and must
-// not stop the next run from being stored — which is exactly what a temporary
-// name plus a rename buys, and this is the test that says so.
 func TestACrashedWriteDoesNotPoisonTheNextOne(t *testing.T) {
 	t.Parallel()
 
@@ -197,13 +179,6 @@ func TestACrashedWriteDoesNotPoisonTheNextOne(t *testing.T) {
 	}
 }
 
-// TestWriteOverAnExistingRunIsAtomic proves a rewrite replaces the document
-// whole.
-//
-// The file is pre-filled with something that is not a report, which is what a
-// half-finished write from a killed process would leave behind. Afterwards it
-// is the new document exactly — no leading fragment of the old one, nothing
-// appended — because a rename replaces rather than edits.
 func TestWriteOverAnExistingRunIsAtomic(t *testing.T) {
 	t.Parallel()
 
@@ -236,12 +211,6 @@ func TestWriteOverAnExistingRunIsAtomic(t *testing.T) {
 	}
 }
 
-// TestWriteRefusesAForeignWorkspace is the paranoia the marker exists for.
-//
-// The directory is named after 16 hex characters of a hash. That is a
-// vanishingly unlikely collision and a perfectly likely one for somebody's
-// cache-restoring CI image to manufacture, and either way the answer is a
-// refusal with a code rather than two projects' histories interleaved.
 func TestWriteRefusesAForeignWorkspace(t *testing.T) {
 	t.Parallel()
 
@@ -284,9 +253,6 @@ func TestWriteRefusesAForeignWorkspace(t *testing.T) {
 					t.Errorf("the refused write left %s behind", entry.Name())
 				}
 			}
-			// The refusal is only worth anything if the other party's marker is
-			// still their marker afterwards: a claim that overwrites the record
-			// it was checking has destroyed the evidence for the next run.
 			marker, err := os.ReadFile(filepath.Join(dir, report.MarkerFileName))
 			if err != nil {
 				t.Fatalf("re-reading the foreign marker: %v", err)
@@ -298,20 +264,6 @@ func TestWriteRefusesAForeignWorkspace(t *testing.T) {
 	}
 }
 
-// TestConcurrentClaimsHaveOneWinner is the race the marker exists for.
-//
-// Two processes on one machine can reach the same history directory for
-// different workspaces at the same instant: 16 hex characters of a hash collide
-// eventually, and a CI image that restores one cache into two checkouts
-// manufactures it on purpose. Every racer reads no marker, and every racer then
-// tries to write one.
-//
-// The marker can only turn that into a refusal if creating it fails against an
-// existing one. Written through a rename this test fails, and fails in the way
-// that matters: a rename replaces the destination, so each racer overwrites the
-// last, each reads back its own bytes, all of them proceed to interleave runs/,
-// and the marker ends up naming whichever of them happened to write last —
-// which is what a later `report clean` would believe.
 func TestConcurrentClaimsHaveOneWinner(t *testing.T) {
 	t.Parallel()
 
@@ -319,7 +271,6 @@ func TestConcurrentClaimsHaveOneWinner(t *testing.T) {
 	dir := t.TempDir()
 	digests := make([]string, racers)
 	for i := range digests {
-		// Distinct, and shaped like the digests a real run carries.
 		digests[i] = fmt.Sprintf("%064x", i+1)
 	}
 
@@ -358,19 +309,6 @@ func TestConcurrentClaimsHaveOneWinner(t *testing.T) {
 	}
 }
 
-// TestConcurrentClaimsOfOneWorkspaceAllSucceed is the other half of the race,
-// and the one a careless fix breaks.
-//
-// Two runs of the same project at the same instant — one CI job with two go
-// test invocations, a developer and a watcher — reach one directory with one
-// digest, and neither of them is a foreign workspace. The refusal must never
-// fire here.
-//
-// It is a real risk rather than a theoretical one, because a claim written as
-// "create the name, then write the contents" leaves a window in which the
-// marker exists and is empty. A loser reading it in that window would be told
-// its own project's directory belongs to something else. The claim is therefore
-// built so that the marker's name never exists without its contents.
 func TestConcurrentClaimsOfOneWorkspaceAllSucceed(t *testing.T) {
 	t.Parallel()
 
@@ -404,13 +342,6 @@ func TestConcurrentClaimsOfOneWorkspaceAllSucceed(t *testing.T) {
 	}
 }
 
-// TestTheFallbackClaimRefusesAnExistingMarker covers the claim used where the
-// filesystem will not hard-link.
-//
-// It cannot be reached through a claim on any machine these tests run on, and
-// it is the path that would quietly matter on the machine where it is: what it
-// must not do is replace somebody else's marker, which is the whole property
-// the claim exists for.
 func TestTheFallbackClaimRefusesAnExistingMarker(t *testing.T) {
 	t.Parallel()
 
@@ -440,11 +371,6 @@ func TestTheFallbackClaimRefusesAnExistingMarker(t *testing.T) {
 	}
 }
 
-// TestClaimingTwiceIsNotAConflict proves the exclusive create does not turn a
-// workspace's own second run into a refusal.
-//
-// It is the sequential half of the race above: the second claim finds the
-// marker, does not try to create one, and recognises it as its own.
 func TestClaimingTwiceIsNotAConflict(t *testing.T) {
 	t.Parallel()
 
@@ -468,8 +394,6 @@ func TestClaimingTwiceIsNotAConflict(t *testing.T) {
 	}
 }
 
-// TestWriteAcceptsItsOwnMarkerAgain proves the marker is written once and then
-// only checked: a second run into the same store is not a foreign one.
 func TestWriteAcceptsItsOwnMarkerAgain(t *testing.T) {
 	t.Parallel()
 
@@ -497,8 +421,6 @@ func TestWriteAcceptsItsOwnMarkerAgain(t *testing.T) {
 	}
 }
 
-// TestTwoWorkspacesDoNotShareADirectory proves the store keeps two projects
-// apart.
 func TestTwoWorkspacesDoNotShareADirectory(t *testing.T) {
 	t.Parallel()
 
@@ -530,8 +452,6 @@ func TestTwoWorkspacesDoNotShareADirectory(t *testing.T) {
 	}
 }
 
-// TestWriteRefusesWhatCannotBeFiled checks the two values that would otherwise
-// reach the filesystem unchecked.
 func TestWriteRefusesWhatCannotBeFiled(t *testing.T) {
 	t.Parallel()
 
@@ -572,8 +492,6 @@ func TestWriteRefusesWhatCannotBeFiled(t *testing.T) {
 	}
 }
 
-// TestWriteRefusesNothing proves a nil report is a diagnosable error rather
-// than a panic in the last step of a run.
 func TestWriteRefusesNothing(t *testing.T) {
 	t.Parallel()
 
@@ -582,8 +500,6 @@ func TestWriteRefusesNothing(t *testing.T) {
 	}
 }
 
-// TestHistoryCreatesWhatIsMissing proves a store that does not exist yet is
-// built rather than reported as broken.
 func TestHistoryCreatesWhatIsMissing(t *testing.T) {
 	t.Parallel()
 
@@ -596,8 +512,6 @@ func TestHistoryCreatesWhatIsMissing(t *testing.T) {
 	}
 }
 
-// TestWorkspaceDirDoesNotTouchTheDisk proves the path can be computed without
-// creating anything, which is what `report list` needs.
 func TestWorkspaceDirDoesNotTouchTheDisk(t *testing.T) {
 	t.Parallel()
 
@@ -614,20 +528,6 @@ func TestWorkspaceDirDoesNotTouchTheDisk(t *testing.T) {
 	}
 }
 
-// TestWriteSaysWhenTheMarkerCannotBeReadBack covers the one path between the
-// create and the read.
-//
-// `claim` creates the marker, and when the create says one is already there it
-// reads the marker back to find out whose it is. Between those two calls is a
-// race it is written to lose safely: another run of the same project wins, and
-// the marker that won is still intact. What has no answer is a marker that
-// exists and cannot be read, and until now nothing exercised the line that says
-// so — the only survivor of a dogfood run that anything covered.
-//
-// A directory at the marker's path is how a test reaches it. os.ReadFile of a
-// directory fails on every platform this builds for, the create refuses it as
-// an existing entry, and the two together are exactly the state the line was
-// written for: something is there, and it is not a marker anybody can read.
 func TestWriteSaysWhenTheMarkerCannotBeReadBack(t *testing.T) {
 	t.Parallel()
 

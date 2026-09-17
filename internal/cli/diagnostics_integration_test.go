@@ -3,17 +3,6 @@
 
 //go:build integration
 
-// The toolchain-backed half of the diagnostics bundle and `--keep-temp`: what a
-// whole run leaves behind, judged against the run that left it.
-//
-// It lives here rather than in internal/engine because what is under test is
-// the sentence a user types. The engine can be told to keep its directories;
-// only the command line decides where the bundle goes, what is in it, and
-// whether the run that wrote it still exits the way it would have.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/cli/...
 package cli
 
 import (
@@ -27,15 +16,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// TestAFailingBaselineLeavesADiagnosticsBundleWithTheTraceAndTheCommand is the
-// bundle read as what it is for: the whole of one failure, in one directory,
-// without running anything again.
-//
-// Two joins are the point. The command that failed is in `error.txt`, because
-// "the baseline failed" without the argv is a sentence nobody can act on — and
-// it is the one part of an error go-mutants does not word itself. And the
-// stream ends with the run-end, because a bundle whose account of the run stops
-// early is a bundle that cannot say what the run was doing when it stopped.
 func TestAFailingBaselineLeavesADiagnosticsBundleWithTheTraceAndTheCommand(t *testing.T) {
 	root := inFailingBaseline(t)
 
@@ -66,8 +46,6 @@ func TestAFailingBaselineLeavesADiagnosticsBundleWithTheTraceAndTheCommand(t *te
 		t.Errorf("the run-end says verdict %q and error %q, want both filled in for a failed run",
 			last.Run.Verdict, last.Run.Error)
 	}
-	// The account reaches the failure rather than stopping at the phase before
-	// it: the baseline test that did not pass is in there as a command.
 	var baselineRuns int
 	for _, event := range events {
 		if event.Type == trace.TypeExec && event.Exec.Kind == trace.ExecKindBaselineTest {
@@ -80,15 +58,6 @@ func TestAFailingBaselineLeavesADiagnosticsBundleWithTheTraceAndTheCommand(t *te
 	}
 }
 
-// TestKeepTempAlwaysOnASuccessfulRunKeepsAndPrints is the mode a person types
-// at a terminal, on the run it is usually typed for.
-//
-// `always` means always, and a run that went fine is exactly the run somebody
-// keeps the tree of: the question "what did the snapshot this survivor was
-// measured in actually look like" is asked of successful runs far more often
-// than of failed ones. A successful run writes no bundle, though — there is no
-// failure to explain — so this is the one path where a keep and a diagnosis are
-// deliberately not the same decision.
 func TestKeepTempAlwaysOnASuccessfulRunKeepsAndPrints(t *testing.T) {
 	root := inCopyOf(t, "simple")
 
@@ -110,7 +79,6 @@ func TestKeepTempAlwaysOnASuccessfulRunKeepsAndPrints(t *testing.T) {
 			t.Errorf("the kept %s at %s carries no keep marker", kind, directory)
 		}
 	}
-	// And nothing was diagnosed, because nothing failed.
 	if _, err := os.Stat(diagnosticsRootOf(root)); !os.IsNotExist(err) {
 		t.Errorf("a successful run wrote a diagnostics bundle (%v)", err)
 	}

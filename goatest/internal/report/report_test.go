@@ -46,8 +46,6 @@ func fixture() report.Report {
 			{ID: "f1", Kind: "coverage", Path: "a.go", Summary: "unreached"},
 		},
 		Repairs: []report.Repair{{ID: "r1", Finding: "f2", Path: "z_test.go", Status: "applied"}},
-		// Out of order on purpose, to prove the renderers sort them. Real
-		// codes, because a persisted report is refused an invented one.
 		Limitations: []report.Limitation{
 			{Code: report.LimitationWholeTreeBehaviourKeys, Summary: "z risk"},
 			{Code: report.LimitationAssuranceIncomplete, Summary: "a risk"},

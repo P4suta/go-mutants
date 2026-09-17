@@ -13,13 +13,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// otherDigest is a second workspace: the same module measured after an edit,
-// which is what a content-addressed history directory means. See
-// [report.StoredWorkspace].
 var otherDigest = strings.Repeat("cd", 32)
 
-// storeRun files one run under root, with the identity and clock a listing test
-// needs, and returns the path it was written to.
 func storeRun(t *testing.T, root, runID, digest string, finished time.Time) string {
 	t.Helper()
 	opts := fixtureOptions(t)
@@ -39,7 +34,6 @@ func storeRun(t *testing.T, root, runID, digest string, finished time.Time) stri
 	return runPath
 }
 
-// moment parses one of the fixed clocks these tests state.
 func moment(t *testing.T, stamp string) time.Time {
 	t.Helper()
 	at, err := time.Parse(time.RFC3339, stamp)
@@ -49,8 +43,6 @@ func moment(t *testing.T, stamp string) time.Time {
 	return at
 }
 
-// TestListReadsEveryStoredRunNewestFirst is the shape `report list` prints, and
-// the one ordering promise it makes.
 func TestListReadsEveryStoredRunNewestFirst(t *testing.T) {
 	t.Parallel()
 
@@ -99,9 +91,6 @@ func TestListReadsEveryStoredRunNewestFirst(t *testing.T) {
 	}
 }
 
-// TestListSurvivesADamagedDocument is the property that makes this a listing
-// rather than a parser: one unreadable file must not cost a user the runs
-// beside it, and it must be named rather than dropped.
 func TestListSurvivesADamagedDocument(t *testing.T) {
 	t.Parallel()
 
@@ -140,9 +129,6 @@ func TestListSurvivesADamagedDocument(t *testing.T) {
 	}
 }
 
-// TestListSkipsWhatIsNotGoMutants. The store lives in a directory shared with
-// every other tool on the machine, so a directory with no marker is reported
-// and never read.
 func TestListSkipsWhatIsNotGoMutants(t *testing.T) {
 	t.Parallel()
 
@@ -180,10 +166,6 @@ func TestListSkipsWhatIsNotGoMutants(t *testing.T) {
 	}
 }
 
-// copyTree copies a directory and everything under it, which is what a restored
-// CI cache, an `xcopy`, or a `cp -r` of somebody's cache directory leaves
-// behind: the same documents and the same marker, under a name this build would
-// never have chosen.
 func copyTree(t *testing.T, from, to string) {
 	t.Helper()
 	if err := os.MkdirAll(to, 0o700); err != nil {
@@ -209,16 +191,6 @@ func copyTree(t *testing.T, from, to string) {
 	}
 }
 
-// TestListSkipsAWorkspaceDirectoryThatIsACopy is the seam between what a
-// listing says and what a clean can do.
-//
-// A workspace directory copied under another name — a CI cache restored to a
-// different key, a backup taken by hand — carries a marker naming the original.
-// [History.RemoveRuns] is asked for a digest and rebuilds the original's path
-// from it, so a copy listed as a workspace would be a directory `report clean`
-// reports as swept and cannot reach: the run documents in it survive the clean
-// that claimed them. Listing it as skipped is what keeps the two commands
-// telling one story.
 func TestListSkipsAWorkspaceDirectoryThatIsACopy(t *testing.T) {
 	t.Parallel()
 
@@ -253,9 +225,6 @@ func TestListSkipsAWorkspaceDirectoryThatIsACopy(t *testing.T) {
 		t.Errorf("the skipped row repeats a code: %q", listing.Skipped[0].Reason)
 	}
 
-	// The promise the listing makes to the sweep that follows it: every
-	// directory it named as a workspace is one a clean of that workspace's
-	// digest actually empties.
 	for _, workspace := range listing.Workspaces {
 		removed, removeErr := store.RemoveRuns(workspace.Digest)
 		if removeErr != nil {
@@ -267,19 +236,11 @@ func TestListSkipsAWorkspaceDirectoryThatIsACopy(t *testing.T) {
 				workspace.Dir, removed.Runs, removed.Dir, statErr)
 		}
 	}
-	// And the copy is left exactly as it was found, which is what a skipped row
-	// promises.
 	if _, err = os.Stat(filepath.Join(copied, report.RunsDirName, "20260218T091500Z-1111.json")); err != nil {
 		t.Errorf("a directory the listing would not touch was cleaned anyway: %v", err)
 	}
 }
 
-// TestNewestFirstOrdersTwoCopiesOfOneRun. The comparator claims a total order,
-// and the claim has to survive the case its first two keys cannot separate: one
-// run reachable under two paths, where the finish time and the run id are equal
-// because it is the same document. Answering 0 there would leave an unstable
-// sort free to return either, which is a `report latest` that names a different
-// file on two runs of the same command.
 func TestNewestFirstOrdersTwoCopiesOfOneRun(t *testing.T) {
 	t.Parallel()
 
@@ -294,9 +255,6 @@ func TestNewestFirstOrdersTwoCopiesOfOneRun(t *testing.T) {
 	}
 }
 
-// TestListOfAMachineThatHasNeverRunIsEmptyAndNotAFailure. "Nothing here yet" is
-// an answer, and the difference between it and "I could not look" is exactly
-// what the error return is for.
 func TestListOfAMachineThatHasNeverRunIsEmpty(t *testing.T) {
 	t.Parallel()
 
@@ -309,9 +267,6 @@ func TestListOfAMachineThatHasNeverRunIsEmpty(t *testing.T) {
 	}
 }
 
-// TestRemoveRunsDeletesTheHistoryAndNothingElse walks what `report clean` is
-// allowed to touch. The marker stays, because the directory's identity outlives
-// its contents, and `outcomes/` stays, because it is the outcome cache's.
 func TestRemoveRunsDeletesTheHistoryAndNothingElse(t *testing.T) {
 	t.Parallel()
 
@@ -333,7 +288,6 @@ func TestRemoveRunsDeletesTheHistoryAndNothingElse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveRuns: %v", err)
 	}
-	// Two runs and the pointer to the newest.
 	if removed.Runs != 3 {
 		t.Errorf("removed %d documents, want 3 (two runs and latest.json)", removed.Runs)
 	}
@@ -357,8 +311,6 @@ func TestRemoveRunsDeletesTheHistoryAndNothingElse(t *testing.T) {
 		t.Errorf("a cached outcome was deleted by a history clean: %v", err)
 	}
 
-	// And a second clean is not a failure: there is nothing left, which is what
-	// was asked for.
 	again, err := report.History{Root: root}.RemoveRuns(fixtureDigest)
 	if err != nil {
 		t.Fatalf("RemoveRuns over an emptied history: %v", err)
@@ -368,8 +320,6 @@ func TestRemoveRunsDeletesTheHistoryAndNothingElse(t *testing.T) {
 	}
 }
 
-// TestRemoveRunsRefusesADirectoryThatIsNotOurs is the whole safety argument for
-// a command that deletes files in the operating system's cache directory.
 func TestRemoveRunsRefusesADirectoryThatIsNotOurs(t *testing.T) {
 	t.Parallel()
 
@@ -395,8 +345,6 @@ func TestRemoveRunsRefusesADirectoryThatIsNotOurs(t *testing.T) {
 		t.Errorf("the refusal deleted the file anyway: %v", err)
 	}
 
-	// A marker this build did not write is refused for the same reason, and
-	// says so in its own words rather than being mistaken for an absent one.
 	if err = os.WriteFile(filepath.Join(dir, report.MarkerFileName), []byte("go-mutants-workspace-v9\n"), 0o600); err != nil {
 		t.Fatalf("writing the marker: %v", err)
 	}
@@ -409,12 +357,6 @@ func TestRemoveRunsRefusesADirectoryThatIsNotOurs(t *testing.T) {
 	}
 }
 
-// TestRemoveRunsRefusesAWorkspaceDirectoryThatLeavesTheStore. The containment
-// check is what makes deleting files in the operating system's cache directory
-// acceptable, and a check that compares two strings does not make it: the store
-// is a directory anything on the machine can write to, so a workspace directory
-// replaced by a link to somewhere else is lexically inside the store and
-// physically wherever it points.
 func TestRemoveRunsRefusesAWorkspaceDirectoryThatLeavesTheStore(t *testing.T) {
 	t.Parallel()
 
@@ -422,8 +364,6 @@ func TestRemoveRunsRefusesAWorkspaceDirectoryThatLeavesTheStore(t *testing.T) {
 	runPath := storeRun(t, root, "20260218T091500Z-1111", fixtureDigest, moment(t, "2026-02-18T09:15:42Z"))
 	dir := filepath.Dir(filepath.Dir(runPath))
 
-	// The history — marker, runs and all — moved out of the store, with a link
-	// left behind under the name the store would rebuild.
 	outside := filepath.Join(t.TempDir(), "elsewhere")
 	if err := os.Rename(dir, outside); err != nil {
 		t.Fatalf("moving the workspace directory out of the store: %v", err)
@@ -445,16 +385,6 @@ func TestRemoveRunsRefusesAWorkspaceDirectoryThatLeavesTheStore(t *testing.T) {
 	}
 }
 
-// TestRemoveRunsUnlinksALinkedRunsDirectory is the other half of the
-// containment argument, and the reason the last element of a path is compared
-// as it is spelled rather than as it resolves.
-//
-// [os.RemoveAll] unlinks a symbolic link instead of walking through it, so a
-// linked leaf deletes the link and leaves whatever it pointed at alone: it is
-// the directories *leading* to a path that can carry a deletion out of the
-// store, because walking them is what follows them. Resolving the leaf too
-// would refuse this — and would refuse it by treating "delete this link" as
-// "delete the target", which is the one reading of it that is not true.
 func TestRemoveRunsUnlinksALinkedRunsDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -483,9 +413,6 @@ func TestRemoveRunsUnlinksALinkedRunsDirectory(t *testing.T) {
 	}
 }
 
-// TestRemoveRunsRefusesADigestThatIsNotOne. The directory is named from the
-// digest, so a value that is not a digest is the one input that could point the
-// deletion somewhere unintended.
 func TestRemoveRunsRefusesADigestThatIsNotOne(t *testing.T) {
 	t.Parallel()
 
@@ -497,8 +424,6 @@ func TestRemoveRunsRefusesADigestThatIsNotOne(t *testing.T) {
 	}
 }
 
-// TestReadStoredIsVerbatim. `report latest --json` prints an archive, and an
-// archive that is re-encoded on the way out is not an archive.
 func TestReadStoredIsVerbatim(t *testing.T) {
 	t.Parallel()
 

@@ -9,33 +9,12 @@ import (
 	"testing"
 )
 
-// The type predicates every rule's applicability is decided by, tested as the
-// functions they are.
-//
-// Driving them through a scan asserts which candidates a fixture produced,
-// which is the right test for the walk and the wrong one for these: a predicate
-// that answered "nillable" for a type parameter would be caught by a fixture
-// that happens to hold one, and silently right about every type nobody wrote a
-// fixture for. Here the type is built and handed in, so the refusals are stated
-// for the shapes that matter rather than for the shapes the corpus contains.
-
-// typeParam is a type parameter constrained to an interface, which is what a
-// generic function's `T` is by the time go/types has recorded it.
 func typeParam(t *testing.T, constraint types.Type) types.Type {
 	t.Helper()
 	name := types.NewTypeName(0, nil, "T", nil)
 	return types.NewTypeParam(name, constraint)
 }
 
-// TestIsEmptiableIsSlicesAndMapsAndNothingElse pins the line the neutral-value
-// family is drawn at.
-//
-// A type is in when it has two distinct neutral values the standard library
-// treats differently and `len()` cannot separate, which is slices and maps. A
-// string has no nil; an array or a struct has `T{}` as its zero value rather
-// than as a second neutral; a channel's non-nil empty blocks rather than being
-// empty; a pointer's `new(T)` would mask a nil dereference instead of exposing
-// one; a function's would need its whole signature rendered.
 func TestIsEmptiableIsSlicesAndMapsAndNothingElse(t *testing.T) {
 	t.Parallel()
 
@@ -58,10 +37,6 @@ func TestIsEmptiableIsSlicesAndMapsAndNothingElse(t *testing.T) {
 		{name: "a struct", typ: types.NewStruct(nil, nil)},
 		{name: "an interface", typ: types.NewInterfaceType(nil, nil)},
 		{name: "a signature", typ: types.NewSignatureType(nil, nil, nil, nil, nil, false)},
-		// The type parameter is refused before its underlying type is
-		// consulted, because a parameter's underlying type is its constraint:
-		// a `T` constrained to `~[]byte` would otherwise be offered `[]T{}`
-		// for a function that may be returning an int.
 		{name: "a type parameter constrained to a slice", typ: typeParam(t, types.NewInterfaceType(nil, nil))},
 		{name: "nothing at all", typ: nil},
 	} {
@@ -76,14 +51,6 @@ func TestIsEmptiableIsSlicesAndMapsAndNothingElse(t *testing.T) {
 	}
 }
 
-// TestIsNillableRefusesATypeParameterBeforeItsUnderlyingType is the refusal
-// that is the whole reason the predicate is not a one-line type switch.
-//
-// A type parameter's underlying type is its constraint, which is an interface
-// — so a `T` constrained to `~int | ~string` would answer "nillable" and
-// `return nil` would be spliced into a function returning an int. What the
-// constraint is made of does not help: a parameter constrained to `*T | []T`
-// still cannot be handed a plain `nil`, because `nil` needs a single type.
 func TestIsNillableRefusesATypeParameterBeforeItsUnderlyingType(t *testing.T) {
 	t.Parallel()
 
@@ -118,13 +85,6 @@ func TestIsNillableRefusesATypeParameterBeforeItsUnderlyingType(t *testing.T) {
 	}
 }
 
-// TestImplementsErrorRefusesTheTypesThatAreNotTypes is the gate
-// `nil-error-branch` asks its question through.
-//
-// Untyped nil and the invalid type both reach here from an expression the
-// checker could not place, and types.Implements answers "yes" for the first of
-// them -- every interface is satisfied by nil. A comparison against an
-// unplaceable expression is not an `err != nil` to rewrite.
 func TestImplementsErrorRefusesTheTypesThatAreNotTypes(t *testing.T) {
 	t.Parallel()
 
@@ -150,8 +110,6 @@ func TestImplementsErrorRefusesTheTypesThatAreNotTypes(t *testing.T) {
 		})
 	}
 
-	// And the sharper question beside it: exactly `error`, which is what
-	// separates error-swallowing from return-replacement.
 	if !isExactlyError(errorType) {
 		t.Error("isExactlyError refuses the error interface itself")
 	}
@@ -163,8 +121,6 @@ func TestImplementsErrorRefusesTheTypesThatAreNotTypes(t *testing.T) {
 	}
 }
 
-// errorImplementor is a named pointer type with an Error method, which is what
-// a `return &myErr{}` from a function returning error has.
 func errorImplementor(t *testing.T) types.Type {
 	t.Helper()
 
@@ -177,13 +133,6 @@ func errorImplementor(t *testing.T) types.Type {
 	return types.NewPointer(named)
 }
 
-// TestTheUniverseNamesAreTheOnesNobodyShadowed is the rule three predicates
-// share: a package that declares its own `nil`, `true` or `panic` is entitled
-// to have it left alone.
-//
-// `true` is not a keyword in Go and neither is `nil`, so the name alone proves
-// nothing. What proves it is the object the checker resolved the identifier to
-// and the scope that object belongs to.
 func TestTheUniverseNamesAreTheOnesNobodyShadowed(t *testing.T) {
 	t.Parallel()
 
@@ -212,16 +161,12 @@ func Must(ok bool) {
 	}
 }
 `)
-		// The nil literal is what makes the `return nil` above a no-op edit
-		// for return-err-to-nil rather than a candidate.
 		if got.has("return-err-to-nil", "nil", "nil") {
 			t.Error("a `return nil` produced a return-err-to-nil candidate")
 		}
 		if !got.has("true-to-false", "true", "false") {
 			t.Errorf("scan found %v, want the predeclared true swapped", got.rules())
 		}
-		// The predeclared panic is not deleted: removing a terminating panic
-		// leaves a path that reaches the closing brace without returning.
 		for _, c := range got.candidates {
 			if c.Rule.Name == "delete-call-statement" && c.Original == `panic("no")` {
 				t.Error("the predeclared panic was offered for deletion")
@@ -249,24 +194,12 @@ func Ready(ok bool) {
 	}
 }
 `)
-		// A panic this package declared is an ordinary call, and an ordinary
-		// call statement is deleted like any other.
 		if !got.has("delete-call-statement", `panic("no")`, "") {
 			t.Errorf("scan found %v, want a shadowed panic deleted like any other call", got.rules())
 		}
 	})
 }
 
-// TestAScanWithoutTheCheckersRecordRefusesEveryTypeQuestion is the one rule
-// four predicates share, and the reason each of them spells it out.
-//
-// A scan always has go/types' record in hand, so this is a path the walk does
-// not take. It is pinned anyway because of which way it has to fail: every one
-// of these predicates is asked "may this be mutated", and a predicate that
-// answered yes with no record would turn an absent checker into a licence. The
-// name of an identifier proves nothing on its own — `nil`, `true` and `panic`
-// are ordinary names a package may declare for itself — and without the record
-// there is nothing else to ask.
 func TestAScanWithoutTheCheckersRecordRefusesEveryTypeQuestion(t *testing.T) {
 	t.Parallel()
 
@@ -285,13 +218,6 @@ func TestAScanWithoutTheCheckersRecordRefusesEveryTypeQuestion(t *testing.T) {
 	}
 }
 
-// TestThePredeclaredNamesAreAskedOfTheCheckerAndNotOfTheSpelling is the rule
-// three predicates share, from the side a fixture of ordinary Go cannot reach.
-//
-// `nil`, `true` and `panic` are ordinary identifiers that a package may declare
-// for itself, and each predicate resolves the identifier and asks which scope
-// the object belongs to. A shadowed one is what proves the resolution is load
-// bearing: with the name alone as evidence, every one of these would say yes.
 func TestThePredeclaredNamesAreAskedOfTheCheckerAndNotOfTheSpelling(t *testing.T) {
 	t.Parallel()
 
@@ -336,15 +262,6 @@ func TestThePredeclaredNamesAreAskedOfTheCheckerAndNotOfTheSpelling(t *testing.T
 
 }
 
-// TestATypeIsNotAValueTheCheckerRecordedForAnExpression is the second half of
-// [fileScan.typeOf], and the half no walk over ordinary source reaches.
-//
-// The checker records an entry for a type expression as well as for a value
-// one -- `int64` in `int64(n)` has a [types.TypeAndValue] of its own -- and the
-// two are told apart by [types.TypeAndValue.IsValue] rather than by the
-// presence of the entry. A predicate that read the type out of either would
-// hand a rule the type of a conversion's target as though it were the type of a
-// value, which is a different type in every conversion that does anything.
 func TestATypeIsNotAValueTheCheckerRecordedForAnExpression(t *testing.T) {
 	t.Parallel()
 

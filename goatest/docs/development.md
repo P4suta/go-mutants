@@ -129,7 +129,6 @@ func TestRunResourceProviderHelper(t *testing.T) {
 	if !testkit.HelperEnabled("GOATEST_ASSURE_RESOURCE_HELPER") {
 		return
 	}
-	// speak the resource protocol on stdin/stdout
 }
 ```
 
@@ -661,16 +660,13 @@ that fills every unset field from the real implementation:
 
 ```go
 type storeHooks struct {
-	// read reads a stored report.
 	read func(path string) ([]byte, error)
-	// ... one field per operation the calls perform
 }
 
 func (hooks storeHooks) resolved() storeHooks {
 	if hooks.read == nil {
 		hooks.read = os.ReadFile
 	}
-	// ...
 	return hooks
 }
 ```
@@ -683,12 +679,10 @@ func (store *Store) Get(digest string) (report.Report, bool, error) {
 	return store.getWithHooks(digest, storeHooks{})
 }
 
-// getWithHooks is Get against a filesystem the caller supplies.
 func (store *Store) getWithHooks(
 	digest string, hooks storeHooks,
 ) (report.Report, bool, error) {
 	hooks = hooks.resolved()
-	// ...
 }
 ```
 

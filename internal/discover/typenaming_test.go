@@ -9,32 +9,11 @@ import (
 	"testing"
 )
 
-// Whether a type can be written down in the file being rewritten, and whether
-// it mentions a type parameter.
-//
-// Both are recursive walks over go/types' type graph, and both are asked
-// before a guard commits to a form: Form D writes a declaration's type out,
-// Form C' writes a conversion, Form E writes a closure's result. A predicate
-// that said yes about a type it cannot spell produces a generated file that
-// does not compile -- in a snapshot, about a program nobody wrote -- and one
-// that said no too often turns a mutable site into an `unnameable-decl-type`
-// skip nobody can act on.
-//
-// They are asked here with types built rather than parsed. A fixture can only
-// hold the types somebody thought to write, and these walks have an arm for
-// every shape go/types has: an unexported field of another package's struct, a
-// method of an interface whose signature mentions one, a recursive type that
-// reaches itself, a tuple, an alias with type arguments. Written as source,
-// most of those are a package of their own; built, they are a line each.
-
-// typeFixture is the two packages every row below is about: the one being
-// rewritten, and another one.
 type typeFixture struct {
 	here  *types.Package
 	other *types.Package
 }
 
-// newTypeFixture builds them.
 func newTypeFixture() typeFixture {
 	return typeFixture{
 		here:  types.NewPackage("example.com/m/pkg", "pkg"),
@@ -42,36 +21,29 @@ func newTypeFixture() typeFixture {
 	}
 }
 
-// named builds a named type in a package.
 func (f typeFixture) named(pkg *types.Package, name string, underlying types.Type) *types.Named {
 	return types.NewNamed(types.NewTypeName(0, pkg, name, nil), underlying, nil)
 }
 
-// field builds one struct field.
 func (f typeFixture) field(pkg *types.Package, name string, typ types.Type) *types.Var {
 	return types.NewField(0, pkg, name, typ, false)
 }
 
-// method builds one interface method with no parameters and one result.
 func (f typeFixture) method(pkg *types.Package, name string, result types.Type) *types.Func {
 	sig := types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(types.NewVar(0, pkg, "", result)), false)
 	return types.NewFunc(0, pkg, name, sig)
 }
 
-// param builds a type parameter constrained to the empty interface.
 func (f typeFixture) param(name string) *types.TypeParam {
 	p := types.NewTypeParam(types.NewTypeName(0, f.here, name, nil), nil)
 	p.SetConstraint(types.NewInterfaceType(nil, nil))
 	return p
 }
 
-// TestWhichTypesThisFileCanSpell is [guardResolver.nameable], one row per arm.
 func TestWhichTypesThisFileCanSpell(t *testing.T) {
 	t.Parallel()
 
 	f := newTypeFixture()
-	// A resolver that has imported nothing: the other package is reachable
-	// only through the sibling index, which the rows that need it set.
 	resolver := func(siblings map[string]string) *guardResolver {
 		return &guardResolver{
 			pkg:      f.here,
@@ -130,8 +102,6 @@ func TestWhichTypesThisFileCanSpell(t *testing.T) {
 			want: true,
 		},
 		{
-			// A field another package declared and did not export cannot be
-			// written in a composite literal here, however spellable its type.
 			name: "a struct with another package's unexported field",
 			typ:  types.NewStruct([]*types.Var{f.field(f.other, "hidden", types.Typ[types.Int])}, nil),
 		},
@@ -185,9 +155,6 @@ func TestWhichTypesThisFileCanSpell(t *testing.T) {
 		},
 		{name: "an empty tuple", typ: types.NewTuple(), want: true},
 		{
-			// An alias is a second name for a type and is spelled like a named
-			// one: its own name has to be writable here, and so does every
-			// argument it was instantiated with.
 			name: "an alias of this package's own",
 			typ:  types.NewAlias(types.NewTypeName(0, f.here, "Alias", nil), types.Typ[types.Int]),
 			want: true,
@@ -202,10 +169,6 @@ func TestWhichTypesThisFileCanSpell(t *testing.T) {
 			siblings: reachableOther, want: true,
 		},
 		{
-			// A type set, which is what an interface embedding `~int | ~string`
-			// holds. It is a type go/types builds and no file writes on its
-			// own, so it falls off the end of the list rather than being
-			// admitted by silence.
 			name: "a union of terms",
 			typ: types.NewUnion([]*types.Term{
 				types.NewTerm(true, types.Typ[types.Int]),
@@ -224,20 +187,6 @@ func TestWhichTypesThisFileCanSpell(t *testing.T) {
 	}
 }
 
-// TestANamedTypeIsSpelledByItsName is what makes both walks terminate over a
-// type that reaches itself.
-//
-// `type node struct { next *node }` is ordinary Go and its type graph is a
-// cycle. Neither walk follows it, and the reason is not the recursion guard:
-// a named type is written down as its *name*, so what its definition holds is
-// not something either question has to look at. The guard is there for the
-// shapes that have no name to stop at.
-//
-// The consequence is worth stating in both directions, because it is easy to
-// read these walks as answering about a type's contents. A named type whose
-// definition holds another package's unexported type is still perfectly
-// spellable, and one whose definition holds a type parameter still mentions
-// none -- what mentions one is a name written *with* an argument.
 func TestANamedTypeIsSpelledByItsName(t *testing.T) {
 	t.Parallel()
 
@@ -259,8 +208,6 @@ func TestANamedTypeIsSpelledByItsName(t *testing.T) {
 		t.Error("mentionsTypeParam looked inside a named type's definition")
 	}
 
-	// And an instantiation, where the argument *is* written down: `List[T]`
-	// inside a generic function needs T in scope, and `List[int]` does not.
 	param := f.param("T")
 	list := types.NewNamed(types.NewTypeName(0, f.here, "List", nil), nil, nil)
 	element := types.NewTypeParam(types.NewTypeName(0, f.here, "E", nil), nil)
@@ -287,9 +234,6 @@ func TestANamedTypeIsSpelledByItsName(t *testing.T) {
 		t.Error("mentionsTypeParam found a parameter in a concrete instantiation")
 	}
 
-	// And an argument this file cannot spell makes the whole instantiation
-	// unspellable, which is the arm that would otherwise render
-	// `List[other.hidden]`.
 	hidden := f.named(f.other, "hidden", types.NewStruct(nil, nil))
 	unspellable, err := types.Instantiate(nil, list, []types.Type{hidden}, false)
 	if err != nil {
@@ -300,13 +244,6 @@ func TestANamedTypeIsSpelledByItsName(t *testing.T) {
 	}
 }
 
-// TestWhichTypesMentionATypeParameter is [mentionsTypeParam], which decides
-// whether a rendered type is one a *generic* declaration could carry.
-//
-// It is the same shape of walk as nameable and a different question, so the two
-// are asked side by side: a type may be perfectly spellable and still mention a
-// parameter, and every arm that forgot to look inside itself would answer no
-// for a type whose parameter is one level down.
 func TestWhichTypesMentionATypeParameter(t *testing.T) {
 	t.Parallel()
 
@@ -388,15 +325,6 @@ func TestWhichTypesMentionATypeParameter(t *testing.T) {
 	}
 }
 
-// TestAPackageIsReachableThreeWays pins [guardResolver.reachable], which is
-// what stands between a rendered qualifier and an import the file does not
-// have.
-//
-// The three ways are not interchangeable. A package the file already imports
-// needs no completion; one a *sibling* file imports may be completed, because
-// the package compiles today with that edge in its graph; and one an earlier
-// guard in this same file already added is reachable because that guard's own
-// import is going in. Anything else is a package this rewrite may not name.
 func TestAPackageIsReachableThreeWays(t *testing.T) {
 	t.Parallel()
 
@@ -442,14 +370,6 @@ func TestAPackageIsReachableThreeWays(t *testing.T) {
 	}
 }
 
-// TestANameIsBumpedUntilItIsFree pins [guardResolver.freeName], and the bound
-// on the search.
-//
-// The counter stops because an unbounded search over a set that only grows is a
-// loop whose termination depends on the data. A file binding `x`, `x2` … `x63`
-// is not one this tool needs to rewrite, and the preferred name is handed back
-// rather than the search running on -- the caller's own check is what refuses
-// the collision after that.
 func TestANameIsBumpedUntilItIsFree(t *testing.T) {
 	t.Parallel()
 
@@ -468,8 +388,6 @@ func TestANameIsBumpedUntilItIsFree(t *testing.T) {
 		t.Errorf("freeName = %q, want %q", got, "carrier3")
 	}
 
-	// Every name the search can reach is taken, so the search ends rather than
-	// running on.
 	for n := 2; n < 64; n++ {
 		g.taken["carrier"+strconv.Itoa(n)] = true
 	}
@@ -478,15 +396,6 @@ func TestANameIsBumpedUntilItIsFree(t *testing.T) {
 	}
 }
 
-// TestHowATypeIsSpelledInThisFile is [guardResolver.typeString] and the
-// qualifier under it, which is what every form that writes a type down goes
-// through.
-//
-// A type is spelled with the name its package has *in the file being
-// rewritten*, and there are four answers: this package's own types render bare,
-// a package the file imports renders under the name that import binds, a
-// package only a *sibling* file imports renders under a name this rewrite will
-// add, and anything else is not spellable here at all.
 func TestHowATypeIsSpelledInThisFile(t *testing.T) {
 	t.Parallel()
 
@@ -552,8 +461,6 @@ func TestHowATypeIsSpelledInThisFile(t *testing.T) {
 		if len(needs) != 1 || needs[0].Path != "example.com/m/elsewhere" || needs[0].Local != "carrier" {
 			t.Fatalf("the completion is %v, want one naming the sibling's import", needs)
 		}
-		// The name is chosen once per path per file and remembered: two names
-		// for one package would be two imports, and the second a redeclaration.
 		again, _, ok := g.typeString(exported)
 		if !ok || again != "carrier.Box" {
 			t.Errorf("the second spelling is %q, want the first's name", again)
@@ -606,10 +513,6 @@ func TestHowATypeIsSpelledInThisFile(t *testing.T) {
 	t.Run("a type that renders but cannot be named", func(t *testing.T) {
 		t.Parallel()
 
-		// unsafe.Pointer renders as a perfectly plausible string and is not
-		// something this file can write without an import nothing will add. It
-		// is the shape the two checks are separate for: the qualifier answers
-		// about *packages*, and nameable answers about the type.
 		if spelled, _, ok := resolver(none, none).typeString(types.Typ[types.UnsafePointer]); ok {
 			t.Errorf("typeString = %q, want a refusal for unsafe.Pointer", spelled)
 		}
@@ -618,9 +521,6 @@ func TestHowATypeIsSpelledInThisFile(t *testing.T) {
 	t.Run("the completions come out in one order", func(t *testing.T) {
 		t.Parallel()
 
-		// Two packages in one type, drawn in the order go/types renders them.
-		// The list is sorted so that the imports a rewrite splices in are a
-		// function of the type rather than of the rendering order.
 		second := types.NewPackage("example.com/m/aaa", "aaa")
 		other := f.named(second, "Other", types.NewStruct(nil, nil))
 		g := resolver(none, map[string]string{

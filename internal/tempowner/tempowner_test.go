@@ -15,14 +15,6 @@ import (
 	"time"
 )
 
-// TestAcquireRefusesASecondHolderUntilTheFirstReleases is the whole liveness
-// signal in one test: the lock, not the marker, is what says a directory still
-// belongs to a running process.
-//
-// It takes the second lock through a second [Acquire] — a second open file — in
-// this same process, because that is the case a shared advisory lock would get
-// wrong and the case that matters: two concurrent Opens in one program must see
-// each other's directories as live.
 func TestAcquireRefusesASecondHolderUntilTheFirstReleases(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -64,15 +56,11 @@ func TestAcquireRefusesASecondHolderUntilTheFirstReleases(t *testing.T) {
 	if err = third.Release(); err != nil {
 		t.Errorf("releasing the second holder: %v", err)
 	}
-	// Release is idempotent so that a Close path may release before removing
-	// without tracking whether it already did.
 	if err = third.Release(); err != nil {
 		t.Errorf("a second Release reported an error: %v", err)
 	}
 }
 
-// TestClaimWritesTheMarkerAndHoldsTheLock pins the pair a claimed directory
-// carries: the lock a sweep tests for liveness, and the JSON a human reads.
 func TestClaimWritesTheMarkerAndHoldsTheLock(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -99,9 +87,6 @@ func TestClaimWritesTheMarkerAndHoldsTheLock(t *testing.T) {
 	if marker.Kept {
 		t.Error("a freshly claimed directory is marked kept")
 	}
-	// The JSON is for humans, so the timestamp is pinned as text as well as as
-	// a value: a marker whose time cannot be read at a glance is a marker
-	// nobody reads.
 	raw, err := os.ReadFile(MarkerPath(dir))
 	if err != nil {
 		t.Fatalf("reading the marker: %v", err)
@@ -125,10 +110,6 @@ func TestClaimWritesTheMarkerAndHoldsTheLock(t *testing.T) {
 	}
 }
 
-// TestClaimNamesAnOwnedDirectoryWithErrOwned pins the one failure a caller has
-// to tell apart from the rest: a claim that lost to another process's lock is a
-// directory that now belongs to that process, and a caller that had just made
-// it must not remove it on the way out.
 func TestClaimNamesAnOwnedDirectoryWithErrOwned(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -159,9 +140,6 @@ func TestClaimNamesAnOwnedDirectoryWithErrOwned(t *testing.T) {
 	}
 }
 
-// TestKeepMarksTheDirectoryAndReleasesTheLock covers the deliberate keep: the
-// directory outlives the process that made it, and says so in a way the next
-// run's sweep obeys.
 func TestKeepMarksTheDirectoryAndReleasesTheLock(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -187,16 +165,10 @@ func TestKeepMarksTheDirectoryAndReleasesTheLock(t *testing.T) {
 	}
 }
 
-// TestSweepRemovesOnlyWhatItOwns is the sweep's whole contract in one table.
-// Every row is a directory in one parent, swept in one call, because the rules
-// only mean anything together: what makes "dead" safe to remove is that "live"
-// and "kept" in the same parent are not.
 func TestSweepRemovesOnlyWhatItOwns(t *testing.T) {
 	parent := t.TempDir()
 	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 
-	// live is held for the whole sweep by a lock this test owns, which is
-	// exactly what a running go-mutants process holds.
 	live := makeDir(t, parent, "go-mutants-snap-live")
 	claimAt(t, live, now.Add(-time.Minute))
 	held, ok, err := Acquire(LockPath(live))
@@ -205,35 +177,25 @@ func TestSweepRemovesOnlyWhatItOwns(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = held.Release() })
 
-	// dead carries a marker and a lock nobody holds: the owner is gone.
 	dead := makeDir(t, parent, "go-mutants-snap-dead")
 	claimAt(t, dead, now.Add(-time.Hour))
 	writeFile(t, filepath.Join(dead, "payload.bin"), strings.Repeat("x", 512))
 
-	// deadScratch proves the sweep answers to every prefix it is given, not
-	// only the first.
 	deadScratch := makeDir(t, parent, "go-mutants-api-dead")
 	claimAt(t, deadScratch, now.Add(-time.Hour))
 
-	// kept was preserved on purpose and is not the sweep's to remove, however
-	// long ago its process exited.
 	kept := makeDir(t, parent, "go-mutants-snap-kept")
 	owner := claimAt(t, kept, now.Add(-72*time.Hour))
 	if err = owner.Keep(); err != nil {
 		t.Fatalf("keeping a directory: %v", err)
 	}
 
-	// legacy predates the marker entirely: the only thing known about it is
-	// that nothing has touched it for a day.
 	legacy := makeDir(t, parent, "go-mutants-snap-legacy")
 	touch(t, legacy, now.Add(-25*time.Hour))
 
-	// legacyYoung is the same shape a minute old, which is what a run started
-	// by an older binary looks like while it is still running.
 	legacyYoung := makeDir(t, parent, "go-mutants-snap-legacy-young")
 	touch(t, legacyYoung, now.Add(-time.Minute))
 
-	// Neither of these is go-mutants', whatever they are named.
 	unrelated := makeDir(t, parent, "someone-elses-work")
 	touch(t, unrelated, now.Add(-72*time.Hour))
 	prefixedFile := filepath.Join(parent, "go-mutants-snap-notadirectory")
@@ -270,8 +232,6 @@ func TestSweepRemovesOnlyWhatItOwns(t *testing.T) {
 	}
 }
 
-// TestSweepOfAMissingParentIsEmptyAndSucceeds keeps the first run on a machine
-// from failing over a temporary directory nobody has written to yet.
 func TestSweepOfAMissingParentIsEmptyAndSucceeds(t *testing.T) {
 	t.Parallel()
 	result, err := Sweep(filepath.Join(t.TempDir(), "not-there"), []string{"go-mutants-snap-"}, time.Now())
@@ -283,9 +243,6 @@ func TestSweepOfAMissingParentIsEmptyAndSucceeds(t *testing.T) {
 	}
 }
 
-// TestSweepReportsEveryFailureAndStillRemovesTheRest pins the loop's shape: a
-// directory that cannot be removed is a diagnostic, not a reason to leave the
-// next gigabyte on disk.
 func TestSweepReportsEveryFailureAndStillRemovesTheRest(t *testing.T) {
 	t.Parallel()
 	parent := t.TempDir()
@@ -318,9 +275,6 @@ func TestSweepReportsEveryFailureAndStillRemovesTheRest(t *testing.T) {
 	}
 }
 
-// TestSweepIgnoresAMalformedMarker keeps a half-written marker from making a
-// dead directory immortal: the lock is the liveness signal, and an unreadable
-// marker only means the directory was not deliberately kept.
 func TestSweepIgnoresAMalformedMarker(t *testing.T) {
 	t.Parallel()
 	parent := t.TempDir()
@@ -351,9 +305,6 @@ func readMarker(t *testing.T, dir string) Marker {
 	return marker
 }
 
-// claimAt claims dir, releases the lock so that the directory looks like one
-// whose process has gone, and returns the owner for a test that wants to keep
-// it afterwards.
 func claimAt(t *testing.T, dir string, started time.Time) *Owner {
 	t.Helper()
 	owner, err := Claim(dir, started)

@@ -172,7 +172,6 @@ The optional Go API only attaches resource metadata:
 ```go
 func TestRepository(t *testing.T) {
 	goatest.Run(t, goatest.Integration("postgres", "redis"), func(t *goatest.T) {
-		// t embeds *testing.T.
 	})
 }
 ```
@@ -180,8 +179,7 @@ func TestRepository(t *testing.T) {
 Projects do not have to import this package. The equivalent directive is:
 
 ```go
-//goatest:resources postgres redis
-func TestRepository(t *testing.T) { /* ... */ }
+func TestRepository(t *testing.T) {  }
 ```
 
 Use Go's native `FuzzX` functions or a mature property library such as Rapid;

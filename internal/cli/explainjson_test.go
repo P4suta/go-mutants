@@ -1,20 +1,6 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// `explain --json`: the account of one mutant as a document rather than as
-// prose.
-//
-// The command used to refuse this flag, on the argument that the run report and
-// the recording already are the machine-readable forms. The argument was right
-// about the danger — a third encoding of the same facts really would be a third
-// thing to hold in step — and wrong about the facts, and these tests are where
-// that is settled: five of the things this command prints are in neither
-// document, and each of them is asserted here against a document neither could
-// have produced.
-//
-// The danger is answered by construction rather than by care. There is one
-// gatherer and two renderers, so the assertion that the prose and the document
-// agree is an assertion about two readings of one value.
 package cli
 
 import (
@@ -32,12 +18,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// explainedJSON runs the command with `--json`, fails unless it exited 0 and
-// wrote a document its own schema accepts, and returns the decoded document.
-//
-// The schema check is in the helper rather than in one test because it is the
-// claim every other assertion here rests on: a field read out of a document
-// nothing validated is a field a consumer may not find.
 func explainedJSON(t *testing.T, args ...string) map[string]any {
 	t.Helper()
 
@@ -53,12 +33,6 @@ func explainedJSON(t *testing.T, args ...string) map[string]any {
 	return document
 }
 
-// at walks a document by a path of keys and indices, failing the test at the
-// first step that is not there.
-//
-// It exists so that an assertion about a nested field reads as the field's own
-// path — `at(t, doc, "reproduce", "command")` — rather than as four type
-// assertions a reader has to unpick before seeing what is being claimed.
 func at(t *testing.T, document any, path ...any) any {
 	t.Helper()
 
@@ -91,7 +65,6 @@ func at(t *testing.T, document any, path ...any) any {
 	return here
 }
 
-// text is a document field that has to be a non-empty string.
 func text(t *testing.T, document any, path ...any) string {
 	t.Helper()
 
@@ -105,8 +78,6 @@ func text(t *testing.T, document any, path ...any) string {
 	return value
 }
 
-// TestExplainJSONIsADocumentOfItsOwnType is the first thing a consumer does:
-// branch on the two fields before decoding anything else.
 func TestExplainJSONIsADocumentOfItsOwnType(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	recordEvents(t, workspace, killedRecording(), map[int64]string{
@@ -125,18 +96,6 @@ func TestExplainJSONIsADocumentOfItsOwnType(t *testing.T) {
 	}
 }
 
-// TestExplainJSONCarriesWhatNeitherSourceHolds is the whole argument for the
-// flag existing, asserted one field at a time.
-//
-// Each of these five is composed here and written down nowhere else. The
-// recording holds an argument vector and a directory; the *line* that runs that
-// vector again with this mutant selected is this command's. The recording holds
-// two artifact events and the report holds a package; the line that rebuilds the
-// binary from them is this command's. The report's `timing` is the whole run's;
-// this mutant's share of a stage is this command's arithmetic over the
-// recording. The recording holds a path and a digest; the bytes at that path are
-// a third file. And whether the directory that line names still exists is a
-// judgement about the recording rather than anything in it.
 func TestExplainJSONCarriesWhatNeitherSourceHolds(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	recordEvents(t, workspace, killedRecording(), map[int64]string{
@@ -158,9 +117,6 @@ func TestExplainJSONCarriesWhatNeitherSourceHolds(t *testing.T) {
 		t.Errorf("reproduce.temporaries_kept = %v, and the recording holds a kept-scratch artifact", got)
 	}
 
-	// The mutant's own share of the stage it was measured inside. The stage ran
-	// for 24 s and this mutant accounts for 20.52 s of it; the whole-run figure
-	// is the same on every account and says nothing about this one.
 	if got := at(t, document, "timeline", 0, "share_ms"); got != float64(20520) {
 		t.Errorf("timeline[0].share_ms = %v, want the sum of this mutant's own passes (20520)", got)
 	}
@@ -174,13 +130,6 @@ func TestExplainJSONCarriesWhatNeitherSourceHolds(t *testing.T) {
 	}
 }
 
-// TestExplainJSONNamesTheDocumentsItWasDerivedFrom is what a derived document
-// owes its consumer.
-//
-// It is the answer to the objection this flag was refused under. A consumer who
-// wants the lossless claim about a run is told, in the document itself, which
-// file holds it — so this being a third encoding of some of those facts costs
-// nobody the ability to go and read the first.
 func TestExplainJSONNamesTheDocumentsItWasDerivedFrom(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	streamDir := recordEvents(t, workspace, killedRecording(), nil)
@@ -203,13 +152,6 @@ func TestExplainJSONNamesTheDocumentsItWasDerivedFrom(t *testing.T) {
 	}
 }
 
-// TestExplainJSONStatesAbsenceRatherThanOmittingIt is the command's own
-// principle written as a schema.
-//
-// A section whose document is missing says so rather than composing a plausible
-// command. In prose that is a sentence; in a document it has to be a field a
-// consumer can branch on, because a key that is simply absent is
-// indistinguishable from one a consumer misspelt.
 func TestExplainJSONStatesAbsenceRatherThanOmittingIt(t *testing.T) {
 	inExplainWorkspace(t, explainReport())
 
@@ -234,20 +176,6 @@ func TestExplainJSONStatesAbsenceRatherThanOmittingIt(t *testing.T) {
 	}
 }
 
-// TestExplainJSONWritesAnEmptyListWhereAListBelongs walks the whole document
-// and refuses a null in any of them.
-//
-// A consumer that may iterate a list without checking it first is a consumer
-// whose code is shorter by one branch everywhere, and that promise is only
-// worth making if nothing can break it — so it is asserted over every list in
-// every shape this document takes rather than over the ones a test remembered.
-//
-// The shapes are chosen so that every list is actually reached, which is not
-// the same as choosing several mutants. A mutant nothing executed has no
-// `executions`, so its account never reaches `commands` or `binaries` at all: a
-// table of uncovered, rejected and cached mutants would walk past three of the
-// lists it claims to be checking. The two rows with passes under them are what
-// reach those, once with a recording to put commands in them and once without.
 func TestExplainJSONWritesAnEmptyListWhereAListBelongs(t *testing.T) {
 	for _, target := range []struct {
 		what     string
@@ -276,13 +204,6 @@ func TestExplainJSONWritesAnEmptyListWhereAListBelongs(t *testing.T) {
 	}
 }
 
-// TestTheEmptyListWalkReachesEveryListTheDocumentHas is the check on the check.
-//
-// [TestExplainJSONWritesAnEmptyListWhereAListBelongs] can only fail on a list it
-// walked past, and a walk that reached three of the twelve would pass for the
-// wrong reason. This asserts the coverage of that walk directly: between the two
-// forms of the document, every key [listFields] names is one the walker really
-// arrived at.
 func TestTheEmptyListWalkReachesEveryListTheDocumentHas(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	recordEvents(t, workspace, killedRecording(), map[int64]string{5: "FAIL\n"})
@@ -309,7 +230,6 @@ func TestTheEmptyListWalkReachesEveryListTheDocumentHas(t *testing.T) {
 	}
 }
 
-// lastKeyOf is the field name at the end of one of [listsIn]'s paths.
 func lastKeyOf(path string) string {
 	if at := strings.LastIndex(path, "."); at >= 0 {
 		return path[at+1:]
@@ -317,15 +237,6 @@ func lastKeyOf(path string) string {
 	return path
 }
 
-// TestGatheringAnAccountWithNothingInItStillWritesEveryList is the edge the
-// fixture above cannot reach.
-//
-// Every execution in [explainReport] names a binary and every mutant names a
-// covering package, so a walk over that document would step past `binaries`,
-// `packages` and `tests` while reporting that it had checked them. A pass that
-// named no binary is not hypothetical — it is what an execution row of a run
-// with coverage off looks like — and the promise being kept here is that a
-// consumer may iterate, not that this repository's fixtures happen to be full.
 func TestGatheringAnAccountWithNothingInItStillWritesEveryList(t *testing.T) {
 	r := explainReport()
 	bare := report.Mutant{
@@ -362,12 +273,6 @@ func TestGatheringAnAccountWithNothingInItStillWritesEveryList(t *testing.T) {
 	}
 }
 
-// listsIn finds every field the schema declares as an array, by walking what
-// was written rather than by naming them.
-//
-// The walk is over the *document*, so a list that is null is found by the key
-// it is under rather than by its type — which is the case this is looking for,
-// and the one a walk over types would skip.
 func listsIn(document any, prefix []string) map[string]any {
 	found := map[string]any{}
 	object, ok := document.(map[string]any)
@@ -397,21 +302,12 @@ func listsIn(document any, prefix []string) map[string]any {
 	return found
 }
 
-// listFields is every key this document spells as an array. A null under one of
-// them is the failure [listsIn] looks for.
 var listFields = map[string]bool{
 	"warnings": true, "packages": true, "tests": true, "executions": true,
 	"binaries": true, "commands": true, "argv": true, "output_tail": true,
 	"timeline": true, "test_command": true, "skip_sites": true, "mutants": true,
 }
 
-// TestExplainJSONOfARejectionCarriesTheCompilersWords is the mutant that never
-// existed, as a document.
-//
-// Three fields are null rather than empty, and that is the claim: a rejection
-// carries what discovery proposed and nothing about an edit that was never
-// built, so a consumer reading `original` gets "there is none" rather than "it
-// was the empty string".
 func TestExplainJSONOfARejectionCarriesTheCompilersWords(t *testing.T) {
 	inExplainWorkspace(t, explainReport())
 
@@ -435,13 +331,6 @@ func TestExplainJSONOfARejectionCarriesTheCompilersWords(t *testing.T) {
 	}
 }
 
-// TestExplainJSONOfAPositionIsTheSameDocumentType keeps the command's two forms
-// one contract.
-//
-// A consumer branches on `subject.kind` and gets either an account or a
-// listing, which is why the schema is a `oneOf` rather than one object with
-// half its fields optional: a document with `skip_sites` *and* `executions` is
-// one neither form can produce, and the schema should say so.
 func TestExplainJSONOfAPositionIsTheSameDocumentType(t *testing.T) {
 	r := explainReport()
 	sites := []discover.SkipSite{
@@ -468,20 +357,11 @@ func TestExplainJSONOfAPositionIsTheSameDocumentType(t *testing.T) {
 	if got := at(t, document, "mutants", 0, "outcome"); got != "killed" {
 		t.Errorf("mutants[0].outcome = %v, want what the report says became of it", got)
 	}
-	// The other file's whole-file skip is out of scope, and the one in scope
-	// has coordinates.
 	if sites := at(t, document, "skip_sites").([]any); len(sites) != 1 {
 		t.Errorf("skip_sites = %v, want only the site at the position asked about", sites)
 	}
 }
 
-// TestExplainJSONOfAPositionWithNoReportSaysEveryOutcomeIsUnknown is the third
-// answer the outcome column has, and the one a null alone could not give.
-//
-// A mutant absent from a report and a report absent altogether are different
-// news: the first says the workspace and the run disagree, the second says
-// nothing has been measured here. `outcome` is null in both, so the difference
-// is carried by `source.report`.
 func TestExplainJSONOfAPositionWithNoReportSaysEveryOutcomeIsUnknown(t *testing.T) {
 	mutants := []catalogMutant{{
 		ID: killedID, DisplayID: displayOf(killedID), Path: "clamp.go", Line: 41, Column: 7,
@@ -499,13 +379,6 @@ func TestExplainJSONOfAPositionWithNoReportSaysEveryOutcomeIsUnknown(t *testing.
 	}
 }
 
-// marshalled encodes a gathered document the way the command writes it, checks
-// it against the schema, and decodes it back.
-//
-// The position form is driven through the gatherer rather than through the
-// command because the command has to run a discovery pass to reach one, and a
-// discovery pass needs a toolchain; the integration test drives the whole
-// sentence.
 func marshalled(t *testing.T, document any) map[string]any {
 	t.Helper()
 
@@ -523,21 +396,6 @@ func marshalled(t *testing.T, document any) map[string]any {
 	return decoded
 }
 
-// TestTheExplanationSchemaNamesTheFieldThatIsWrong is a claim about the schema
-// rather than about any document, and it is there because the obvious way to
-// write this schema gets it wrong.
-//
-// Two forms of one document invite a `oneOf` over two whole objects. Under one,
-// a single bad value makes *both* branches fail, and the validator can only
-// report that nothing matched — so a developer who broke `binaries` is told
-// that `coverage`, `verdict`, `timeline` and two more are "not allowed", and
-// the one field that is actually wrong is not named. The same is true of an
-// `if`/`then` with `unevaluatedProperties`, which drops a failed branch's
-// annotations and lands in the same place.
-//
-// So every field is declared and validated once at the top level, and the
-// branch carries nothing but key sets. What that buys is exactly this: the
-// pointer in the failure is the field a developer has to go and fix.
 func TestTheExplanationSchemaNamesTheFieldThatIsWrong(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	recordEvents(t, workspace, killedRecording(), nil)
@@ -584,13 +442,6 @@ func TestTheExplanationSchemaNamesTheFieldThatIsWrong(t *testing.T) {
 	}
 }
 
-// TestTheExplanationSchemaRefusesADocumentOfBothForms is the other half of what
-// the branch is for.
-//
-// A consumer branches on `subject.kind` and then reads either an account or a
-// listing. A document carrying both would make that branch a guess, and neither
-// form can produce one — so the schema says so rather than leaving it to the
-// writer to remember.
 func TestTheExplanationSchemaRefusesADocumentOfBothForms(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	recordEvents(t, workspace, killedRecording(), nil)
@@ -607,8 +458,6 @@ func TestTheExplanationSchemaRefusesADocumentOfBothForms(t *testing.T) {
 	}
 }
 
-// reparse is a deep copy by way of the encoding, so that a test may break one
-// field of a decoded document without breaking it for the test beside it.
 func reparse(t *testing.T, document map[string]any) map[string]any {
 	t.Helper()
 
@@ -623,14 +472,6 @@ func reparse(t *testing.T, document map[string]any) map[string]any {
 	return copied
 }
 
-// TestExplainJSONAndTheProseAreOneAccount is the structural claim the flag
-// rests on.
-//
-// Not that the two renderings are similar, but that they read one value: every
-// fact the document states about this mutant is a fact the prose prints,
-// because both came out of [gatherAccount]. A field that appeared in one and
-// not the other would be a missing line in a renderer, and this is what would
-// find it.
 func TestExplainJSONAndTheProseAreOneAccount(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	recordEvents(t, workspace, killedRecording(), map[int64]string{
@@ -658,13 +499,6 @@ func TestExplainJSONAndTheProseAreOneAccount(t *testing.T) {
 	}
 }
 
-// TestExplainJSONWarnsAboutAForeignRecording carries the loudest sentence the
-// prose has into the one place a program would look for it.
-//
-// A run id is content-derived, so two runs can be filed under one. The prose
-// prints the warning above everything derived from the recording; a document
-// cannot rely on order, so it says the same thing twice — once as a flag on the
-// source, once as the sentence.
 func TestExplainJSONWarnsAboutAForeignRecording(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	dir := recordEvents(t, workspace, foreignRecording(), nil)
@@ -685,14 +519,6 @@ func TestExplainJSONWarnsAboutAForeignRecording(t *testing.T) {
 	}
 }
 
-// TestExplainJSONKeepsTheStreamADocumentWhenAPrefixIsAmbiguous is the one place
-// the flag changes something other than the output.
-//
-// A `--json` stream is a document or nothing. The listing of what an ambiguous
-// prefix matched is the answer to "which did you mean", and printing it into
-// the stream would leave a consumer with bytes that parse as neither — so under
-// `--json` it goes to standard error, immediately above the refusal that sent
-// the reader looking for it.
 func TestExplainJSONKeepsTheStreamADocumentWhenAPrefixIsAmbiguous(t *testing.T) {
 	inExplainWorkspace(t, explainReport())
 
@@ -710,13 +536,6 @@ func TestExplainJSONKeepsTheStreamADocumentWhenAPrefixIsAmbiguous(t *testing.T) 
 	}
 }
 
-// TestExplainJSONReadsAPreservedOutputItCannotOpen keeps the one section that
-// touches the filesystem fail-open in the document too.
-//
-// A recording names the file and the bytes are a third thing beside both
-// documents, so it can be gone — a bundle copied without its output directory
-// is the ordinary way. The account says why rather than dropping the row, which
-// is the same answer the prose gives.
 func TestExplainJSONReadsAPreservedOutputItCannotOpen(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	dir := recordEvents(t, workspace, killedRecording(), map[int64]string{5: "gone\n"})
@@ -733,15 +552,6 @@ func TestExplainJSONReadsAPreservedOutputItCannotOpen(t *testing.T) {
 	}
 }
 
-// TestExplainJSONSaysWhichBudgetSettledAMemoryKill carries into the document
-// the one thing the outcome alone cannot say.
-//
-// A mutant the memory bound stopped is reported as `killed` and names the suite
-// that was running — and that suite's tests all pass, so a reader who goes and
-// looks finds nothing. Both figures are carried because either alone is
-// unactionable: the peak says what the mutant did, the bound says what it was
-// measured against, and only the pair says whether to fix the mutant or the
-// budget.
 func TestExplainJSONSaysWhichBudgetSettledAMemoryKill(t *testing.T) {
 	r := explainReport()
 	for i := range r.Mutants {

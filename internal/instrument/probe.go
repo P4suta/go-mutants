@@ -14,83 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// The probe rewrite of a `return`.
-//
-// # What it is
-//
-// A probe tree is the original program with a report attached. For a
-// return-value mutant at result position j of `return E0, E1, …`, whose
-// replacement is the constant K, the statement becomes
-//
-//	{ var r0 T0 = E0; var r1 T1 = E1; …; if rj != K { __gm.Infect(i) }; return r0, r1, … }
-//
-// and the mutant is never active: what runs is the program the user wrote, and
-// what is recorded is whether the mutated value would have differed from it.
-//
-// # Why it is exact
-//
-// The mutant this stands in for is `return …, K, …`: it returns the constant
-// *instead of evaluating* Ej. So the rewrite can only speak for it where
-// evaluating Ej is nothing but computing a value, and internal/discover hands a
-// hint only where that holds. Three conditions, each argued in full in that
-// package's effects.go.
-//
-// Every operand of the statement is effect-free — no call, no method call, no
-// receive, no `append`. Then nothing the mutant skips was going to change what
-// the program does, and no evaluation order is observable: the `var` sequence
-// evaluates in source order, which is *not* the order gc uses for a plain
-// variable read beside a call, and with no effects anywhere every order yields
-// the same values. So the block's execution is the original's.
-//
-// The probed operand cannot panic. A panic there is a divergence — the mutant
-// returns its constant and panics at nothing — and it is one the comparison is
-// never reached to record, so the log would read exactly as it reads for a site
-// that never differed. The *other* operands may still panic: the original and
-// the mutant panic there identically, and recording nothing is then the truth.
-//
-// The probed result is not floating-point or complex, because `-0.0 != 0` is
-// false while `math.Signbit` and `1/x` tell those two values apart. NaN needs
-// no rule: `NaN != 0` is true, so such a site reports infected, which is only
-// ever the safe answer.
-//
-// This side re-derives none of it. The instrumenter has no type information and
-// trusts the hint exactly as it trusts a Form D declared type: a hint present
-// is a site discovery proved these three things about.
-//
-// Tj is the *declared result type* of the enclosing function, not the type of
-// the operand: `return 0` in a function returning int64 becomes
-// `var r0 int64 = 0`, which is exactly the conversion the `return` performs.
-// The mutant's `return K` would have gone through the same conversion, so
-// `rj != K` compares the two values the two programs would really have
-// returned. internal/discover spells those types, with the machinery a Form D
-// declaration already goes through, and refuses the site when it cannot.
-//
-// The comparison itself is total for every constant this family produces.
-// Numbers, strings and booleans compare with `!=` whatever named type they
-// wear, and a comparison of an interface, pointer, slice, map, channel or
-// function value with the `nil` literal compares against the nil value of that
-// very type — no dynamic-type comparison happens, so nothing panics.
-//
-// Named results and `defer` see what they always saw: `return r0, r1` assigns
-// the named results exactly as the original did, before any deferred function
-// runs. And a block whose last statement is a `return` is a terminating
-// statement, so a function whose body ended in one still does.
-//
-// # What it is not
-//
-// It is not a guard. Nothing here reads an activation flag, no mutated copy is
-// written, and the two trees never share a snapshot. Several mutants of one
-// statement — `return-true` and `return-false` on one boolean result, or one
-// rule on each of two results — are several `if` lines inside one block, never
-// nested rewrites, because there is only ever one rewrite per statement.
-
-// probeConstants are the replacements the return-value family produces, and the
-// only ones this form knows how to compare against.
-//
-// It is a set rather than a rule-name check on purpose: what the rewrite needs
-// is a constant expression it can put on the right of `!=`, and the set of
-// those is the thing to be exact about. A rule whose replacement is anything
-// else has no probe form yet and is left unprobed rather than guessed at.
 var probeConstants = map[string]bool{
 	"0":     true,
 	`""`:    true,
@@ -99,30 +22,12 @@ var probeConstants = map[string]bool{
 	"nil":   true,
 }
 
-// A probeEdit is what one mutant contributes to its site: which result it
-// replaces, the constant it would have replaced it with, and the dense index it
-// reports under.
 type probeEdit struct {
-	// index is the catalogue's dense index, which is what Infect records.
-	index uint32
-	// result is the position of the result the mutant replaces.
-	result int
-	// constant is the replacement, as it is written on the right of the
-	// comparison.
+	index    uint32
+	result   int
 	constant string
 }
 
-// probeFor returns what one mutant contributes to a probe tree, or nil when
-// this version has no probe form for it.
-//
-// The form is read rather than assumed, and the nil is the dispatch point for
-// every form still to come. A bool-valued site, an arithmetic operand, a
-// deleted statement: each needs a shape of its own, and until it has one the
-// honest answer is that the mutant is not probed — which costs a run the
-// executions it could have skipped and costs it nothing else. A hint carrying a
-// form this build has no renderer for falls here too, which is the fail-closed
-// direction: a newer discovery's site is left unprobed rather than rendered by
-// the wrong shape.
 func probeFor(m mutation.Mutant, guard discover.Guard) *probeEdit {
 	site := guard.Probe
 	if site == nil {
@@ -135,35 +40,12 @@ func probeFor(m mutation.Mutant, guard discover.Guard) *probeEdit {
 		}
 		return &probeEdit{index: m.Index, result: site.Index, constant: m.Replacement}
 	case discover.ProbeFormBool, discover.ProbeFormValue, discover.ProbeFormReach:
-		// Every mutant of such a site is probeable, whatever its rule. The
-		// return form needs a constant because it compares a temporary against
-		// one; these two compare the site's two *readings*, and the mutated
-		// reading is rendered from the source the way a guard's is.
 		return &probeEdit{index: m.Index}
 	default:
 		return nil
 	}
 }
 
-// Probes reports whether a [ModeProbe] pass writes a call naming this mutant's
-// index — whether, in other words, a probe tree speaks for it at all.
-//
-// It is exported because the answer is one a caller must have and cannot
-// re-derive, and because getting it wrong is unsound in exactly one direction.
-// A mutant with no probe form leaves its file untouched here, so the probe tree
-// compiles and [validate.Validate] *accepts* the mutant exactly as it accepts a
-// probed one. A caller reading "accepted by a probe validation" as "probed"
-// would then take that mutant's absence from every infection log as licence to
-// skip the tests that kill it — while the truth is that nothing could ever have
-// recorded it. Only this package knows which forms exist, so only this package
-// can say.
-//
-// The predicate is [probeFor] and nothing beside it, which is what keeps the
-// answer and the rewrite from drifting apart: a form added there is answered
-// for here without a second list to keep in step. A mutant this index has never
-// heard of is not probed rather than a guess — a catalogue and a hint index
-// built from different discovery passes is the one case where guessing would
-// invent a fact.
 func (h Hints) Probes(m mutation.Mutant) bool {
 	guard, ok := h[m.ID]
 	if !ok {
@@ -172,43 +54,20 @@ func (h Hints) Probes(m mutation.Mutant) bool {
 	return probeFor(m, guard) != nil
 }
 
-// A probeSite is one `return` statement as the rewrite needs it: the bytes it
-// replaces, where each returned value sits inside them, and the type each
-// result has to be declared as.
 type probeSite struct {
-	// form is the shape the rewrite takes, from the hint. The renderer
-	// branches on it before reading anything else here, because the two forms
-	// carry different halves of this struct.
-	form discover.ProbeForm
-	// span is the byte range the rewrite replaces: the whole statement for
-	// [discover.ProbeFormReturn], the expression for [discover.ProbeFormBool].
-	span mutation.Span
-	// operands are the byte ranges of the returned values, in order, and empty
-	// for a boolean site, which has no operands to name.
+	form     discover.ProbeForm
+	span     mutation.Span
 	operands []mutation.Span
-	// types is one spelled type per operand, from the hint, and empty for a
-	// boolean site, whose type is `bool` by construction.
-	types []string
+	types    []string
 }
 
-// probeSiteFor turns one mutant's probe hint into the site the renderer works
-// from, checking everything the hint claims against the file that is there.
-//
-// The checks are the same discipline [siteIndex.siteFor] applies and are here
-// for the same reason: a hint that no longer describes the file must produce a
-// refusal rather than an edit. The statement has to be a `return`, it has to
-// return as many values as the hint spelled types for, and the edit has to sit
-// inside the result the hint says it does — because the whole meaning of the
-// rewrite is that this temporary holds that value.
 func (x *siteIndex) probeSiteFor(m mutation.Mutant, hint *discover.ProbeSite, srcPath string) (probeSite, error) {
-	//exhaustive:total ProbeFormReturn is the code below this switch. The three forms with a
-	// site builder of their own are named; the return form is what is left, and
-	// naming it here would mean writing the fall-through twice.
 	switch hint.Form {
 	case discover.ProbeFormBool, discover.ProbeFormValue:
 		return x.expressionSiteFor(m, hint, srcPath)
 	case discover.ProbeFormReach:
 		return x.reachSiteFor(m, hint, srcPath)
+	case discover.ProbeFormReturn:
 	}
 	stmt, ok := x.stmts[hint.Span]
 	if !ok {
@@ -240,17 +99,6 @@ func (x *siteIndex) probeSiteFor(m mutation.Mutant, hint *discover.ProbeSite, sr
 	return probeSite{form: hint.Form, span: hint.Span, operands: operands, types: hint.Types}, nil
 }
 
-// expressionSiteFor resolves a hint whose site is an expression rather than a
-// statement, which is both of the forms that measure a site where it stands.
-//
-// Three checks and no more, because the forms need no more: the bytes have to
-// be an expression, since the rewrite puts a call where they stood and a call
-// is an expression; the edit has to sit inside them, since the mutated reading
-// is the site's own bytes with that one edit applied; and the value form has to
-// carry the one type its closure writes out. Nothing about the *type* is
-// checked here and nothing can be — this package has no type checker — and
-// nothing needs to be: a site whose type the hint got wrong fails to compile,
-// which is a refusal the validation pass already knows how to bisect.
 func (x *siteIndex) expressionSiteFor(
 	m mutation.Mutant, hint *discover.ProbeSite, srcPath string,
 ) (probeSite, error) {
@@ -267,12 +115,6 @@ func (x *siteIndex) expressionSiteFor(
 	return probeSite{form: hint.Form, span: hint.Span, types: hint.Types}, nil
 }
 
-// reachSiteFor resolves a reachability hint against the file.
-//
-// The bytes have to be a statement, because the rewrite puts a block where they
-// stood and a block is a statement; and the edit has to be the statement
-// itself, because what is recorded is that *this* statement ran. Nothing else
-// is asked: the statement is copied through untouched.
 func (x *siteIndex) reachSiteFor(
 	m mutation.Mutant, hint *discover.ProbeSite, srcPath string,
 ) (probeSite, error) {
@@ -285,18 +127,6 @@ func (x *siteIndex) reachSiteFor(
 	return probeSite{form: hint.Form, span: hint.Span}, nil
 }
 
-// buildProbeSites arranges one file's probed mutants into the forest of `return`
-// statements they occupy, what each of those statements is, and what each mutant
-// contributes to it.
-//
-// Mutants with no probe form are skipped rather than refused: they are still
-// catalogued, still mutated in the other tree, and simply not measured here. A
-// mutant with no *hint at all* is refused exactly as the mutant tree refuses
-// one, because that is not a candidate this phase declined to probe — it is a
-// catalogue and a hint index that were built from different discovery passes.
-//
-// The widest statement in the file comes back with them, because the
-// temporaries are named once per file and have to be free for every site in it.
 func buildProbeSites(
 	index *siteIndex,
 	srcPath string,
@@ -338,9 +168,6 @@ func buildProbeSites(
 		}
 		sites[resolved.span] = resolved
 		edits[m.ID] = *edit
-		// The probe tree's own imports, kept apart from the mutant tree's: the
-		// temporaries a probe declares spell the *result* types, and an import
-		// only they need would sit unused in the tree beside it.
 		completions = discover.MergeCompletions(completions, guard.Probe.Imports)
 		items = append(items, interval.Item[mutation.Mutant]{Span: resolved.span, Payload: m})
 		widest = max(widest, len(resolved.operands))
@@ -353,14 +180,6 @@ func buildProbeSites(
 	return forest, sites, edits, widest, completions, nil
 }
 
-// probesAgree refuses two hints that name one statement and disagree about what
-// it returns.
-//
-// The operands and their types are properties of the statement rather than of
-// the mutant, so two candidates in one `return` must produce the same answer.
-// Rendering one rewrite from two contradictory hints would mean declaring a
-// temporary of one candidate's type and comparing the other candidate's
-// constant against it.
 func probesAgree(previous, current probeSite, m mutation.Mutant, srcPath string) error {
 	if previous.form == current.form &&
 		slicesEqual(previous.operands, current.operands) &&
@@ -375,9 +194,6 @@ func probesAgree(previous, current probeSite, m mutation.Mutant, srcPath string)
 	}
 }
 
-// slicesEqual and stringsEqual compare the two halves of a probe site. They are
-// spelled out rather than reached for through generics so that this file
-// depends on nothing a byte rewriter would not already have.
 func slicesEqual(a, b []mutation.Span) bool {
 	if len(a) != len(b) {
 		return false
@@ -402,23 +218,8 @@ func stringsEqual(a, b []string) bool {
 	return true
 }
 
-// probeTemps names the temporaries one file's probe rewrites declare.
-//
-// The names are derived from the runtime alias, which [aliasIn] already chose to
-// be one nothing in the file or its package block spells — but "__gm is free"
-// says nothing about "__gm_r0 is free", so each one is checked against the same
-// set, and a family with any name taken is abandoned whole rather than one name
-// at a time. That matters because the names are used together: a rewrite that
-// took __gm_r0 from one family and __gm_r1 from another would still be correct,
-// and would be much harder to read in a diff.
-//
-// The bumped families end in "_" so that no two of them can ever produce one
-// name: family 0 is "__gm_r" followed by digits, and family n is "__gm_rn_"
-// followed by digits, which the first can never spell.
 type probeTemps struct{ prefix string }
 
-// newProbeTemps chooses the family, given how many results the widest `return`
-// in the file has.
 func newProbeTemps(alias string, taken map[string]bool, widest int) probeTemps {
 	for n := 0; ; n++ {
 		prefix := alias + "_r"
@@ -431,7 +232,6 @@ func newProbeTemps(alias string, taken map[string]bool, widest int) probeTemps {
 	}
 }
 
-// familyIsFree reports whether every name a family would use is unbound.
 func familyIsFree(prefix string, widest int, taken map[string]bool) bool {
 	for i := range widest {
 		if taken[prefix+strconv.Itoa(i)] {
@@ -441,44 +241,21 @@ func familyIsFree(prefix string, widest int, taken map[string]bool) bool {
 	return true
 }
 
-// at is the temporary holding result i.
 func (p probeTemps) at(i int) string { return p.prefix + strconv.Itoa(i) }
 
-// A probeRenderer turns one file's probe sites into the rewrite above.
 type probeRenderer struct {
-	// path is the module-relative path, for diagnostics only.
-	path string
-	// src is the pristine file, the coordinate system every span is in.
-	src []byte
-	// alias is the local name this file imports the runtime package under, and
-	// so the name Infect is called through.
+	path  string
+	src   []byte
 	alias string
-	// temps names the temporaries every site in this file declares.
 	temps probeTemps
-	// sites is what each node of the forest turned out to be, by site span.
 	sites map[mutation.Span]probeSite
-	// edits is what each mutant contributes, by mutant id.
 	edits map[string]probeEdit
 }
 
-// render composes every site of one file, children before parents, exactly as
-// the guard renderer does and for the same reason: a `return` inside a function
-// literal inside another `return`'s operand has to be rewritten before the
-// operand holding it is folded onto a line.
 func (r *probeRenderer) render(forest interval.Forest[mutation.Mutant]) ([]Splice, int, error) {
 	return renderSites(forest, r.src, r.compose)
 }
 
-// compose renders one `return` as its probe.
-//
-// The whole rewrite is written on one line and the line breaks the statement
-// held are appended after the closing brace. That is what keeps every byte
-// after the statement on the line it started on, and putting them outside the
-// block rather than inside it is deliberate: the block is then exactly one line
-// in a diff, followed by the emptied remainder of the statement, which is what
-// the rewrite actually did. A newline written between the `return` and the `}`
-// would spread the block over the same lines while meaning the same thing, and
-// would read as though the rewrite had preserved a structure it has not.
 func (r *probeRenderer) compose(node *siteNode, rendered map[*siteNode][]byte) ([]byte, error) {
 	s, ok := r.sites[node.Span]
 	if !ok {
@@ -488,9 +265,6 @@ func (r *probeRenderer) compose(node *siteNode, rendered map[*siteNode][]byte) (
 				r.path, node.Span),
 		}
 	}
-	//exhaustive:total ProbeFormReturn is what the code below composes, for the reason the same
-	// switch in probeSiteFor has: the forms with a composer of their own are
-	// named and the return form is the remainder.
 	switch s.form {
 	case discover.ProbeFormBool:
 		return r.composeBool(node, s, rendered)
@@ -498,6 +272,7 @@ func (r *probeRenderer) compose(node *siteNode, rendered map[*siteNode][]byte) (
 		return r.composeValue(node, s, rendered)
 	case discover.ProbeFormReach:
 		return r.composeReach(node, s, rendered)
+	case discover.ProbeFormReturn:
 	}
 	operands, err := r.operands(node, s, rendered)
 	if err != nil {
@@ -536,10 +311,6 @@ func (r *probeRenderer) compose(node *siteNode, rendered map[*siteNode][]byte) (
 	}
 	b.WriteString(" }")
 
-	// Asserted rather than assumed: the operands come back from [Flatten],
-	// which proves its own output holds no line break, and everything else
-	// written here is an identifier, a spelled type or a constant. A line break
-	// reaching this buffer would move every line after the statement.
 	if got := CountLines(b.Bytes()); got != 0 {
 		return nil, r.lineDrift(fmt.Sprintf("the probe at %s holds %d line breaks before its statement's were added",
 			node.Span, got))
@@ -550,29 +321,6 @@ func (r *probeRenderer) compose(node *siteNode, rendered map[*siteNode][]byte) (
 	return b.Bytes(), nil
 }
 
-// composeBool renders one boolean site as its probe.
-//
-// The shape, for alternatives m1..mn with mutated readings M1..Mn and the
-// site's current text ORIG, is
-//
-//	A.Differs(in, … A.Differs(i1, (ORIG), (M1)) …, (Mn))
-//
-// where A is this file's alias for the runtime package. Each call yields its
-// second argument -- the original's reading -- so what the expression evaluates
-// to is ORIG whatever the chain around it records. That is why several mutants
-// of one site chain rather than fight over the slot, and why the innermost
-// operand is the original.
-//
-// ORIG is the site's bytes with the probes of any nested sites already folded
-// in, so an inner boolean site records from here. Each Mk is rendered from the
-// *pristine* bytes with that one edit applied, exactly as a guard's mutated
-// copy is -- which is what keeps a nested site from being measured twice, once
-// through the original and once through every reading around it.
-//
-// Line preservation holds for the reason the guard forms' does: everything
-// written before ORIG is on ORIG's first line and everything after it on ORIG's
-// last, because the prefixes hold no line break and every Mk comes back from
-// [Flatten].
 func (r *probeRenderer) composeBool(
 	node *siteNode, s probeSite, rendered map[*siteNode][]byte,
 ) ([]byte, error) {
@@ -618,27 +366,6 @@ func (r *probeRenderer) composeBool(
 	return b.Bytes(), nil
 }
 
-// composeValue renders one typed site as its probe.
-//
-// The shape, for alternatives m1..mn with mutated readings M1..Mn, the site's
-// current text ORIG and its spelled type T, is
-//
-//	func() T { var p T = (ORIG); if p != (M1) { A.Infect(i1) }; … ; return p }()
-//
-// where A is this file's alias for the runtime package and p is the temporary
-// the return form also names. It is the guard's own Form E with a measurement
-// inside it, and standing where the expression stood is what makes it work: the
-// value is produced in the site's own context, so the compiler settles its type
-// exactly as it settled the original's, and nothing has to be hoisted to a
-// statement that may not exist — a `switch` tag and a `for` post statement have
-// nowhere to put one.
-//
-// The original is evaluated once, into p, and p is what the closure yields, so
-// the program this is spliced into is the program without it. Each Mk is
-// evaluated once more, which is what the site's inertness pays for.
-//
-// ORIG carries the probes of any nested sites and each Mk is rendered from the
-// pristine bytes, for [probeRenderer.composeBool]'s reasons.
 func (r *probeRenderer) composeValue(
 	node *siteNode, s probeSite, rendered map[*siteNode][]byte,
 ) ([]byte, error) {
@@ -682,20 +409,6 @@ func (r *probeRenderer) composeValue(
 	return b.Bytes(), nil
 }
 
-// composeReach renders one statement as its reachability probe.
-//
-// The shape, for alternatives m1..mn and the statement's current text ORIG, is
-//
-//	{ A.Infect(i1); … ; A.Infect(in); ORIG }
-//
-// where A is this file's alias for the runtime package. Nothing is evaluated
-// twice and nothing is compared: the statement runs as it always did, and what
-// is recorded is that it ran.
-//
-// ORIG carries the probes of any nested sites, so an expression inside the
-// statement is still measured by its own form — a deletion and an arithmetic
-// swap on one statement are two sites, one inside the other, and each records
-// what it can.
 func (r *probeRenderer) composeReach(
 	node *siteNode, s probeSite, rendered map[*siteNode][]byte,
 ) ([]byte, error) {
@@ -732,8 +445,6 @@ func (r *probeRenderer) composeReach(
 	return b.Bytes(), nil
 }
 
-// withChildren is the site's own bytes with the probes of its nested sites
-// folded in, which is what the original reading has to be.
 func (r *probeRenderer) withChildren(node *siteNode, rendered map[*siteNode][]byte) ([]byte, error) {
 	splices := make([]Splice, 0, len(node.Children))
 	for _, child := range node.Children {
@@ -747,14 +458,6 @@ func (r *probeRenderer) withChildren(node *siteNode, rendered map[*siteNode][]by
 	return patched, err
 }
 
-// mutated renders one mutant's reading of a site: the site's pristine bytes
-// with that one edit applied, folded onto a line.
-//
-// The pristine bytes rather than the composed ones, for the reason
-// [guardRenderer.mutated] uses them: a mutant is one edit to the program the
-// user wrote, and a copy carrying a nested site's probe would record that
-// site's mutants a second time from a reading nothing evaluates for its own
-// sake.
 func (r *probeRenderer) mutated(span mutation.Span, m mutation.Mutant) ([]byte, error) {
 	if !span.Contains(m.Span) {
 		return nil, &Error{
@@ -774,17 +477,6 @@ func (r *probeRenderer) mutated(span mutation.Span, m mutation.Mutant) ([]byte, 
 	return Flatten(patched)
 }
 
-// operands renders each returned value: its own pristine bytes, carrying
-// whatever the probe sites nested inside it produced, folded onto one line.
-//
-// Composing per operand rather than over the whole statement is what makes the
-// fold possible at all — the rewrite needs each value on its own, and the
-// statement's other bytes (the `return`, the commas) are not reproduced. Every
-// nested site lies inside exactly one operand, because a statement nested in a
-// `return` can only be inside a function literal and a function literal can
-// only be inside one of its values; a child that lands in none of them means
-// the forest and this file's syntax have stopped describing each other, and it
-// is refused rather than silently dropped.
 func (r *probeRenderer) operands(node *siteNode, s probeSite, rendered map[*siteNode][]byte) ([][]byte, error) {
 	placed := make([]bool, len(node.Children))
 	out := make([][]byte, len(s.operands))
@@ -826,12 +518,10 @@ func (r *probeRenderer) operands(node *siteNode, s probeSite, rendered map[*site
 	return out, nil
 }
 
-// original returns the pristine bytes a span covers.
 func (r *probeRenderer) original(span mutation.Span) []byte {
 	return r.src[span.StartByte:span.EndByte]
 }
 
-// lineDrift builds the line-preservation failure.
 func (r *probeRenderer) lineDrift(detail string) error {
 	return &Error{
 		Code:    CodeLineDrift,

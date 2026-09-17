@@ -53,10 +53,6 @@ func TestResolvePrepareOptionsScopesDiscoveryIndependently(t *testing.T) {
 	}
 }
 
-// macOS exposes its temporary directory through both /var and /private/var.
-// Go subprocesses may canonicalise that spelling even though os.MkdirTemp did
-// not, so fuzz workspace containment must compare filesystem identities rather
-// than the two lexical paths.
 func TestPrepareFuzzWorkspaceAcceptsAliasedSnapshotParent(t *testing.T) {
 	realParent := t.TempDir()
 	realRoot := filepath.Join(realParent, "snapshot")
@@ -110,10 +106,6 @@ func TestSelectTestPackagesAcceptsAliasedSnapshotRoot(t *testing.T) {
 	}
 }
 
-// TestBranchProofReachesTheEngineAPI is the consumer-facing half of the branch
-// proof. An embedder reads the public catalogue and never sees a discovery
-// type, so the proof has to survive the conversion makeCatalog performs — and a
-// mutant discovery proved nothing about has to keep carrying nothing.
 func TestBranchProofReachesTheEngineAPI(t *testing.T) {
 	digest := mutation.DigestString("package a\n")
 	located := func(name string, start, end uint32, original, replacement string, branch *discover.BranchProof) discover.Located {
@@ -185,9 +177,6 @@ func TestBranchProofReachesTheEngineAPI(t *testing.T) {
 		t.Errorf("the unproved mutant carries a branch: %+v", *plain.Branch)
 	}
 
-	// Session.Catalog hands out a copy, and a proof is the one pointer in a
-	// mutant, so the copy has to carry its own: an aliased proof would leave a
-	// caller one assignment away from rewriting the session's catalogue.
 	clone := cloneCatalog(public)
 	if clone.Mutants[0].Branch == proved.Branch {
 		t.Errorf("cloneCatalog aliased the branch proof")

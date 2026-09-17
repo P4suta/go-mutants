@@ -13,26 +13,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/coverage"
 )
 
-// samplePath is a real `go tool covdata textfmt` document, produced by the
-// toolchain this project pins and pinned here in turn.
-//
-// It is committed rather than generated at test time so that the parser is held
-// against the format go1.26 actually writes, on a machine with no toolchain and
-// in a run with no build. TestSampleMatchesTheToolchain, in the integration
-// tests, is the other half: it generates a fresh document and checks that this
-// one still describes the same shape, so a format change is caught rather than
-// tested around.
 var samplePath = filepath.Join("testdata", "textfmt.sample.txt")
 
-// TestParseTextfmtReadsARealProfile pins every field of every record in the
-// committed sample.
-//
-// The sample is the `cov.example/exp/a` test binary's profile from a two-package
-// module. Two facts in it are the mapping's whole raw material, and both are
-// asserted here rather than assumed downstream: the last three blocks of `a.go`
-// are present with a count of zero — statements the binary linked and never
-// reached — and package `b` is absent from the document altogether, because
-// this binary never linked it.
 func TestParseTextfmtReadsARealProfile(t *testing.T) {
 	t.Parallel()
 
@@ -75,8 +57,6 @@ func TestParseTextfmtReadsARealProfile(t *testing.T) {
 	}
 }
 
-// TestParseTextfmtAccepts covers the shapes a valid document can take that the
-// sample does not happen to.
 func TestParseTextfmtAccepts(t *testing.T) {
 	t.Parallel()
 
@@ -105,25 +85,18 @@ func TestParseTextfmtAccepts(t *testing.T) {
 			blocks:   1,
 		},
 		{
-			// A trailing newline produces one, and a document concatenated by
-			// hand from two runs produces several. Neither is a reason to
-			// refuse a document the toolchain will happily read.
 			name:     "blank lines",
 			document: "\nmode: set\n\nexample.com/m/a.go:1.1,2.2 1 1\n\n",
 			mode:     "set",
 			blocks:   1,
 		},
 		{
-			// Windows line endings, which is what a profile copied through a
-			// text-mode pipe on this platform looks like.
 			name:     "carriage returns",
 			document: "mode: set\r\nexample.com/m/a.go:1.1,2.2 1 1\r\n",
 			mode:     "set",
 			blocks:   1,
 		},
 		{
-			// A zero-statement block is legal and appears for a function whose
-			// body the compiler elided.
 			name:     "zero statements",
 			document: "mode: set\nexample.com/m/a.go:1.1,2.2 0 1\n",
 			mode:     "set",
@@ -149,13 +122,6 @@ func TestParseTextfmtAccepts(t *testing.T) {
 	}
 }
 
-// TestParseTextfmtRefuses walks the ways a document can fail to be one.
-//
-// Every case is refused rather than skipped, and that is the decision worth
-// testing: a parser that silently dropped an unreadable line would hand the
-// mapping a profile missing exactly the blocks it could not read, and the
-// mutants on those lines would be reported as uncovered survivors without
-// anybody being told why.
 func TestParseTextfmtRefuses(t *testing.T) {
 	t.Parallel()
 
@@ -182,19 +148,11 @@ func TestParseTextfmtRefuses(t *testing.T) {
 		{name: "count is not a number", document: "mode: set\nexample.com/m/a.go:1.1,2.2 1 many\n", mentions: "line 2"},
 		{name: "ends before it starts", document: "mode: set\nexample.com/m/a.go:9.1,2.2 1 1\n", mentions: "before it starts"},
 		{
-			// Three fields with no comma in the first, which is the only way to
-			// reach the split between the two positions: a record with the
-			// comma replaced by a space has four fields and is refused a step
-			// earlier, for having the wrong number of them.
 			name:     "three fields but no comma between the positions",
 			document: "mode: set\nexample.com/m/a.go:1.1 2 1\n",
 			mentions: "no comma between the positions",
 		},
 		{
-			// The closing position is read by the same function as the opening
-			// one and refused on its own account. Everything above malforms the
-			// opening position, so a record that opens well and closes badly is
-			// the case that says the second call is checked at all.
 			name:     "the closing line is not a number",
 			document: "mode: set\nexample.com/m/a.go:1.1,y.2 1 1\n",
 			mentions: "is not a line number",
@@ -205,20 +163,11 @@ func TestParseTextfmtRefuses(t *testing.T) {
 			mentions: "is not a column number",
 		},
 		{
-			// The statement count, where "count is not a number" above malforms
-			// the execution count. The two are read by the same function and
-			// checked separately, and only one of them was ever wrong here.
 			name:     "the statement count is not a number",
 			document: "mode: set\nexample.com/m/a.go:1.1,2.2 x 1\n",
 			mentions: "is not a statement count",
 		},
 		{
-			// A coordinate too large for an int is a range failure rather than
-			// a syntax one, and the difference is the whole reason the error is
-			// checked as well as the value: strconv.Atoi returns 0 for text
-			// that is not a number, which the 1-based check catches on its own,
-			// but it returns math.MaxInt64 for a number too large to hold —
-			// which is a perfectly acceptable line number to that check.
 			name:     "the closing line does not fit in an int",
 			document: "mode: set\nexample.com/m/a.go:1.1,99999999999999999999.2 1 1\n",
 			mentions: "is not a line number",
@@ -249,8 +198,6 @@ func TestParseTextfmtRefuses(t *testing.T) {
 			if !strings.Contains(err.Error(), test.mentions) {
 				t.Errorf("error does not mention %q: %v", test.mentions, err)
 			}
-			// One line, because internal/engine folds this into a warning and
-			// the report stores a warning as one string.
 			if strings.ContainsAny(err.Error(), "\n\r") {
 				t.Errorf("the error is not one line: %q", err.Error())
 			}
@@ -258,13 +205,6 @@ func TestParseTextfmtRefuses(t *testing.T) {
 	}
 }
 
-// TestParseTextfmtKeepsTheLastColonAsTheSeparator is the one parsing rule that
-// is a choice rather than a reading of the format.
-//
-// The Go toolchain's own parser uses a greedy match for the file name, so the
-// coordinates begin after the *last* colon. Nothing in a Go import path can
-// contain one today, which is exactly why a reader that disagreed with the
-// writer would go unnoticed until the day something did.
 func TestParseTextfmtKeepsTheLastColonAsTheSeparator(t *testing.T) {
 	t.Parallel()
 
@@ -284,15 +224,6 @@ func TestParseTextfmtKeepsTheLastColonAsTheSeparator(t *testing.T) {
 	}
 }
 
-// TestParseTextfmtNamesTheSeparatorItCouldNotFind pins the complaint rather
-// than the refusal.
-//
-// All three documents below are refused whatever the separator rule is, because
-// what is left of them is not a block record either — so a test that asked only
-// for an error would pass against a parser that had stopped looking for the
-// separator at all, and would then pass against one that read `:1.1,2.2 1 1` as
-// a block of the file with no name. The message is what says the record was
-// rejected for the reason it was.
 func TestParseTextfmtNamesTheSeparatorItCouldNotFind(t *testing.T) {
 	t.Parallel()
 
@@ -320,13 +251,6 @@ func TestParseTextfmtNamesTheSeparatorItCouldNotFind(t *testing.T) {
 	}
 }
 
-// TestParseTextfmtBlamesTheDocumentRatherThanALineForAnEmptyProfile is about
-// the one complaint that is not about a line.
-//
-// Every other failure this package reports names the line it happened on, and a
-// reader who is told "coverage profile line 0" goes looking for a line that no
-// document has. The whole message is pinned rather than a fragment of it,
-// because the fragment that would be wrong is the one that is not there.
 func TestParseTextfmtBlamesTheDocumentRatherThanALineForAnEmptyProfile(t *testing.T) {
 	t.Parallel()
 
@@ -341,14 +265,6 @@ func TestParseTextfmtBlamesTheDocumentRatherThanALineForAnEmptyProfile(t *testin
 	}
 }
 
-// TestParseTextfmtReportsAReaderThatFailed covers the failure that is not in
-// the document at all.
-//
-// The profile is read from a pipe or a file the toolchain has just written, and
-// a read that fails halfway through leaves a scanner holding a perfectly valid
-// prefix. Returning that prefix as the profile is the one way this parser could
-// lose blocks without refusing anything: the mutants on the lines it never read
-// would be reported as uncovered survivors, and nothing would say why.
 func TestParseTextfmtReportsAReaderThatFailed(t *testing.T) {
 	t.Parallel()
 
@@ -367,8 +283,6 @@ func TestParseTextfmtReportsAReaderThatFailed(t *testing.T) {
 	}
 }
 
-// failingReader yields a prefix and then fails, which is what a truncated pipe
-// from `go tool covdata` looks like to a reader.
 type failingReader struct {
 	prefix string
 	read   int

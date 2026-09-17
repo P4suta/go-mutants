@@ -3,22 +3,6 @@
 
 //go:build integration
 
-// Compile validation against a real toolchain, over a module built to need it.
-//
-// The unit tests in this package prove the search and the parser against fakes,
-// which is the only way to cover them exhaustively — a table of "does this
-// subset compile" answers costs microseconds where a real build costs seconds.
-// What a fake cannot say is whether the real compiler agrees: whether a mutated
-// copy really does fail to compile, whether the message it prints really names
-// the file the way this package normalizes paths, whether the line it reports
-// really is the line the catalogue recorded — and, just as importantly, whether
-// a candidate this phase used to refuse now compiles. That is what this file is
-// for, and it is why the fixture it drives is a module whose traps are
-// ordinary-looking Go and whose control is the shape that used to be a trap.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/validate/...
 package validate_test
 
 import (
@@ -42,26 +26,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/validate"
 )
 
-// rejectableModule is the module path of the fixture this file drives.
 const rejectableModule = "fixture.example/rejectable"
 
-// wantCatalog is the fixture's whole catalogue, in catalogue order.
-//
-// It is written out rather than derived because every assertion below names a
-// mutant by its position in it. Twenty-seven candidates is small enough to read,
-// and pinning it means a change to the fixture that adds or moves a candidate
-// fails here — where the answer is "update the fixture's expectations" —
-// instead of silently shifting which mutant a later assertion is about.
-//
-// The positions themselves are looked up by name below rather than written as
-// numbers. A rule landing in the catalogue inserts candidates into the middle of
-// this list — `branch-replacement` put four into compare.go — and renumbering
-// two tables by hand after every such landing is the kind of arithmetic that is
-// wrong once and silently tests the wrong mutant afterwards. The list stays
-// verbatim, which is what pins the fixture; only the indices are derived.
-//
-// Catalogue order is by path first, which is why named.go's four sit at the end
-// and the positions [trapped] names are unaffected by them.
 var wantCatalog = []string{
 	"compare.go negate-condition v < lo -> !(v < lo)",
 	"compare.go condition-to-true v < lo -> true",
@@ -92,16 +58,6 @@ var wantCatalog = []string{
 	"named.go return-zero-numeric level -> 0",
 }
 
-// namedBool is the positions in named.go that this phase used to reject and now
-// accepts, which is not all of that file's candidates any more.
-//
-// What is asserted about them is uniform: every one is healthy. Its own test
-// says why they are in a fixture named for rejection at all — they are the
-// control that would fail if the statement form ever stopped carrying an edit
-// whose result type is a named boolean, which is a regression no other fixture
-// in the corpus would notice. The three candidates at that file's `if f` are
-// the same control for Form C', which converts a selector back to the named
-// type rather than avoiding one, so they are listed with them.
 var namedBool = catalogPositions(
 	"named.go return-true level >= 3 -> true",
 	"named.go return-false level >= 3 -> false",
@@ -112,29 +68,12 @@ var namedBool = catalogPositions(
 	"named.go condition-to-false f -> false",
 )
 
-// trapped names the catalogue positions that cannot compile, and the words the
-// compiler has to use about each. Everything else must survive.
-//
-// The two divisions and the overflow are the fixture's two trap shapes, and the
-// diagnostic is pinned per trap rather than as one shared substring because the
-// shapes are deliberately different: a phase that isolated one and not the other
-// would look like it worked. Each is a fact about the mutated program rather
-// than about the guard around it, which is what the fixture's previous traps —
-// a bool selector meeting a named boolean type — turned out not to be.
 var trapped = map[int]string{
 	catalogPosition("compare.go mul-to-div * -> /"): "division by zero",
 	catalogPosition("limits.go sub-to-add - -> +"):  "overflows",
 	catalogPosition("limits.go mul-to-div * -> /"):  "division by zero",
 }
 
-// catalogPosition is the index of one entry of [wantCatalog].
-//
-// It panics on a name that is missing or that appears twice, which is the only
-// honest answer at package initialisation: a table keyed by a position nobody
-// can resolve would test whichever mutant happened to land there. Two of
-// wantCatalog's entries really are identical -- compare.go negates two
-// comparisons against the same literal -- so ambiguity is a condition that
-// exists rather than one this guards against in theory.
 func catalogPosition(entry string) int {
 	found := -1
 	for i, candidate := range wantCatalog {
@@ -152,8 +91,6 @@ func catalogPosition(entry string) int {
 	return found
 }
 
-// catalogPositions is [catalogPosition] over several entries, in the order
-// given.
 func catalogPositions(entries ...string) []int {
 	out := make([]int, 0, len(entries))
 	for _, entry := range entries {
@@ -162,16 +99,6 @@ func catalogPositions(entries ...string) []int {
 	return out
 }
 
-// TestValidateIsolatesTheTrappedCandidates runs discovery, instrumentation and
-// validation over the fixture and watches the three candidates that cannot
-// compile come out as rejections while the twelve that can stay in the tree.
-//
-// Both halves are the claim, and neither is worth anything alone. Rejecting
-// everything would produce a green build too — an empty tree compiles — and
-// accepting everything would produce a tree that does not build at all. What
-// makes this a statement about isolation is that the two files each lose
-// exactly the candidates the compiler refused and keep the rest, in the same
-// pass, with the accepted ones still activatable afterwards.
 func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 	t.Parallel()
 
@@ -222,13 +149,6 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 	})
 
 	t.Run("a rejection is at the coordinates discovery reported", func(t *testing.T) {
-		// A rejected mutant and a live one have to be named the same way, and
-		// nothing downstream would catch it if they were not: `list` prints
-		// discovery's coordinates and the report prints these, from the same
-		// catalogue, and a user comparing the two would be looking at one
-		// mutant described twice in two places. Validation derives the pair
-		// from the pristine bytes rather than from a token.FileSet, so the two
-		// derivations agreeing is a real claim rather than a tautology.
 		located := make(map[string]discover.Located, len(found.Candidates))
 		for _, l := range found.Candidates {
 			id, idErr := l.Candidate.ID()
@@ -251,13 +171,6 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 	})
 
 	t.Run("every rejection carries the compiler's own words", func(t *testing.T) {
-		// The diagnostic is the whole reason a rejection is reported rather
-		// than dropped, and by the time this phase returns the message no
-		// longer exists anywhere: the tree compiles. Each one has to name the
-		// file it is about and the line the catalogue recorded for the
-		// candidate, which is also the end-to-end statement of line
-		// preservation — the compiler and the catalogue agreeing about where
-		// something is, with a guard spliced in between them.
 		position := make(map[string]int, len(mutants))
 		for i, m := range mutants {
 			position[m.ID] = i
@@ -274,11 +187,6 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 			if !strings.Contains(normalized, ":"+strconv.Itoa(r.Line)+":") {
 				t.Errorf("the diagnostic of %s is not about line %d:\n%s", what, r.Line, r.Diagnostic)
 			}
-			// Each trap fails in its own documented way, and saying which
-			// distinguishes "the compiler refused this mutant" from "the build
-			// failed for some other reason and this candidate was standing
-			// nearby". Two shapes means two expectations, looked up by the
-			// catalogue position the fixture's own table names.
 			want, known := trapped[position[r.ID]]
 			if !known {
 				t.Errorf("%s was rejected and is not one of the fixture's traps", what)
@@ -291,21 +199,6 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 	})
 
 	t.Run("the surviving guards are the ones that were accepted", func(t *testing.T) {
-		// Six sites in compare.go, two of three in limits.go, and all four of
-		// named.go's: the counts of what is left, per file, which is the tree's
-		// own version of the accepted set. A guard is a site rather than a
-		// mutant, so compare.go keeps all six of its sites — the statement
-		// holding its trap holds two healthy candidates too — while limits.go
-		// loses the declaration site whose only candidate was a trap. A file
-		// whose every candidate had been rejected would be absent from both,
-		// since a pristine file carries no guards at all.
-		//
-		// named.go is the file that would once have been absent for the opposite
-		// reason: its candidates were all rejected, so this phase restored it to
-		// its pristine bytes and it drifted not at all. Four guards there is the
-		// improvement stated as a count, and the last two are the newer half of
-		// it: the `if f` condition is a Form C' site, and its own `return level`
-		// is a statement one.
 		want := map[string]int{"compare.go": 6, "limits.go": 2, "named.go": 4}
 		if got := result.Instrumented.GuardsByFile; !maps.Equal(got, want) {
 			t.Errorf("guards by file = %v, want %v", got, want)
@@ -320,18 +213,11 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 	})
 
 	t.Run("the validated snapshot builds", func(t *testing.T) {
-		// Independently of the build validation ran itself: this one is the
-		// user's own `go build ./...`, and it is the phase's postcondition.
 		build := mutantkit.RunGo(t, toolchain, snap.Root, env, "build", "./...")
 		mutantkit.RequireExit(t, build, 0, "`go build ./...` in the validated snapshot")
 	})
 
 	t.Run("the instrumented baseline passes", func(t *testing.T) {
-		// `go build ./...` never compiles a _test.go file, so the build above
-		// has only seen half the tree. This runs the other half, with no mutant
-		// active: every guard takes the branch holding the original bytes, so
-		// the suite has to pass exactly as it does in the fixture — and it has
-		// to actually run, which is why the passing subtests are named.
 		baseline := mutantkit.RunSuite(t, toolchain, snap.Root, env)
 		mutantkit.RequireExit(t, baseline, 0, "the instrumented baseline")
 		mutantkit.RequireOutput(t, baseline, "the instrumented baseline",
@@ -341,21 +227,6 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 	})
 
 	t.Run("the named boolean type is instrumented rather than rejected", func(t *testing.T) {
-		// The improvement, stated where it can fail.
-		//
-		// These four candidates used to be this fixture's traps, and they were
-		// traps for a reason that had nothing to do with them: Form C composes a
-		// `bool` selector, `bool` is not assignable to `type Flag bool`, and the
-		// compiler refused the guard rather than the mutant. Routing an edit with
-		// no exactly-`bool` expression around it to the statement form made all
-		// four ordinary, and nothing else in the corpus would notice if that
-		// stopped being true — every other fixture returns a plain `bool`.
-		//
-		// Accepted is the weaker half and is asserted first; executed is the half
-		// that proves the statement guard really carried the edit, and it is
-		// asserted by activating each one and watching the suite go red. A guard
-		// that compiled but selected nothing would pass the first and fail the
-		// second.
 		accepted := make(map[string]bool, len(result.AcceptedIDs))
 		for _, id := range result.AcceptedIDs {
 			accepted[id] = true
@@ -376,14 +247,6 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 	})
 
 	t.Run("an accepted mutant is still activatable", func(t *testing.T) {
-		// The failure this catches is the one the whole design of the phase is
-		// arranged around. Isolation rewrites files but never the generated
-		// runtime, because the runtime's dense indices are what every guard in
-		// the tree spells; a phase that regenerated it from the accepted subset
-		// would produce a tree that builds, a baseline that passes, and an
-		// activation that turns on the wrong mutant — or none. So one accepted
-		// mutant, in the file that lost a whole rewrite site to a rejection, is
-		// activated and has to kill the test that covers it.
 		mutant := mutants[catalogPosition("limits.go add-to-sub + -> -")]
 		red := mutantkit.RunSuite(t, toolchain, snap.Root, mutantkit.Activate(env, mutant.ID))
 		what := "the suite with " + mutant.DisplayID + " (" + mutant.Rule.Name + " in " + mutant.Path + ") active"
@@ -395,10 +258,6 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 	})
 
 	t.Run("only the instrumented files drifted", func(t *testing.T) {
-		// Last, so that it covers the builds and both suite runs as well as the
-		// rewriting. Every probe of the search wrote a file through a temporary
-		// file and a rename, so this is also where a temporary left behind by
-		// any of a dozen rewrites would show up as an addition nobody expected.
 		drifts, err := snap.Redigest()
 		if err != nil {
 			t.Fatalf("re-digesting the snapshot: %v", err)
@@ -420,15 +279,6 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 	})
 }
 
-// TestValidateIsDeterministic validates two fresh copies of one fixture and
-// compares both answers and both trees.
-//
-// Two copies rather than two passes: validation rewrites the snapshot it is
-// given, so a second pass over the first tree would be a different question.
-// What is being asserted is the promise the phase makes to the outcome cache
-// and to shard merging — the same workspace produces the same accepted set, the
-// same rejections, and the same bytes — and the bytes are the half that no
-// other test in this file would notice going wrong.
 func TestValidateIsDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -481,15 +331,6 @@ func TestValidateIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestValidateRefusesATreeItDidNotBreak points validation at a snapshot that
-// does not compile on its own.
-//
-// This is the one refusal the phase owes a user an explanation for. Everything
-// else it meets is a candidate it can drop; a tree that was already broken is
-// not, and bisecting one would reject a whole file's mutants for somebody
-// else's compile error and then report a mutation score computed from what was
-// left. The failure carries the compiler's output for the same reason a
-// rejection does: the user has to be told what is wrong, not that something is.
 func TestValidateRefusesATreeItDidNotBreak(t *testing.T) {
 	t.Parallel()
 
@@ -498,9 +339,6 @@ func TestValidateRefusesATreeItDidNotBreak(t *testing.T) {
 	snap := mutantkit.Snapshot(t, "rejectable")
 	found, catalog := catalogFixture(t, toolchain, env, snap)
 
-	// A second file in the same package, referring to something that does not
-	// exist. It holds no candidates, so nothing this phase could reject would
-	// make it compile — which is exactly the situation being tested.
 	testkit.WriteSource(t, snap.Root, "broken.go", "package rejectable\n\n"+
 		"func Broken() int { return undefinedHelper() }\n")
 
@@ -520,46 +358,17 @@ func TestValidateRefusesATreeItDidNotBreak(t *testing.T) {
 	if got := validate.CodeOf(err); got != validate.CodeNotMutantInduced {
 		t.Fatalf("Validate failed with %s, want %s: %v", got, validate.CodeNotMutantInduced, err)
 	}
-	// The compiler's reason travels beside the message rather than inside it —
-	// the message has to stay one greppable line, and internal/cli prints the
-	// output underneath it — so this asks the error for what it retained.
 	if !strings.Contains(retainedOutput(t, err), "undefinedHelper") {
 		t.Errorf("the refusal does not carry the compiler's reason:\n%v\n%s", err, retainedOutput(t, err))
 	}
 	if len(result.Rejected) != 0 {
 		t.Errorf("Validate rejected %d candidates for a failure none of them caused", len(result.Rejected))
 	}
-	// Two builds and no more: the tree as instrumented, and the tree with every
-	// guard removed. Searching would have been the wrong answer, and spending
-	// builds on it would mean it had been attempted.
 	if result.Builds != 2 {
 		t.Errorf("Validate spent %d builds before refusing, want 2", result.Builds)
 	}
 }
 
-// TestValidateLeavesNoBuildOutputInTheSnapshot validates a module of exactly
-// one `package main` directory and then looks at the tree for anything the
-// builds left behind.
-//
-// The module shape is the whole point, and it is the one shape the corpus has
-// none of: every fixture here is a library. `go build` with no `-o` writes a
-// linked executable into its working directory whenever the pattern it is given
-// resolves to a single package and that package is `main`, and validation's
-// working directory is the snapshot root — so this is where a build of the
-// snapshot can add a file to the tree it is measuring, and the snapshot is
-// re-digested with no exclusions precisely to catch files appearing in it. An
-// executable at the root is neither a guarded file nor part of the generated
-// runtime, so it would reach the user as workspace drift: a run stopped, and
-// their own test suite blamed for a file go-mutants wrote.
-//
-// What is asserted is therefore the drift gate's own question, in the drift
-// gate's terms. It is stated over the module shape that can fail it rather than
-// over one that cannot, which is the difference between this and the last step
-// of [TestValidateIsolatesTheTrappedCandidates] — the same assertion made where
-// no executable was ever a possibility. Note that within this phase the
-// generated runtime package already makes `./...` more than one package by the
-// time anything is built; the flag that keeps this true is asserted directly,
-// without a toolchain, by TestBuildArgsSendTheOutputToTheNullDevice.
 func TestValidateLeavesNoBuildOutputInTheSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -597,10 +406,6 @@ func TestValidateLeavesNoBuildOutputInTheSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validating the single-main module: %v\n%s", err, retainedOutput(t, err))
 	}
-	// Nothing in this module can fail to compile when guarded, so a rejection
-	// here means the phase is answering a different question than the one this
-	// test is asking, and the drift assertion below would be about a tree that
-	// had been searched rather than built once.
 	if len(result.Rejected) != 0 {
 		t.Fatalf("validation rejected %d of %d candidates in a module with no traps in it",
 			len(result.Rejected), catalog.Len())
@@ -608,12 +413,6 @@ func TestValidateLeavesNoBuildOutputInTheSnapshot(t *testing.T) {
 	if want := []string{"main.go"}; !slices.Equal(result.Instrumented.FilesInstrumented, want) {
 		t.Fatalf("instrumented files = %v, want %v", result.Instrumented.FilesInstrumented, want)
 	}
-	// Asserted rather than assumed: the generated runtime is a second package
-	// under `./...`, and it is the reason the go command has no single main
-	// package to name an executable after by the time this phase builds
-	// anything. If it ever stopped being written unconditionally, this module
-	// shape would depend on the build's own flag alone — and this is the line
-	// that would say so, next to the comment explaining why it matters.
 	if result.Instrumented.RuntimeDir == "" {
 		t.Fatal("validation reported no generated runtime directory")
 	}
@@ -654,44 +453,6 @@ func TestValidateLeavesNoBuildOutputInTheSnapshot(t *testing.T) {
 	}
 }
 
-// TestValidateDoesNotTouchTheUsersBuildCache validates a module through the
-// environment the harness composes, and then looks at each of the three
-// directories the compiler's work could have landed in.
-//
-// This is the assertion behind one dedicated build cache. The suites drive
-// thousands of `go build`, `go test -c` and `go list` commands against fixtures
-// and snapshots, each keyed on an absolute path that exists for a single run;
-// pointed at the developer's own cache — which is what an inherited environment
-// does — they had grown it to 14 GB of entries that can never be reused. Nothing
-// says which cache a child used, so the only way to keep that fixed is to look
-// afterwards.
-//
-// The checks are made separately because they fail separately. The go command's
-// own answer under the composed environment is the mechanism: GOCACHE is the
-// variable a child actually reads, and it is what stops being right if the
-// policy loses its row. The private home is where an unpinned GOCACHE would land
-// now that HOME is moved, so a build cache appearing there means the pin is gone
-// and only the moved home is still standing between these tests and the
-// developer's files. And the cache the validation is handed receiving entries is
-// the consequence: an environment that named the right directory and a phase
-// that composed its own would pass both of the first two and fail this one.
-//
-// That third check is made against a cache of this test's own rather than
-// against the harness's, and the difference is the difference between an oracle
-// and an observation. The harness's cache is shared: every other test in this
-// package writes into it while this one runs, so "it grew" would be true
-// whatever this validation did with the environment it was given. A directory
-// nobody else can reach is written to by exactly this phase or by nothing.
-//
-// The developer's own cache is compared at directory granularity — its
-// modification time and the names in it — rather than entry by entry, and that
-// is a deliberate ceiling rather than an oversight. `go test` is itself a go
-// command using that cache: it compiles the other packages' test binaries and
-// files their results while this test runs, so a comparison of the entries below
-// it would report somebody else's build as this phase's. What that granularity
-// still catches is the case that actually happened: a suite inheriting the
-// developer's environment wholesale, on a machine where the cache is being
-// created or pruned rather than merely added to.
 func TestValidateDoesNotTouchTheUsersBuildCache(t *testing.T) {
 	t.Parallel()
 
@@ -701,11 +462,7 @@ func TestValidateDoesNotTouchTheUsersBuildCache(t *testing.T) {
 		t.Fatalf("resolving the test build cache: %v", err)
 	}
 	scratch := t.TempDir()
-	// Compose creates and stamps the harness cache, so everything below can read
-	// it as a directory that exists.
 	env := testkit.Compose(t, scratch)
-	// The environment the validation itself runs under: the composed policy with
-	// the cache moved somewhere only this test can see.
 	private := filepath.Join(t.TempDir(), "gocache")
 	buildEnv := append(slices.Clip(env), "GOCACHE="+private)
 
@@ -719,9 +476,6 @@ func TestValidateDoesNotTouchTheUsersBuildCache(t *testing.T) {
 		"func Before(a, b int) bool { return a < b }\n").Root()
 
 	snap := mutantkit.SnapshotOf(t, source)
-	// Discovery goes through the harness's own cache rather than the private one:
-	// what is being measured is where *validation* builds, and paying for a cold
-	// compile of the loader's export data twice would measure the harness instead.
 	found := mutantkit.DiscoverWith(t, toolchain, snap, env)
 	catalog := mutantkit.Catalog(t, found)
 	if catalog.Len() == 0 {
@@ -740,16 +494,12 @@ func TestValidateDoesNotTouchTheUsersBuildCache(t *testing.T) {
 		t.Fatalf("validating the module: %v\n%s", err, retainedOutput(t, err))
 	}
 
-	// The go command's own answer, under the environment the policy composes
-	// before a test overrides anything in it.
 	answer := mutantkit.RunGo(t, toolchain, snap.Root, env, "env", "GOCACHE")
 	mutantkit.RequireExit(t, answer, 0, "`go env GOCACHE` under the composed environment")
 	if got := strings.TrimSpace(string(answer.Output)); !testkit.SamePath(got, harness) {
 		t.Errorf("a child of this run reads GOCACHE=%s, want the harness's own %s", got, harness)
 	}
 
-	// An unpinned GOCACHE would resolve below the composed home, since that is
-	// where the policy points every cache variable os.UserCacheDir reads.
 	fallback := filepath.Join(scratch, "home", "cache", "go-build")
 	if _, statErr := os.Stat(fallback); statErr == nil {
 		t.Errorf("a build cache was created at %s, so the children resolved GOCACHE from the moved "+
@@ -774,22 +524,8 @@ func TestValidateDoesNotTouchTheUsersBuildCache(t *testing.T) {
 	})
 }
 
-// usersBuildCache names the developer's own go build cache, or "" when there is
-// nothing here to compare it against.
-//
-// Three reasons for the empty answer, and all of them are ordinary rather than
-// exceptional. A machine may have no cache directory at all. It may have one the
-// go command has never opened — a bare `mkdir` in a CI step — and a directory
-// that is about to be initialised is one whose contents change for a reason that
-// has nothing to do with this phase, so it is left alone rather than watched. And
-// a developer who pointed GO_MUTANTS_TEST_GOCACHE at their own cache has said the
-// two are one directory, which is a choice to respect rather than a failure to
-// report.
 func usersBuildCache(t *testing.T, harness string) string {
 	t.Helper()
-	// os.UserCacheDir rather than a composed value: this test never moves the
-	// process's HOME, so it answers about the machine's real cache root, which is
-	// the whole subject.
 	root, err := os.UserCacheDir()
 	if err != nil {
 		return ""
@@ -801,16 +537,12 @@ func usersBuildCache(t *testing.T, harness string) string {
 	if testkit.SamePath(dir, harness) {
 		return ""
 	}
-	// An opened cache holds its 256 shards and its own bookkeeping; anything
-	// smaller is a directory the go command has not made a cache of yet.
 	if len(testkit.Entries(t, dir)) < 2 {
 		return ""
 	}
 	return dir
 }
 
-// directoryState is a directory's modification time and the names directly in
-// it, as one comparable line.
 func directoryState(t *testing.T, dir string) string {
 	t.Helper()
 	if dir == "" {
@@ -823,18 +555,6 @@ func directoryState(t *testing.T, dir string) string {
 	return info.ModTime().UTC().Format(time.RFC3339Nano) + " " + strings.Join(testkit.Entries(t, dir), " ")
 }
 
-// catalogFixture discovers the fixture's candidates and catalogues them, then
-// pins the catalogue: every assertion in this file names a mutant by its
-// position in [wantCatalog].
-//
-// The discovery result is returned alongside because it is the only place the
-// coordinates a user is shown for a *live* mutant exist, and one step compares
-// them with the coordinates validation reports for a rejected one.
-//
-// The two steps themselves are the harness's — they are the same two every
-// suite in this repository runs — and what is left here is what belongs to this
-// fixture: the module path it must have and the nineteen candidates the
-// assertions below are written against.
 func catalogFixture(t *testing.T, toolchain gocmd.Toolchain, env []string, snap *snapshot.Snapshot) (discover.Result, *mutation.Catalog) {
 	t.Helper()
 
@@ -850,13 +570,6 @@ func catalogFixture(t *testing.T, toolchain gocmd.Toolchain, env []string, snap 
 	return found, catalog
 }
 
-// retainedOutput is the compiler's own words behind a validation failure.
-//
-// They used to be part of the error's text, and are not any more: a message has
-// to stay one line for internal/cli to be able to prefix it with a code, and
-// the output is printed underneath it instead. A test that quotes an error
-// without them quotes a failure with the reason removed, so every assertion and
-// every message here asks for them explicitly.
 func retainedOutput(t *testing.T, err error) string {
 	t.Helper()
 	var failure *validate.Error
@@ -866,43 +579,10 @@ func retainedOutput(t *testing.T, err error) string {
 	return failure.RetainedOutput()
 }
 
-// forcedFailureTarget is the test this file re-runs to show what a failure
-// leaves behind.
-//
-// It is an ordinary test of this package rather than one written for the
-// demonstration, and that is the point: what is being shown is what a developer
-// sees when a real validation test goes red, and a target built for the occasion
-// would be a demonstration of itself.
 const forcedFailureTarget = "TestValidateRefusesATreeItDidNotBreak"
 
-// helperTimeout bounds the child below.
-//
-// It is not [testkit.DefaultTimeout], because what the child does first is
-// snapshot a fixture, load it with go/packages and run two real builds — minutes
-// on a cold cache on a loaded runner, where a minute would be a flake that reads
-// exactly like the failure this test exists to report.
 const helperTimeout = 5 * time.Minute
 
-// TestValidateFailureShowsTheInstrumentedSource is the promise the whole
-// keep-and-dump feature makes, checked end to end: when a test that instruments
-// a tree fails, the developer can see the instrumented tree without re-running
-// anything.
-//
-// It is asserted through a child rather than in process, because the thing being
-// asserted is what a *failed* test prints — and a test cannot fail and still
-// report. So this test binary is re-executed with one of its own tests selected
-// and GO_MUTANTS_TEST_FORCE_FAIL naming it, which is the same hook the
-// documentation tells a developer to use, and the child's output is read.
-//
-// The two claims are separate and both matter. That the dump fired at all is the
-// first; that what it printed is the *instrumented* tree rather than the fixture
-// is the second, and it is what the generated runtime's "Code generated by
-// go-mutants" line proves — no file in fixtures/rejectable carries it, and it
-// exists only after instrumentation has written the package the guards import.
-//
-// Keeping is explicitly off in the child, because the dump is not conditional on
-// it: a developer who has turned nothing on still gets the source printed by the
-// failure they are looking at.
 func TestValidateFailureShowsTheInstrumentedSource(t *testing.T) {
 	t.Parallel()
 
@@ -910,11 +590,6 @@ func TestValidateFailureShowsTheInstrumentedSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving the test build cache for the child: %v", err)
 	}
-	// Composed rather than inherited, as every child in these suites is — and
-	// then given back the three variables the composition strips, because all
-	// three begin with the prefix it removes. The build cache is named
-	// explicitly so the child compiles into the shared one instead of a fresh
-	// directory under the private home it is about to be given.
 	env := append(testkit.Compose(t, testkit.Scratch(t)),
 		testkit.ForceFailEnv+"="+forcedFailureTarget,
 		testkit.KeepEnv+"=",
@@ -930,13 +605,9 @@ func TestValidateFailureShowsTheInstrumentedSource(t *testing.T) {
 			testkit.ForceFailEnv, result.Output)
 	}
 	testkit.RequireOutput(t, result, "the forced failure",
-		// The hook fired, and it says which variable did it.
 		"forced failure by "+testkit.ForceFailEnv,
-		// The dump fired, with a header naming a file and its size.
 		"--- ",
 		".go (",
-		// And what it printed is the instrumented tree: the generated runtime
-		// package exists only after instrumentation.
 		"Code generated by go-mutants",
 	)
 }

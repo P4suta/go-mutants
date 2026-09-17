@@ -16,17 +16,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// loopShapes is one file holding every shape a counted loop has to survive,
-// and one it has to refuse.
-//
-// Each function is here for a reason the rewrite could get wrong. `counted` is
-// the plain three-clause loop. `labelled` is the one that says where the
-// declaration goes: written between the label and the `for` it would label the
-// declaration instead, and `break outer` would stop naming a loop. `ranged`,
-// `bare` and `empty` are the other three spellings a `for` has. `jumping` is
-// the refusal: Go forbids a jump over a declaration into its scope, so a
-// function holding a `goto` keeps its loops uncounted rather than becoming a
-// file that will not compile.
 const loopShapes = `package sample
 
 func counted(n int) int {
@@ -84,21 +73,6 @@ done:
 }
 `
 
-// TestEveryLoopOfAnInstrumentedFileCarriesACounter is the rewrite ADR 0013
-// rests on.
-//
-// A mutant that turns a terminating loop into a spinning one is told apart from
-// a mutant that is merely slow by the work it does, not by a stopwatch, and the
-// work is counted where it happens: two locals in front of the loop and one
-// test at the top of its body. Locals, so that there is nothing shared between
-// goroutines to synchronise and nothing for the race detector to find, and so
-// that what is counted is one *entry* to the loop rather than every entry there
-// has ever been.
-//
-// The assertions are the three things the rewrite can get wrong and the one it
-// has to refuse: a counter per loop, a label that still names its loop, a file
-// that still parses on the same lines, and no counter at all inside a function
-// a `goto` can jump through.
 func TestEveryLoopOfAnInstrumentedFileCarriesACounter(t *testing.T) {
 	t.Parallel()
 
@@ -114,8 +88,6 @@ func TestEveryLoopOfAnInstrumentedFileCarriesACounter(t *testing.T) {
 
 	text := string(out)
 	declarations := regexp.MustCompile(`__gm_n(\d+), __gm_k(\d+) :=`).FindAllStringSubmatch(text, -1)
-	// Five loops outside `jumping`: the three-clause one, the range, the one
-	// inside it, the bare one and the empty one.
 	if len(declarations) != 5 {
 		t.Errorf("the rewrite declared %d loop counters, want 5:\n%s", len(declarations), text)
 	}
@@ -128,26 +100,16 @@ func TestEveryLoopOfAnInstrumentedFileCarriesACounter(t *testing.T) {
 		}
 	}
 
-	// The label still names the loop rather than the declaration in front of
-	// it, which is what `break outer` two lines down depends on.
 	if !regexp.MustCompile(`:= uint64\(0\), __gm\d*\.Limit\[\d+\]; outer:`).MatchString(text) {
 		t.Errorf("the labelled loop's declaration did not land in front of its label:\n%s", text)
 	}
 
-	// And the function a goto can jump through keeps the loop it had.
 	jump := text[strings.Index(text, "func jumping"):]
 	if strings.Contains(jump, "__gm_n") {
 		t.Errorf("a loop inside a function holding a goto was counted:\n%s", jump)
 	}
 }
 
-// TestALoopCounterIsAllocatedOncePerTreeAndNeverReused pins the index space the
-// limit table is read with.
-//
-// The table is one array in one generated package, so a site's index has to be
-// a fact about the tree rather than about the file it happens to be in: two
-// files each numbering their loops from zero would give one limit to two loops
-// and none to a third.
 func TestALoopCounterIsAllocatedOncePerTreeAndNeverReused(t *testing.T) {
 	t.Parallel()
 
@@ -179,14 +141,12 @@ func TestALoopCounterIsAllocatedOncePerTreeAndNeverReused(t *testing.T) {
 		t.Errorf("the sites are %v, want 0 and 1: the space is dense and starts at zero", sites)
 	}
 
-	// And the generated runtime sizes its table for exactly those.
 	runtime := string(testkit.ReadFile(t, filepath.Join(root, "gomutants_rt", "gomutants_rt.go")))
 	if !strings.Contains(runtime, "var Limit = [2]uint64") && !strings.Contains(runtime, "Limit [2]uint64") {
 		t.Errorf("the generated runtime does not hold a two-entry limit table:\n%s", runtime)
 	}
 }
 
-// candidatesInFile is [candidatesIn] for a file that is not [sampleFile].
 func candidatesInFile(t *testing.T, path string, src []byte) []mutation.Candidate {
 	t.Helper()
 	out := candidatesIn(t, src)
@@ -196,17 +156,6 @@ func candidatesInFile(t *testing.T, path string, src []byte) []mutation.Candidat
 	return out
 }
 
-// loopInsideAMutatedStatement is the shape that broke instrumentation outright.
-//
-// `return-err-to-nil` mints a mutant whose span is the whole returned
-// expression, and here that expression is a call taking a function literal with
-// a `for` inside it. So a counted loop sits *inside* a rewrite site, and the
-// counter's declaration is an insertion into bytes another splice replaces.
-//
-// It is an ordinary Go shape -- a callback that loops -- and nothing in the
-// corpus had it, which is why `GOM7312: splice 71 at [4942,4942) overlaps
-// splice 6 at [4232,5675)` was first seen against another module's source and
-// not against this one's tests.
 const loopInsideAMutatedStatement = `package sample
 
 import "errors"
@@ -225,14 +174,6 @@ func run(n int) error {
 }
 `
 
-// TestALoopInsideARewriteSiteIsStillCounted pins the ceiling against the one
-// place it had no way to land.
-//
-// The counter is what ADR 0013 rests on: a mutant that will not return is
-// settled by counted work rather than by the clock. A loop whose enclosing
-// statement is itself a rewrite site is not a special case a user would ever
-// know they had written, so it gets its ceiling like every other loop -- and
-// the file instruments at all, which before this it did not.
 func TestALoopInsideARewriteSiteIsStillCounted(t *testing.T) {
 	t.Parallel()
 
@@ -240,10 +181,6 @@ func TestALoopInsideARewriteSiteIsStillCounted(t *testing.T) {
 	root := t.TempDir()
 	testkit.WriteFile(t, filepath.Join(root, sampleFile), src)
 
-	// The statement-wide candidate is built here rather than taken from
-	// candidatesIn, which only ever synthesises comparisons and booleans --
-	// spans one operator wide, and so spans that can never contain a loop. That
-	// is the whole reason the corpus could not have caught this.
 	candidates := append(candidatesIn(t, src), returnedCallCandidate(t, src))
 	catalog := catalogOf(t, candidates)
 	instrumentSnapshot(t, root, catalog)
@@ -263,9 +200,6 @@ func TestALoopInsideARewriteSiteIsStillCounted(t *testing.T) {
 	}
 }
 
-// returnedCallCandidate is `return-err-to-nil` over a returned call: the rule
-// whose span is a whole expression rather than a token, and the one that puts a
-// loop inside a rewrite site.
 func returnedCallCandidate(t *testing.T, src []byte) mutation.Candidate {
 	t.Helper()
 	fset := token.NewFileSet()

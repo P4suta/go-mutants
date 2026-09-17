@@ -6,9 +6,6 @@ package testflag
 
 import "strings"
 
-// Match reports whether argument names the supplied test-binary flag, with or
-// without an attached value. The standard flag package accepts one or two
-// leading dashes, so safety checks must treat both spellings identically.
 func Match(argument, name string) bool {
 	short := "-" + name
 	long := "--" + name

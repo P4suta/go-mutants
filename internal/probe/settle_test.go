@@ -12,19 +12,10 @@ import (
 	"github.com/P4suta/go-mutants/internal/probe"
 )
 
-// The rule is pure, so every shape of evidence a run could produce is reachable
-// here rather than only the shapes a fixture happens to make. That is most of
-// why this is a package: the three ways it stays conservative — an unprobed
-// mutant, a binary that established nothing, a mutant nothing covers — are each
-// one line of a run and each a verdict nobody could check from outside.
-
-// candidate is one probed mutant covered by the named binaries.
 func candidate(id string, index uint32, binaries ...int) probe.Candidate {
 	return probe.Candidate{ID: id, Index: index, Probed: true, Binaries: binaries}
 }
 
-// measured is a pass that ran and named these indices. An empty list is the
-// fact a caller acts on most: the binary ran and could rule everything out.
 func measured(binary int, infected ...uint32) probe.Pass {
 	if infected == nil {
 		infected = []uint32{}
@@ -32,7 +23,6 @@ func measured(binary int, infected ...uint32) probe.Pass {
 	return probe.Pass{Binary: binary, Infected: infected}
 }
 
-// settle runs the rule and fails the test on a refusal.
 func settle(t *testing.T, candidates []probe.Candidate, passes []probe.Pass) probe.Decision {
 	t.Helper()
 
@@ -43,8 +33,6 @@ func settle(t *testing.T, candidates []probe.Candidate, passes []probe.Pass) pro
 	return decision
 }
 
-// TestAMutantNoCoveringBinaryNamedIsASurvivor is the saving the layer exists
-// for.
 func TestAMutantNoCoveringBinaryNamedIsASurvivor(t *testing.T) {
 	t.Parallel()
 
@@ -55,17 +43,12 @@ func TestAMutantNoCoveringBinaryNamedIsASurvivor(t *testing.T) {
 	if !slices.Equal(decision.Settled, []string{"quiet"}) {
 		t.Errorf("settled = %v, want the mutant no binary named", decision.Settled)
 	}
-	// The loud one is narrowed rather than settled: binary 1 ruled it out and
-	// binary 0 did not, so only binary 0 is worth running it against.
 	want := map[string][]int{"loud": {0}}
 	if !maps.EqualFunc(decision.Narrowed, want, slices.Equal) {
 		t.Errorf("narrowed = %v, want %v", decision.Narrowed, want)
 	}
 }
 
-// TestAMutantEveryCoveringBinaryNamedIsNotNarrowed keeps the second saving
-// honest: narrowing to the whole covering set is no narrowing, and reporting it
-// would make a caller rewrite a run for nothing.
 func TestAMutantEveryCoveringBinaryNamedIsNotNarrowed(t *testing.T) {
 	t.Parallel()
 
@@ -81,12 +64,6 @@ func TestAMutantEveryCoveringBinaryNamedIsNotNarrowed(t *testing.T) {
 	}
 }
 
-// TestAnUnprobedMutantIsNeverSettled is the first of the three conservative
-// clauses, and the one a consumer's whole fallback rests on.
-//
-// A mutant with no probe form left its file untouched, so the probe tree
-// compiled without a call naming it and its absence from every log is the
-// absence of a question rather than the answer to one.
 func TestAnUnprobedMutantIsNeverSettled(t *testing.T) {
 	t.Parallel()
 
@@ -101,12 +78,6 @@ func TestAnUnprobedMutantIsNeverSettled(t *testing.T) {
 	}
 }
 
-// TestABinaryThatEstablishedNothingIsNotSilence is the second, and the
-// difference between two answers that are the same bytes.
-//
-// A pass that failed, timed out or could not write its log carries no infected
-// set. Read as "this binary named nothing" it would settle every mutant it
-// covers; read as "this binary is unknown" it settles none of them.
 func TestABinaryThatEstablishedNothingIsNotSilence(t *testing.T) {
 	t.Parallel()
 
@@ -123,14 +94,6 @@ func TestABinaryThatEstablishedNothingIsNotSilence(t *testing.T) {
 	}
 }
 
-// TestAMutantNothingCoversIsNeverSettled is the third, and the one that is
-// vacuously true in exactly the wrong direction.
-//
-// "No covering binary named it" is true of a mutant with no covering binaries,
-// and settling it would report a survivor nothing ever looked at. Coverage
-// settles those before this rule is asked; this refuses them anyway, because a
-// rule that depends on its caller having already been careful is a rule with an
-// unwritten precondition.
 func TestAMutantNothingCoversIsNeverSettled(t *testing.T) {
 	t.Parallel()
 
@@ -143,13 +106,6 @@ func TestAMutantNothingCoversIsNeverSettled(t *testing.T) {
 	}
 }
 
-// TestALogNamingAnUnknownIndexDiscardsEveryFact is the fail-closed case.
-//
-// The log's header carries the catalogue's digest and the reader bounds every
-// index by its size, so an index that survives both and still names nothing
-// means the catalogue and the tree came from different passes. Keeping the
-// facts that do parse would be keeping a subset of the truth wearing the shape
-// of the whole of it.
 func TestALogNamingAnUnknownIndexDiscardsEveryFact(t *testing.T) {
 	t.Parallel()
 
@@ -166,8 +122,6 @@ func TestALogNamingAnUnknownIndexDiscardsEveryFact(t *testing.T) {
 	}
 }
 
-// TestNothingToProbeIsNotAFailure tells the two empty runs apart from the one
-// that went wrong.
 func TestNothingToProbeIsNotAFailure(t *testing.T) {
 	t.Parallel()
 
@@ -191,13 +145,6 @@ func TestNothingToProbeIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestACoverageOffRunSettlesNothing is the shape a run without coverage
-// produces, and it is the "nothing covers it" clause wearing another hat.
-//
-// With coverage off every mutant is measured against every binary and none
-// carries a covering set, so there is no intersection to empty. A rule that
-// treated nil as "every binary" would settle a mutant on the strength of passes
-// nobody had matched to it.
 func TestACoverageOffRunSettlesNothing(t *testing.T) {
 	t.Parallel()
 
@@ -210,7 +157,6 @@ func TestACoverageOffRunSettlesNothing(t *testing.T) {
 	}
 }
 
-// TestEveryCodeIsUniqueAndInTheBlock keeps the numbering this package owns.
 func TestEveryCodeIsUniqueAndInTheBlock(t *testing.T) {
 	t.Parallel()
 

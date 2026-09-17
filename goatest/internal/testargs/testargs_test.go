@@ -36,20 +36,6 @@ func TestNormalizeRejectsEveryAssuranceOwnedFlag(t *testing.T) {
 	}
 }
 
-// TestNormalizeAnswersEverySpellingItsSwitchNames walks the arms of the switch
-// one at a time, with the exact argument each one exists to recognise.
-//
-// The two tests above are about the shapes a user writes; this one is about the
-// shapes the code distinguishes, and they are not the same set. Every arm here
-// was reachable and unreached: the `-short` clones were covered by two of their
-// four spellings, the already-canonical `-test.short=` and `-test.parallel`
-// pass-throughs by none, and an arm nothing names is an arm whose condition can
-// be inverted without any test noticing.
-//
-// A pass-through is asserted as identity rather than as "no error", because
-// that is the whole of what those arms do: they recognise an argument in order
-// to leave it alone, and a test that only checked the error would pass just as
-// happily if the argument were rewritten.
 func TestNormalizeAnswersEverySpellingItsSwitchNames(t *testing.T) {
 	t.Parallel()
 
@@ -86,15 +72,6 @@ func TestNormalizeAnswersEverySpellingItsSwitchNames(t *testing.T) {
 	}
 }
 
-// TestNormalizeRefusesAnAssuranceOwnedFlagInEitherSpelling is the refusing arm
-// from the side the table above cannot reach: it is the only arm that returns
-// rather than continuing, and the only one that cares which of the two `-test.`
-// prefixes it saw.
-//
-// The test beside it covers a dozen flag names and all but two of them through
-// the single-dash spelling, so the double-dash half of that condition was being
-// carried by one case. Both halves are named here, against the same flag, so
-// that the pair is the subject rather than a coincidence of the list.
 func TestNormalizeRefusesAnAssuranceOwnedFlagInEitherSpelling(t *testing.T) {
 	t.Parallel()
 
@@ -106,11 +83,6 @@ func TestNormalizeRefusesAnAssuranceOwnedFlagInEitherSpelling(t *testing.T) {
 	}
 }
 
-// TestNormalizeRefusesOnTheFirstOwnedFlagAndKeepsNothing pins the shape of the
-// refusal: it returns nil rather than the arguments it had already rewritten.
-//
-// Half a normalisation is the one result a caller cannot use, and nothing else
-// in this package's tests said the slice was nil rather than partial.
 func TestNormalizeRefusesOnTheFirstOwnedFlagAndKeepsNothing(t *testing.T) {
 	t.Parallel()
 

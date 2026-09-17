@@ -16,110 +16,29 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// runtimeDirBase is the directory the generated activation package is written
-// to, relative to the snapshot root.
-//
-// It may not begin with "_" or ".": the go tool ignores such directories
-// outright, so a package hidden in one would never be built and every
-// instrumented file would fail to resolve its import. The name is otherwise
-// chosen to be recognisable in a stack trace and unlikely to exist already —
-// and when it does exist, [chooseRuntimeDir] bumps it rather than writing into
-// somebody else's directory.
 const runtimeDirBase = "gomutants_rt"
 
-// runtimeDirLimit bounds how many bumped names are tried before giving up. A
-// tree holding a thousand directories named after this tool is not a collision,
-// it is a sign that something is generating them in a loop.
 const runtimeDirLimit = 1000
 
-// ActiveEnv is the environment variable the generated runtime reads to decide
-// which mutant is live in a process.
-//
-// Empty or unset means every mutant is dormant, which is the instrumented
-// baseline: the tree carries all its guards and behaves exactly like the
-// pristine one. The runner sets it to one full mutant ID per test process.
 const ActiveEnv = "GO_MUTANTS_ACTIVE"
 
-// UnknownMutantExit is the status the generated runtime exits with when
-// [ActiveEnv] names a mutant the instrumented tree does not contain.
-//
-// It is deliberately not a test failure. A stale catalogue activating nothing
-// would let a run report "survived" for mutants that were never live — the one
-// failure mode that silently inflates a mutation score — so the process refuses
-// to start instead, and the runner treats the status as an infrastructure
-// error rather than as a killed mutant.
 const UnknownMutantExit = 97
 
-// DivergedExit is the status the generated runtime exits with when a counted
-// loop passes the ceiling the census derived for it.
-//
-// It is its own status and not a test failure for [UnknownMutantExit]'s reason
-// turned the other way round: a diverging mutant is a detection, and a
-// detection has to be told apart from the suite going red on its own so that
-// the report can say which loop it was and how far past the original it got.
-// See [ADR 0013].
-//
-// [ADR 0013]: https://github.com/P4suta/go-mutants/blob/main/docs/adr/0013-a-mutant-that-does-not-return-is-decided-by-work.md
 const DivergedExit = 96
 
-// LoopCensusEnv is the environment variable the generated runtime reads to
-// decide where to append the loop census.
-//
-// Set, the process records what the program it is running does: per loop, the
-// largest number of iterations one entry to it reached. Unset, it records
-// nothing. It is set on the instrumented baseline and on nothing else, because
-// the instrumented baseline is the one run that executes the whole test command
-// with no mutant active — the original program, in the tree the mutants run in.
 const LoopCensusEnv = "GO_MUTANTS_LOOP_CENSUS"
 
-// LoopLimitsEnv is the environment variable the generated runtime reads to
-// decide where its ceilings come from.
-//
-// Set, the process reads one ceiling per loop site and stops at the first loop
-// that passes its own. Unset, every ceiling is "no limit" and the counters cost
-// an increment and a compare — which is what an ordinary run of the instrumented
-// tree, the drift gate included, is entitled to.
 const LoopLimitsEnv = "GO_MUTANTS_LOOP_LIMITS"
 
-// runtimeLimit and runtimeOver are the two names a counted loop spells. They
-// are constants rather than literals at the two ends because the generator
-// writes them and the rewrite reads them, and a name spelled twice is a name
-// that can drift.
 const (
 	runtimeLimit = "Limit"
 	runtimeOver  = "Over"
 )
 
-// ProbeEnv is the environment variable the generated probe runtime reads to
-// decide where to append its infection log.
-//
-// Empty or unset is an ordinary run: the runtime is linked in and records
-// nothing, which is what every process that is not being probed wants. It
-// shares the GO_MUTANTS_ prefix internal/execute strips from a test process's
-// environment and refuses in a user overlay, deliberately — like [ActiveEnv]
-// this is go-mutants' variable to set and nobody else's, and a value left over
-// in a developer's shell must not turn their ordinary test run into a probe.
 const ProbeEnv = "GO_MUTANTS_PROBE"
 
-// ProbeUnavailableExit is the status the generated probe runtime exits with
-// when the log [ProbeEnv] names cannot be opened or written.
-//
-// It is not a test failure, for the same reason [UnknownMutantExit] is not. An
-// empty log reads exactly like a run in which no site was ever infected, and
-// that reading is what licenses a consumer to skip executions — so a probe
-// process that cannot record what it saw refuses to run at all, with a status
-// the runner can tell apart from a red suite. Silence is the one lie a probe
-// must never tell.
 const ProbeUnavailableExit = 98
 
-// chooseRuntimeDir returns the snapshot-relative directory name the runtime
-// package will be generated into.
-//
-// A name already present in the snapshot is bumped rather than merged into or
-// overwritten: the snapshot is a copy of somebody's repository, and a directory
-// called gomutants_rt in it belongs to them until proven otherwise. The bumped
-// name is a pure function of what is on disk, so two runs over the same tree
-// agree.
 func chooseRuntimeDir(root string) (string, error) {
 	for n := 0; n < runtimeDirLimit; n++ {
 		name := runtimeDirBase
@@ -145,7 +64,6 @@ func chooseRuntimeDir(root string) (string, error) {
 	}
 }
 
-// writeRuntime generates the activation package into the snapshot.
 func writeRuntime(root, dir, modulePath string, catalog *mutation.Catalog, loops []loopSite) error {
 	source, err := renderRuntime(dir, modulePath, catalog, loops)
 	if err != nil {
@@ -154,11 +72,6 @@ func writeRuntime(root, dir, modulePath string, catalog *mutation.Catalog, loops
 	return writeGeneratedPackage(root, dir, source)
 }
 
-// writeProbeRuntime generates the probe package into the snapshot. It is the
-// mutant tree's [writeRuntime] with the other generator, because which package
-// goes into the snapshot is the only thing the two trees disagree about here:
-// the directory was chosen the same way, and it is written to disk the same
-// way, into a snapshot of its own.
 func writeProbeRuntime(root, dir string, catalog *mutation.Catalog) error {
 	source, err := renderProbeRuntime(dir, catalog)
 	if err != nil {
@@ -167,8 +80,6 @@ func writeProbeRuntime(root, dir string, catalog *mutation.Catalog) error {
 	return writeGeneratedPackage(root, dir, source)
 }
 
-// writeGeneratedPackage writes one rendered runtime package into the snapshot,
-// as the single file its directory holds.
 func writeGeneratedPackage(root, dir string, source []byte) error {
 	target := filepath.Join(root, dir)
 	if err := os.MkdirAll(target, 0o755); err != nil {
@@ -189,21 +100,6 @@ func writeGeneratedPackage(root, dir string, source []byte) error {
 	return nil
 }
 
-// renderRuntime generates the source of the activation package.
-//
-// The package holds exactly one exported name. M is the activation array,
-// indexed by the catalogue's own dense index, which is what a guard spells;
-// everything else — the ID table, the environment variable, the diagnostic —
-// is unexported, because the instrumented code has no business reaching for it
-// and a second export would be a second thing to keep compatible.
-//
-// Writes to M happen in init and nowhere else. A package's init runs before any
-// test code that imports it, so every later read is an ordinary array load with
-// no synchronisation, no allocation, and nothing for the race detector to find.
-//
-// The array is never zero-length even for an empty catalogue: `var M [0]bool`
-// is legal Go but leaves the package's only export unusable, and a length of
-// one costs a byte and keeps the generated source one shape rather than two.
 func renderRuntime(pkgName, modulePath string, catalog *mutation.Catalog, loops []loopSite) ([]byte, error) {
 	mutants := catalog.Mutants()
 	size := arraySize(catalog.Len())
@@ -259,28 +155,6 @@ func renderRuntime(pkgName, modulePath string, catalog *mutation.Catalog, loops 
 	return formatGenerated(&b)
 }
 
-// renderLoopCounting writes the half of the activation package that decides
-// whether a mutant returns.
-//
-// The shape is one exported array and one exported function, and the function
-// is one rather than two because the two things that can happen when a loop
-// passes its ceiling are the same shape. A process enforcing a table never
-// returns from it: the loop has done more work than the original program ever
-// did, which is what "this mutant does not return" means as a counted fact. A
-// process taking the census records the count it reached and hands back a
-// higher ceiling, so the local ladder doubles and the file gets about one line
-// per doubling rather than one per iteration.
-//
-// What the census records is therefore within a factor of two below the true
-// maximum, and nothing is wrong with that: the engine multiplies by a factor
-// far larger than two, and a ceiling that is a little high costs microseconds
-// where a ceiling that is too low would cost a wrong verdict.
-//
-// Limit is read by every counted loop and written in init and nowhere else, so
-// nothing synchronises on it — a package's init runs before any test code that
-// imports it. The census bookkeeping is atomic because a test suite is
-// concurrent, and it is only ever touched by a process that was asked to take a
-// census.
 func renderLoopCounting(b *strings.Builder, sites int, loops []loopSite, suffix string) {
 	fmt.Fprintf(b, "// loopCensusEnv names the file this process appends its loop census to.\n")
 	fmt.Fprintf(b, "// Empty or unset records nothing.\nconst loopCensusEnv = %q\n\n", LoopCensusEnv)
@@ -416,47 +290,6 @@ func renderLoopCounting(b *strings.Builder, sites int, loops []loopSite, suffix 
 	b.WriteString("}\n")
 }
 
-// renderProbeRuntime generates the source of the probe package.
-//
-// It is a second generator rather than a flag on the first, and the two share
-// only what is genuinely the same file: the header lines, the array length rule,
-// the gofmt pass. Everything else differs — the exported name, the imports, the
-// environment variable, what init does, whether there is an ID table at all —
-// and threading that through one template would produce a function whose every
-// line asks which tree it is generating, in exchange for saving a preamble.
-//
-// The package holds two exported names, [ProbeEnv]'s reader excepted because it
-// is init, and the second one arrived with a form that could not use the first.
-// Infect is what a probe form calls when it has decided that the mutated
-// reading of its site would have differed from the original's. Differs makes
-// that decision for the one form that has both readings in hand as values: it
-// takes them, records through Infect when they disagree, and yields the
-// original's, so the site keeps the value the program it stands in for would
-// have had.
-//
-// A second export is a second thing to keep compatible, and it is worth it
-// here for a reason the guard forms do not share. internal/instrument's own
-// doc.go argues against helper calls in general — they break on untyped
-// constants, on shifts, and on named types, all of which the guard forms leave
-// to the compiler — and none of that reaches a helper whose parameters are the
-// universe `bool`, which is exactly and only what a Form C site is. Written
-// inline instead, the same measurement would need a temporary, a name chosen
-// against the file's scopes, and a statement to declare it in, at every site
-// that is an expression.
-//
-// The file the two append to, the guard array, and the header stay unexported,
-// because a probe tree has no business reaching for any of them.
-//
-// There is no table from mutant ID to index here, and that is the difference
-// that matters: a probe tree activates nothing, so it never resolves an ID.
-// What it writes is the dense index a guard already spells, and the header
-// carries the catalogue digest so that a reader can refuse indices minted
-// against a catalogue it was not given.
-//
-// The array is never zero-length, for the reason [renderRuntime]'s is not: an
-// empty catalogue is a real case, `var probeSeen [0]uint32` is legal Go that no
-// index can address, and a header claiming zero mutants would describe a log in
-// which no line could ever be valid.
 func renderProbeRuntime(pkgName string, catalog *mutation.Catalog) ([]byte, error) {
 	size := arraySize(catalog.Len())
 
@@ -540,41 +373,18 @@ func renderProbeRuntime(pkgName string, catalog *mutation.Catalog) ([]byte, erro
 	b.WriteString("\tif _, headerErr := fmt.Fprintln(file, probeHeader); headerErr != nil {\n")
 	probeDiagnostic(&b, "\t\t", `"go-mutants: cannot write the header of the infection log "+path`, "headerErr")
 	b.WriteString("\t}\n")
-	// Last, so that a process which never got a usable log leaves Infect
-	// looking at a nil file rather than at one it could not write a header to.
 	b.WriteString("\tprobeFile = file\n")
 	b.WriteString("}\n")
 
 	return formatGenerated(&b)
 }
 
-// probeDiagnostic writes the generated runtime's one failure path: say which
-// file could not be written and why it matters, then exit.
-//
-// The second half of the message is not decoration. Somebody meeting this in a
-// test log has to know that the run did not merely lose a file, it lost the
-// right to conclude anything from the run, which is why the process stopped
-// rather than carried on.
 func probeDiagnostic(b *strings.Builder, indent, what, cause string) {
 	b.WriteString(indent + "fmt.Fprintln(os.Stderr, " + what + "+\": \"+" + cause + ".Error()+\n")
 	b.WriteString(indent + "\t\"; a probe process that cannot record what it saw would be read as having seen nothing\")\n")
 	b.WriteString(indent + "os.Exit(probeUnavailableExit)\n")
 }
 
-// arraySize is the length of the per-mutant array both generated runtimes
-// carry, given how many mutants the catalogue holds: that number, or one when
-// the catalogue holds none.
-//
-// An empty catalogue is a real case — a run whose filters selected nothing —
-// and a zero-length array is legal Go that no index can address. One element
-// costs a byte and keeps each generated source one shape rather than two.
-//
-// It takes a count rather than a catalogue because [ReadInfectionLog] applies
-// the same rule from the other end: the reader is handed the catalogue's size,
-// as every other caller is, and derives the width the header carries through
-// this function. Sharing it is what keeps the writer and the reader agreeing
-// about the one catalogue for which the width and the size are different
-// numbers.
 func arraySize(mutants int) int {
 	if mutants > 0 {
 		return mutants
@@ -582,23 +392,12 @@ func arraySize(mutants int) int {
 	return 1
 }
 
-// generatedPreamble writes the lines both generated packages open with: the
-// SPDX header every file in this repository carries, and the marker every Go
-// generator follows (https://go.dev/s/generatedcode), which is the exact pattern
-// internal/discover refuses to mutate on — a later run over a tree that somehow
-// kept one of these files has to skip it rather than mutate the machinery it is
-// mutating with.
 func generatedPreamble(b *strings.Builder) {
 	b.WriteString("// SPDX-FileCopyrightText: 2026 go-mutants contributors\n")
 	b.WriteString("// SPDX-License-Identifier: MIT OR Apache-2.0\n\n")
 	b.WriteString("// Code generated by go-mutants. DO NOT EDIT.\n\n")
 }
 
-// formatGenerated gofmts a rendered package rather than leaving the templates
-// to hand-align themselves. It also proves the generated source parses, which is
-// the one property a code generator cannot afford to get wrong quietly: an
-// unparsable runtime would surface as a compile failure in every instrumented
-// package at once.
 func formatGenerated(b *strings.Builder) ([]byte, error) {
 	source, err := format.Source([]byte(b.String()))
 	if err != nil {

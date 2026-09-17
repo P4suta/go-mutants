@@ -269,13 +269,6 @@ func TestSaveSuccessWritesSyncsModesClosesAndRenames(t *testing.T) {
 	}
 }
 
-// configIOHooks names the operations a test drives, in the order this file's
-// tests think about them.
-//
-// It is a separate shape from writeHooks so the tests read as they did before,
-// and it is converted rather than installed: what a test supplies is reachable
-// only from the call it passed it to, which is what lets this package run in
-// parallel.
 type configIOHooks struct {
 	open    func(string, int, os.FileMode) (configWritableFile, error)
 	create  func(string, string) (configWritableFile, error)
@@ -284,7 +277,6 @@ type configIOHooks struct {
 	rename  func(string, string) error
 }
 
-// writeHooks converts a test's table into the value the code takes.
 func (hooks configIOHooks) writeHooks() writeHooks {
 	return writeHooks{
 		open: hooks.open, createTemp: hooks.create, marshal: hooks.marshal,

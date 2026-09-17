@@ -13,11 +13,6 @@ permissions:
   contents: read
 
 env:
-  # The same rule CI states, and nightly needs it just as much: a runner whose
-  # toolchain went missing must fail rather than quietly narrow the suite to the
-  # tests that need none. It is easier to miss here, because nobody watches a
-  # scheduled job the way they watch a pull request -- a fuzz run that skipped
-  # every target for a week looks exactly like a fuzz run that found nothing.
   GO_MUTANTS_TEST_REQUIRE_TOOLS: "1"
 
 concurrency:
@@ -25,58 +20,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # One matrix entry per fuzz target the repository actually has. `go test
-  # -fuzz` fuzzes exactly one target and refuses a pattern that matches
-  # several, so the target and its package travel together in the same entry.
-  # A matrix rather than three sequential steps because the budgets then
-  # overlap: three five-minute searches cost five minutes, not fifteen.
   fuzz:
     name: fuzz ${{ matrix.target }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # The strict TOML decoder: every malformed document has to come back
-          # as an error with a position, never a panic and never a silently
-          # accepted key.
           - target: FuzzParse
             package: ./internal/config
-          # Pattern matching, where a pathological glob must not backtrack into
-          # a hang.
           - target: FuzzMatch
             package: ./internal/glob
-          # The statement flattener, which rewrites real Go source. This is the
-          # target that matters most: its output has to parse and mean the same
-          # thing as its input.
           - target: FuzzFlatten
             package: ./internal/instrument
-          # The four readers of somebody else's bytes. Each parses output from a
-          # program go-mutants does not control and cannot pin -- a git release,
-          # a toolchain release, a file a user passed on the command line -- so
-          # each has to refuse rather than crash on anything it does not
-          # recognise.
           - target: FuzzParseTextfmt
             package: ./internal/coverage
           - target: FuzzParseDiff
             package: ./internal/gitdiff
           - target: FuzzValidate
             package: ./internal/schemas
-          # And the two invariants nothing writes down: that a mutant identity
-          # is injective, which every cache key and every expectation row rests
-          # on, and that the interval forest accounts for every site exactly
-          # once, which is what stops a mutant being silently never written.
           - target: FuzzMutantIdentity
             package: ./internal/mutation
           - target: FuzzBuild
             package: ./internal/interval
-          # Four more readers of somebody else's bytes. The first two are the
-          # toolchain's own output -- what `go version` printed before anything
-          # else ran, and what the compiler printed about a snapshot that will
-          # not build, which is what decides who is blamed for it. The third is
-          # a recording this tool wrote and may not have finished writing, read
-          # after the fact by `trace summary`, `trace diff` and `explain`. The
-          # fourth is a document a CI matrix published, read back by
-          # `report merge` with a strict decoder.
           - target: FuzzParseVersion
             package: ./internal/gocmd
           - target: FuzzParseDiagnostics
@@ -85,9 +50,6 @@ jobs:
             package: ./trace
           - target: FuzzParseDocument
             package: ./internal/report
-          # And the two values a person types: a shard specification on a
-          # command line, and a flag in a `test.command` that a safety check has
-          # to recognise exactly as the test binary will.
           - target: FuzzParseShardSpec
             package: ./internal/report
           - target: FuzzMatchAgreesWithTheFlagPackage
@@ -95,16 +57,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      # The suites' child `go` commands key their entries on absolute paths that
-      # exist for one run, so the cache they fill is rubble by the time the job
-      # ends. Same rule as CI: the runner's own temporary area, never restored
-      # from an actions cache, published through $GITHUB_ENV because the
-      # `runner` context is not available in a job's `env:`.
-      #
-      # Keeping is on for the same reason as in CI, and it is worth more here:
-      # nobody is watching a scheduled run, so what a failed test left is the
-      # only account of it there will ever be. `1` is keep-on-failure, so a
-      # green night leaves nothing behind.
       - name: Point the test build cache and the kept scratch at the runner
         shell: bash
         run: |
@@ -118,19 +70,10 @@ jobs:
         with:
           install: true
           cache: true
-      # -run='^$' keeps the package's ordinary tests out of the budget: the
-      # five minutes belong to the fuzzer, and the unit suite already ran in
-      # CI on the commit this schedule is fuzzing.
       - name: Fuzz for five minutes
         run: >-
           mise exec -- go test -run='^$' -fuzz='^${{ matrix.target }}$'
           -fuzztime=5m ${{ matrix.package }}
-      # The same gate as CI's platform-tests job, and for the same reason: the
-      # corpus is an input, and a suite that wrote where it reads cannot be
-      # trusted to have noticed. Nobody is watching a scheduled run, so a
-      # fixture a nightly suite edited would otherwise be found by whoever next
-      # ran `git status`. The reasoning behind `--ignored`, the condition and
-      # the printed listing is written out once, in ci.yml.
       - name: The corpus is unchanged
         if: success() || failure()
         shell: bash
@@ -141,9 +84,6 @@ jobs:
             echo "$changed"
             exit 1
           fi
-      # A crasher is the entire point of the job. `go test -fuzz` writes the
-      # failing input into the package's testdata/fuzz directory, which dies
-      # with the runner unless it is collected here.
       - name: Collect the failing input
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -152,10 +92,6 @@ jobs:
           path: internal/*/testdata/fuzz/**
           retention-days: 14
           if-no-files-found: warn
-      # What the failed tests left behind, off the runner and into an artifact,
-      # exactly as in CI: one directory per failed test, with the account of
-      # what it ran, the source it dumped and the recording of what it executed.
-      # Nobody is watching a scheduled run, so this is all a failure leaves.
       - name: Upload what the failed tests kept
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -165,27 +101,12 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-  # The pgregory.net/rapid suites: the flattener's
-  # `parse(flattened) ≡ parse(patched original)` invariant, the interval
-  # forest's containment and traversal laws, and shard assignment.
-  #
-  # Two independent boosts, because they widen different things. RAPID_CHECKS
-  # deepens one search -- rapid's own case budget, 100 by default so that
-  # `mise run test` stays a few seconds. It is a job-level variable rather
-  # than a flag because rapid reads it with os.LookupEnv in its own init()
-  # (engine.go) and makes it the default for -rapid.checks, so it reaches
-  # every test binary this step builds without threading a flag through mise.
-  # -count reruns the whole suite, and since rapid draws a fresh random seed
-  # per run unless -rapid.seed or RAPID_SEED pins one, each rerun explores
-  # from somewhere else entirely.
   property:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       RAPID_CHECKS: "2000"
     steps:
-      # As in the fuzz job above: the test cache lives in the runner's own
-      # temporary area and dies with it.
       - name: Point the test build cache and the kept scratch at the runner
         shell: bash
         run: |
@@ -199,20 +120,11 @@ jobs:
         with:
           install: true
           cache: true
-      # The per-package alarm is stated because 2000 checks x 5 runs is a long
-      # way past the ten minutes go test defaults to, and a budget overrun
-      # reported as a panic reads like a hang in the code under test.
       - name: Property suites, deepened and repeated
         run: >-
           mise exec -- go test -count=5 -timeout=40m
           ./internal/glob/... ./internal/instrument/... ./internal/interval/...
           ./internal/mutation/...
-      # The same gate as CI's platform-tests job, and for the same reason: the
-      # corpus is an input, and a suite that wrote where it reads cannot be
-      # trusted to have noticed. Nobody is watching a scheduled run, so a
-      # fixture a nightly suite edited would otherwise be found by whoever next
-      # ran `git status`. The reasoning behind `--ignored`, the condition and
-      # the printed listing is written out once, in ci.yml.
       - name: The corpus is unchanged
         if: success() || failure()
         shell: bash
@@ -223,8 +135,6 @@ jobs:
             echo "$changed"
             exit 1
           fi
-      # rapid persists a shrunk failing case next to the suite that found it.
-      # Same reasoning as the fuzz corpus above: collect it or lose it.
       - name: Collect the shrunk failing case
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -233,10 +143,6 @@ jobs:
           path: internal/*/testdata/rapid/**
           retention-days: 14
           if-no-files-found: warn
-      # What the failed tests left behind, off the runner and into an artifact,
-      # exactly as in CI: one directory per failed test, with the account of
-      # what it ran, the source it dumped and the recording of what it executed.
-      # Nobody is watching a scheduled run, so this is all a failure leaves.
       - name: Upload what the failed tests kept
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -246,33 +152,10 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-  # The integration tier under the race detector: the pairing that finds what
-  # neither half finds alone.
-  #
-  # CI's `race` job covers the unit tier on every push, and the races that
-  # matter most in this repository are not there. They are in the scheduler that
-  # runs mutants concurrently, the copier that fans a snapshot out over
-  # goroutines, and the supervisor that kills a process tree while its output is
-  # still being read -- none of which runs without a real toolchain.
-  # Instrumented, that suite is the better part of an hour, which is why it is
-  # here rather than in front of a pull request.
-  #
-  # Ubuntu only, for the same reason CI's race job is: -race links the C
-  # runtime, and a data race is a property of the Go code rather than of the
-  # platform.
-  #
-  # 100 minutes against the task's own 90m alarm, so that a suite which ran out
-  # of budget reports itself -- with the package that hung and a stack -- in the
-  # ten minutes before the runner cancels the job and says nothing.
   race-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 100
     steps:
-      # The suites' child `go` commands key their entries on absolute paths that
-      # exist for one run, and an instrumented run compiles everything twice
-      # over. Same rule as CI: the runner's own temporary area, never restored
-      # from an actions cache, published through $GITHUB_ENV because the
-      # `runner` context is not available in a job's `env:`.
       - name: Point the test build cache and the kept scratch at the runner
         shell: bash
         run: |
@@ -282,10 +165,6 @@ jobs:
             echo "GO_MUTANTS_TEST_KEEP_DIR=$RUNNER_TEMP/go-mutants-kept"
           } >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        # The integration tier asks git about tags and about what main can
-        # reach, and a shallow clone has neither. The tier refuses to answer
-        # from one rather than report that nothing is wrong, so this is what
-        # lets those checks run at all.
         with:
           fetch-depth: 0
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
@@ -293,12 +172,6 @@ jobs:
           install: true
           cache: true
       - run: mise run test-integration-race
-      # The same gate as CI's platform-tests job, and for the same reason: the
-      # corpus is an input, and a suite that wrote where it reads cannot be
-      # trusted to have noticed. Nobody is watching a scheduled run, so a
-      # fixture a nightly suite edited would otherwise be found by whoever next
-      # ran `git status`. The reasoning behind `--ignored`, the condition and
-      # the printed listing is written out once, in ci.yml.
       - name: The corpus is unchanged
         if: success() || failure()
         shell: bash
@@ -309,15 +182,10 @@ jobs:
             echo "$changed"
             exit 1
           fi
-      # As in CI: a report, never a gate.
       - name: Test build cache
         if: success() || failure()
         continue-on-error: true
         run: mise run test-cache-status
-      # What the failed tests left behind, off the runner and into an artifact,
-      # exactly as in CI: one directory per failed test, with the account of
-      # what it ran, the source it dumped and the recording of what it executed.
-      # Nobody is watching a scheduled run, so this is all a failure leaves.
       - name: Upload what the failed tests kept
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -327,35 +195,11 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-  # The benchmarks, kept.
-  #
-  # A benchmark number is worth nothing on its own and everything next to
-  # yesterday's: `benchstat` over two of these files is how a regression in the
-  # glob matcher, the TOML parser or the snapshot copier is seen at all. Nightly
-  # rather than per-push because a shared runner's timings are too noisy to gate
-  # on and because there is nothing to compare a pull request's number with.
-  #
-  # It is a report, so a failure here is a thing to read rather than a thing to
-  # block on -- but the upload runs `if: always()` regardless, since a benchmark
-  # that panicked halfway still wrote the lines before it.
-  # The audit the pull-request gate cannot afford.
-  #
-  # `dogfood-audit` re-derives the run report from the recording beside it,
-  # without importing a line of the code that wrote either. It answers a
-  # different question from dogfood's -- not whether the tests catch a mutant,
-  # but whether the document saying so agrees with the account of what ran --
-  # and a report is written by the run it describes, so until two documents are
-  # read separately the run is its own only witness.
-  #
-  # Here rather than in ci.yml because it was measured: the recording costs
-  # about a third again on the full scope, which is not a price for every push
-  # to pay for a question nobody asks every push. mise.toml carries the numbers.
   dogfood-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        # The integration tier and the audit both read git.
         with:
           fetch-depth: 0
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
@@ -364,28 +208,6 @@ jobs:
           cache: true
       - run: mise run dogfood-audit
 
-  # goatest measuring goatest, which is the runner's own gate and was running
-  # nowhere after the import: GitHub reads only the root .github, so the
-  # workflow that ran it stopped being a workflow the moment it moved under
-  # goatest/. A gate that exists and never runs is worse than an absent one,
-  # because it is counted.
-  #
-  # On a schedule and not on a push: the whole module is twelve thousand
-  # mutants and over an hour, and ci.yml is held to about a quarter of that end
-  # to end. The scope a push wants is the changeset -- `mise run
-  # dogfood-changed`, which is what goatest/docs/ci.md recommends to a workflow
-  # -- and that job is not in ci.yml yet, because `--changed=origin/main`
-  # resolves to the whole module until the module is on main. Wiring it there
-  # before then would have produced exactly the hour this job is here to hold.
-  #
-  # Both halves of the task's environment are load-bearing: internal/golang
-  # rejects more than one main module on purpose, and DetectWorkspace reads
-  # go.work as a file and walks up to find it, so GOWORK=off alone is not
-  # enough and the task starts inside goatest/. See mise.toml.
-  #
-  # Ninety minutes for the reason dogfood-audit has it: a bound set above any
-  # run this repository has been seen to take, against a GitHub default of 360,
-  # so that a hung run is killed within the hour and a slow one is not.
   dogfood-runner:
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -402,12 +224,6 @@ jobs:
         with:
           install: true
           cache: true
-      # The previous night's report, so that this one can say what moved.
-      #
-      # It is fetched before the run rather than after, so a run that dies still
-      # leaves the artifact it was going to compare against untouched. `|| true`
-      # because the first night has nothing to fetch and an absent baseline is
-      # not a failure -- it is the first measurement.
       - name: The report the last run left
         shell: bash
         env:
@@ -419,9 +235,6 @@ jobs:
             --dir "$RUNNER_TEMP/previous" || true
           ls -l "$RUNNER_TEMP/previous" || true
       - run: mise run dogfood-runner
-      # `always()` on both: the number this job exists to produce is most worth
-      # keeping on the night it is worst, and a run that ends INSUFFICIENT is
-      # still a measurement. See docs/ci.md.
       - name: Keep this run's report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -430,20 +243,6 @@ jobs:
           path: goatest/.goatest/latest-full.json
           if-no-files-found: warn
           retention-days: 14
-      # What moved, which is the part a schedule can act on.
-      #
-      # The whole-module verdict is INSUFFICIENT today and will be until the
-      # runner's own suite catches up with the fault model it is now measured
-      # against -- 3984 findings over 18081 mutants, the first time that number
-      # has ever been taken. A job that says the same red thing every night is a
-      # job nobody reads, and dressing the verdict up would be the skip list
-      # wearing a ledger's clothes that both products refuse. So the verdict
-      # stays true and the *diff* is what this step reports: verdict changes,
-      # accounting, mutant transitions, and lost kills.
-      #
-      # It never fails the job. A regression is for a reader to see in the log
-      # beside the verdict, not a second failure on top of one that already
-      # fired.
       - name: What moved since the last run
         if: always()
         shell: bash
@@ -460,8 +259,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      # As in the fuzz job above: the test cache lives in the runner's own
-      # temporary area and dies with it.
       - name: Point the test build cache at the runner's temporary directory
         shell: bash
         run: >-
@@ -473,9 +270,6 @@ jobs:
           install: true
           cache: true
       - run: mise run bench
-      # The same gate as CI's platform-tests job. `always()` because nobody is
-      # watching a scheduled run, so a fixture a nightly job edited would
-      # otherwise be found by whoever next ran `git status`.
       - name: The corpus is unchanged
         if: always()
         shell: bash

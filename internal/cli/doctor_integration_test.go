@@ -3,18 +3,6 @@
 
 //go:build integration
 
-// `doctor` and `init` against the real thing: a real Go toolchain on PATH, a
-// real module, and a configuration file that is loaded rather than parsed.
-//
-// The unit tests drive the checks one at a time with fabricated findings, which
-// is how the table and the document are pinned. What they cannot say is whether
-// the machine a developer is sitting at passes — and a diagnosis that is wrong
-// about a working machine is worse than no diagnosis, because the first thing
-// anybody does with `doctor` is believe it.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/cli/...
 package cli
 
 import (
@@ -32,15 +20,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
-// TestDoctorIsGreenOnThisRepository. go-mutants develops itself, so its own
-// repository is a module with a real toolchain, a real configuration file, and
-// git — everything `doctor` looks for. If it cannot pass here it cannot pass
-// anywhere.
 func TestDoctorIsGreenOnThisRepository(t *testing.T) {
 	repository := repositoryRoot(t)
-	// The cache check writes a probe file, so it is pointed at a temporary
-	// directory: a test suite has no business creating anything in the
-	// developer's own cache.
 	testsupport.CacheDir(t)
 	t.Chdir(repository)
 
@@ -58,10 +39,6 @@ func TestDoctorIsGreenOnThisRepository(t *testing.T) {
 	}
 }
 
-// TestDoctorJSONOnThisRepositorySatisfiesTheSchema is the same run through
-// --json. The document is validated before it is printed, so this proves the
-// findings a real machine produces are ones the published schema accepts —
-// including the details, which the unit tests can only fabricate.
 func TestDoctorJSONOnThisRepositorySatisfiesTheSchema(t *testing.T) {
 	repository := repositoryRoot(t)
 	testsupport.CacheDir(t)
@@ -88,13 +65,6 @@ func TestDoctorJSONOnThisRepositorySatisfiesTheSchema(t *testing.T) {
 	}
 }
 
-// TestInitWritesAConfigurationThatLoads is the round trip through the
-// filesystem: the command writes a real file, and [config.Load] — the function
-// every run starts with — reads it back to exactly the defaults.
-//
-// The unit test proves the generated text resolves to [config.Defaults]. This
-// proves the bytes that reach the disk do, which is a different claim on a
-// platform that could rewrite a line ending on the way.
 func TestInitWritesAConfigurationThatLoads(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -113,10 +83,6 @@ func TestInitWritesAConfigurationThatLoads(t *testing.T) {
 		t.Errorf("the written configuration is not the defaults (-want +got):\n%s", diff)
 	}
 
-	// Written with the line endings it was generated with, whatever the
-	// platform: a configuration file is hashed into nothing, but a file that
-	// grew carriage returns on Windows would fail `init --check` on Linux and
-	// nowhere else.
 	written, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading the written file: %v", err)
@@ -129,8 +95,6 @@ func TestInitWritesAConfigurationThatLoads(t *testing.T) {
 	}
 }
 
-// repositoryRoot resolves go-mutants' own checkout from this package's
-// directory.
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))

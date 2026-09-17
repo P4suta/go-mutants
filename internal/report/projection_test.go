@@ -13,26 +13,12 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// What the projection says when it refuses, and the order it puts things in.
-//
-// The golden in stryker_test.go pins the document a good run produces. This
-// file asks the other half: the sentences a user reads when the tree moved
-// underneath the run, the pointer a schema failure is located by, and the total
-// order the mutant array is in — none of which a golden of a well behaved run
-// can notice, because they are what happens instead of it.
-
-// orderProjPath and orderProjSource are one short file whose only job is to
-// hold five mutants that tie with each other in every way [compareProjected]
-// has a rule for.
 const orderProjPath = "internal/order/order.go"
 
 const orderProjSource = "package order\n" +
 	"\n" +
 	"var a = 1 + 2\n"
 
-// orderRow is one row of the ordering fixture: a span into orderProjSource
-// written as the two byte offsets, because the whole point is that several rows
-// share them.
 type orderRow struct {
 	displayID string
 	family    string
@@ -42,26 +28,9 @@ type orderRow struct {
 	original  string
 }
 
-// TestProjectedMutantsAreInATotalOrder walks all four of [compareProjected]'s
-// tiebreaks in one file.
-//
-// The rows are handed over in the exact reverse of the order they must come
-// back in, which is what makes the assertion catch a comparison that answers
-// "these two are the same" as well as one that answers with the wrong sign: a
-// comparator that returns 0 for a pair leaves them where they were, and where
-// they were is backwards.
-//
-// The five rows are chosen so that each rule decides at least one pair and no
-// earlier rule could have:
-//
-//	`1` and `1 + 2` start at the same column and end at different ones.
-//	Three rows share the span of `+` and are told apart by mutator, then by id.
-//	`1 + 2` starts before `+` and ends after it, so a comparison that reached
-//	for the end first would put them the other way round.
 func TestProjectedMutantsAreInATotalOrder(t *testing.T) {
 	t.Parallel()
 
-	// Written in reverse. See the note above.
 	rows := []orderRow{
 		{displayID: "00000005", family: "zzz", rule: "zzz", start: 25, end: 26, original: "+"},
 		{displayID: "00000004", family: "aaa", rule: "aaa", start: 25, end: 26, original: "+"},
@@ -69,8 +38,6 @@ func TestProjectedMutantsAreInATotalOrder(t *testing.T) {
 		{displayID: "00000001", family: "aaa", rule: "aaa", start: 23, end: 28, original: "1 + 2"},
 		{displayID: "00000002", family: "zzz", rule: "zzz", start: 23, end: 24, original: "1"},
 	}
-	// The ids decide the last tie, and they are the whole 64 characters rather
-	// than the display prefix, because that is what the document holds.
 	want := []string{"00000002", "00000001", "00000003", "00000004", "00000005"}
 
 	mutants := make([]report.Mutant, 0, len(rows))
@@ -111,13 +78,6 @@ func TestProjectedMutantsAreInATotalOrder(t *testing.T) {
 	}
 }
 
-// TestProjectionRefusesASpanTheFileDoesNotHold covers the three ways
-// [checkSpan] can find that the tree moved, and the one shape it must accept.
-//
-// The reversed span is the case worth spelling out: a start past its own end
-// cannot be sliced out of the source at all, so the guard has to reject it
-// before the text is compared rather than alongside it. A comparison that ran
-// first would panic on the very document this check exists to refuse.
 func TestProjectionRefusesASpanTheFileDoesNotHold(t *testing.T) {
 	t.Parallel()
 
@@ -163,14 +123,6 @@ func TestProjectionRefusesASpanTheFileDoesNotHold(t *testing.T) {
 	}
 }
 
-// TestProjectionSaysWhichSourceItCouldNotRead pins the two halves of the
-// unreadable-source message that a reader acts on: which file, and whether it
-// is gone or merely unreadable.
-//
-// The distinction is the whole of the sentence. "is not there any more" tells
-// somebody their tree moved; "could not be read" tells them to look at
-// permissions or at what is standing in the file's place. A message that gave
-// one for the other would send them to the wrong place.
 func TestProjectionSaysWhichSourceItCouldNotRead(t *testing.T) {
 	t.Parallel()
 
@@ -223,15 +175,6 @@ func TestProjectionSaysWhichSourceItCouldNotRead(t *testing.T) {
 	}
 }
 
-// TestProjectionRefusesEveryPathThatLeavesTheWorkspace covers the three ways a
-// document can name a file outside the tree, and asserts the sentence rather
-// than the code.
-//
-// The code alone would not do here. Every one of these paths also fails to open
-// once it has escaped, and an unreadable file reports the same
-// [report.CodeProjectionSourceUnreadable] — so a check that accepted the escape
-// and then failed on the read would pass a test that only read the code, while
-// having read whatever is at that path into a document somebody publishes.
 func TestProjectionRefusesEveryPathThatLeavesTheWorkspace(t *testing.T) {
 	t.Parallel()
 
@@ -266,13 +209,6 @@ func TestProjectionRefusesEveryPathThatLeavesTheWorkspace(t *testing.T) {
 	}
 }
 
-// TestProjectionRefusesARejectionWhoseSourceIsGone is the same read, one loop
-// later.
-//
-// A rejected mutant is projected from the same files the measured ones are, and
-// the loop that reads them is a second one. Nothing else in this package's
-// tests reaches it, so a document with only rejections in it is the case that
-// proves the second loop checks what the first one does.
 func TestProjectionRefusesARejectionWhoseSourceIsGone(t *testing.T) {
 	t.Parallel()
 
@@ -295,14 +231,6 @@ func TestProjectionRefusesARejectionWhoseSourceIsGone(t *testing.T) {
 	}
 }
 
-// TestProjectedStatusReasonExplainsWhatAStatusCannotSay reads the sentence the
-// viewer shows under an `Ignored` mutant.
-//
-// Three quite different things arrive at that status — a run that was
-// interrupted, a mutant another shard owned, an outcome this projection has
-// never heard of — and the viewer shows the status and nothing else unless the
-// reason says which. A reason that came back empty would leave a reader with
-// "Ignored" and no way at all to find out why.
 func TestProjectedStatusReasonExplainsWhatAStatusCannotSay(t *testing.T) {
 	t.Parallel()
 
@@ -357,14 +285,6 @@ func TestProjectedStatusReasonExplainsWhatAStatusCannotSay(t *testing.T) {
 	}
 }
 
-// TestAProjectedRejectionCarriesOneLineOfTheCompiler pins what
-// `statusReason` holds for a mutant that would not build: the first line of the
-// diagnostic, trimmed, and nothing more.
-//
-// The empty answer for a diagnostic that begins with a newline is not a
-// curiosity: a compiler that led with a blank line would otherwise put its
-// whole output into the viewer's mutant list, which is the wall of text the
-// one-line rule exists to prevent.
 func TestAProjectedRejectionCarriesOneLineOfTheCompiler(t *testing.T) {
 	t.Parallel()
 
@@ -404,16 +324,6 @@ func TestAProjectedRejectionCarriesOneLineOfTheCompiler(t *testing.T) {
 	}
 }
 
-// TestValidateProjectionNamesWhereTheDocumentFailed reads the one part of the
-// refusal a person acts on: the RFC 6901 pointer at the failing instance.
-//
-// The wrapped validator error carries the detail and is printed by `-v`; this
-// one line is what everybody else sees, and "does not satisfy the schema" with
-// no location is a sentence nobody can act on. The last case is why the
-// lexicographically first leaf is picked rather than the first one the
-// validator happened to walk to: the error tree branches in map iteration
-// order, so an unsorted pick would name a different property on different runs
-// of the same bad document.
 func TestValidateProjectionNamesWhereTheDocumentFailed(t *testing.T) {
 	t.Parallel()
 
@@ -477,13 +387,6 @@ func TestValidateProjectionNamesWhereTheDocumentFailed(t *testing.T) {
 	}
 }
 
-// TestValidateProjectionTellsBadJSONFromABadDocument keeps the two refusals
-// apart.
-//
-// They carry one code, because both mean "this is not a document anybody should
-// publish", and they send a reader to two different places: bytes that are not
-// JSON at all are a bug in whatever produced them, and JSON the schema refuses
-// is a bug in the projection. Only the sentence distinguishes them.
 func TestValidateProjectionTellsBadJSONFromABadDocument(t *testing.T) {
 	t.Parallel()
 
@@ -499,15 +402,6 @@ func TestValidateProjectionTellsBadJSONFromABadDocument(t *testing.T) {
 	}
 }
 
-// TestValidateProjectionSaysSoWhenTheVendoredSchemaIsUnusable proves the last
-// refusal in this file is a refusal.
-//
-// A vendored schema that does not compile is a broken build rather than a bad
-// document, and the one thing that must not happen then is a `mutation.json`
-// written without being checked — which is exactly what "the compile failed, so
-// skip the validation" would look like from outside. The seam this uses is
-// [report.UseStrykerSchema], which exists for the same reason
-// [report.BreakVendoredViewer] does: the gate has to be proved to be a gate.
 func TestValidateProjectionSaysSoWhenTheVendoredSchemaIsUnusable(t *testing.T) {
 	const good = `{"schemaVersion":"2","thresholds":{"high":80,"low":60},"files":{}}`
 
@@ -536,9 +430,6 @@ func TestValidateProjectionSaysSoWhenTheVendoredSchemaIsUnusable(t *testing.T) {
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("the refusal does not say what is wrong with the vendored schema: %v", err)
 			}
-			// Asked twice, because the compilation is behind a sync.Once and the
-			// second caller reads the stored failure rather than recomputing it.
-			// A second call that answered nil would publish an unchecked document.
 			if second := report.ValidateProjection([]byte(good)); report.CodeOf(second) != report.CodeProjectionSchemaUnusable {
 				t.Errorf("the second call under a broken schema = %v, want %s", second, report.CodeProjectionSchemaUnusable)
 			}
@@ -546,7 +437,6 @@ func TestValidateProjectionSaysSoWhenTheVendoredSchemaIsUnusable(t *testing.T) {
 	}
 }
 
-// orderWorkspace writes the ordering fixture's one file into a temporary tree.
 func orderWorkspace(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -560,8 +450,6 @@ func orderWorkspace(t *testing.T) string {
 	return root
 }
 
-// orderReport is one measured mutant over that file: the smallest document a
-// projection can be asked for.
 func orderReport() *report.Report {
 	return &report.Report{
 		DocumentType: report.DocumentType, SchemaVersion: report.SchemaVersion,
@@ -574,14 +462,6 @@ func orderReport() *report.Report {
 	}
 }
 
-// TestPointerOfRendersAnRFC6901Pointer pins the rendering that locates a schema
-// failure, including the two answers a caller cannot ask [report.ValidateProjection]
-// for directly.
-//
-// The escaping is the part worth being exact about. RFC 6901 escapes '~' to
-// "~0" and '/' to "~1", in that order, so that a '/' escaped to "~1" is not
-// then read as an escaped tilde — and a file name with either character in it
-// is an ordinary Go path on somebody's machine.
 func TestPointerOfRendersAnRFC6901Pointer(t *testing.T) {
 	t.Parallel()
 
@@ -607,14 +487,6 @@ func TestPointerOfRendersAnRFC6901Pointer(t *testing.T) {
 	}
 }
 
-// TestFirstFailureOfSomethingThatIsNotAValidationError covers the one answer
-// the validator never produces.
-//
-// [report.ValidateProjection] only ever asks about the error its own validator
-// returned, so this branch cannot be reached through it. It exists because the
-// alternative — dereferencing whatever came back — would turn a diagnostic into
-// a panic, and the sentence it produces has to say plainly that there is no
-// position rather than pointing at one.
 func TestFirstFailureOfSomethingThatIsNotAValidationError(t *testing.T) {
 	t.Parallel()
 

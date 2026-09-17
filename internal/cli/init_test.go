@@ -15,14 +15,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// TestStarterConfigurationIsTheDefaults is the property the generated file
-// exists for: adopting it changes nothing.
-//
-// It is also what stops the text and the code drifting apart. Every value in
-// the file is interpolated from [config.Defaults], so a changed default cannot
-// leave a stale number behind — and a key that stopped round-tripping, or a
-// default that stopped being writable at all, fails here rather than six months
-// later in somebody's repository.
 func TestStarterConfigurationIsTheDefaults(t *testing.T) {
 	t.Parallel()
 
@@ -40,16 +32,6 @@ func TestStarterConfigurationIsTheDefaults(t *testing.T) {
 	}
 }
 
-// TestStarterConfigurationWritesEveryKeyTheSchemaDefines is the drift gate on
-// the generated file's *coverage*, which the round trip above cannot see: a
-// configuration missing a key still parses, still validates, and still resolves
-// to the defaults, because the default is what a missing key means.
-//
-// The generated file is what a project adopts as its record of what can be
-// configured, so a setting that never appears in it — set or shown as a
-// commented example — is a setting most users will never learn exists. Adding
-// one to internal/config and forgetting the line here has to fail something,
-// and this is that something.
 func TestStarterConfigurationWritesEveryKeyTheSchemaDefines(t *testing.T) {
 	t.Parallel()
 
@@ -60,8 +42,6 @@ func TestStarterConfigurationWritesEveryKeyTheSchemaDefines(t *testing.T) {
 	written := starterKeys(t, StarterConfig())
 	for _, key := range keys {
 		if isTableKey(key, keys) {
-			// A table is written as the `[section]` its settings live under, and
-			// the settings are what the loop below is about.
 			if _, found := written[key]; !found {
 				t.Errorf("the schema defines the table %s, and the file `init` writes has no such section", key)
 			}
@@ -75,8 +55,6 @@ func TestStarterConfigurationWritesEveryKeyTheSchemaDefines(t *testing.T) {
 	}
 }
 
-// isTableKey reports whether a key is a table rather than a setting, which is
-// true exactly when the schema defines something inside it.
 func isTableKey(key string, keys []string) bool {
 	for _, other := range keys {
 		if strings.HasPrefix(other, key+".") {
@@ -86,9 +64,6 @@ func isTableKey(key string, keys []string) bool {
 	return false
 }
 
-// splitLastKey splits a dotted key into the table it belongs to and its own
-// name. A key with no dot belongs to the file's top level, which is spelled
-// here as the empty section.
 func splitLastKey(key string) (section, name string) {
 	i := strings.LastIndex(key, ".")
 	if i < 0 {
@@ -97,13 +72,6 @@ func splitLastKey(key string) (section, name string) {
 	return key[:i], key[i+1:]
 }
 
-// starterKeys reads the generated file the way a user reads it: which settings
-// are written under which table, counting the commented-out ones, since a key
-// shown as an example is documented rather than forgotten.
-//
-// The top level is the empty section, and a `[[table]]` header names the same
-// table a dotted key does, so the map is keyed exactly as [config.SchemaKeys]
-// spells things.
 func starterKeys(t *testing.T, content string) map[string]map[string]bool {
 	t.Helper()
 	written := map[string]map[string]bool{"": {}}
@@ -119,9 +87,6 @@ func starterKeys(t *testing.T, content string) map[string]map[string]bool {
 			name, _, found := strings.Cut(line, "=")
 			name = strings.TrimSpace(name)
 			if !found || !isBareKey(name) {
-				// Prose, or a blank line. Only a bare key on the left of an
-				// assignment is a setting; anything else is a comment that
-				// happens to contain the character.
 				continue
 			}
 			if written[section] == nil {
@@ -137,8 +102,6 @@ func starterKeys(t *testing.T, content string) map[string]map[string]bool {
 	return written
 }
 
-// isBareKey reports whether s is a TOML bare key, which is what every setting
-// in the generated file is written as.
 func isBareKey(s string) bool {
 	if s == "" {
 		return false
@@ -153,11 +116,6 @@ func isBareKey(s string) bool {
 	return true
 }
 
-// TestStarterConfigurationDoesNotDependOnTheMachine. `init --check` is a
-// freshness gate a CI job runs, so a file carrying this machine's core count or
-// this run's clock would fail on the wrong hardware and be unfixable there. The
-// two settings whose defaults are not constants are commented out, with the
-// rule stated in prose instead.
 func TestStarterConfigurationDoesNotDependOnTheMachine(t *testing.T) {
 	t.Parallel()
 
@@ -172,17 +130,11 @@ func TestStarterConfigurationDoesNotDependOnTheMachine(t *testing.T) {
 			t.Errorf("the file does not explain %q", needed)
 		}
 	}
-	// The generated file is one string; two calls a moment apart must produce
-	// exactly the same bytes, or --check would be comparing against a moving
-	// target.
 	if StarterConfig() != text {
 		t.Error("two calls produced different files")
 	}
 }
 
-// TestInitWritesOnceAndNeverAgain is the whole of the overwrite contract: the
-// first invocation writes, the second refuses with its own code, and the file
-// on disk is untouched by the refusal.
 func TestInitWritesOnceAndNeverAgain(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -203,8 +155,6 @@ func TestInitWritesOnceAndNeverAgain(t *testing.T) {
 		t.Error("the file on disk is not what `init` generates")
 	}
 
-	// Edited by hand, exactly as a real one would be, so that a refusal that
-	// wrote anyway would be visible.
 	edited := string(written) + "\n# a decision somebody made\n"
 	if err = os.WriteFile(path, []byte(edited), 0o600); err != nil {
 		t.Fatalf("editing the file: %v", err)
@@ -228,8 +178,6 @@ func TestInitWritesOnceAndNeverAgain(t *testing.T) {
 	}
 }
 
-// TestInitHasNoForceFlag. The absence is the design — see [initLong] — so it is
-// pinned rather than left to whoever next reads a feature request.
 func TestInitHasNoForceFlag(t *testing.T) {
 	t.Chdir(t.TempDir())
 
@@ -242,9 +190,6 @@ func TestInitHasNoForceFlag(t *testing.T) {
 	}
 }
 
-// TestInitDryRunPrintsAndWritesNothing, including in the one place a real init
-// would refuse: seeing what would be written is the whole point, and a file
-// already being there is a common reason to ask.
 func TestInitDryRunPrintsAndWritesNothing(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -271,8 +216,6 @@ func TestInitDryRunPrintsAndWritesNothing(t *testing.T) {
 	}
 }
 
-// TestInitCheckIsAFreshnessGate walks the three answers it can give, including
-// the one exit status in this package that is not 0 or 2.
 func TestInitCheckIsAFreshnessGate(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -297,9 +240,6 @@ func TestInitCheckIsAFreshnessGate(t *testing.T) {
 		t.Errorf("stdout = %q, want the path it compared", stdout)
 	}
 
-	// One byte different is a different file. The comparison is deliberately
-	// not "does it resolve to the same configuration": a reworded comment is
-	// exactly the drift a freshness check is for.
 	if err := os.WriteFile(path, []byte(StarterConfig()+"\n"), 0o600); err != nil {
 		t.Fatalf("editing the file: %v", err)
 	}
@@ -308,8 +248,6 @@ func TestInitCheckIsAFreshnessGate(t *testing.T) {
 	}
 }
 
-// TestInitCheckAndDryRunAreExclusive. Neither flag is wrong on its own, so the
-// refusal is the combination rather than either value.
 func TestInitCheckAndDryRunAreExclusive(t *testing.T) {
 	t.Chdir(t.TempDir())
 

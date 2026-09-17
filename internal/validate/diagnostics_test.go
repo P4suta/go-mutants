@@ -10,30 +10,11 @@ import (
 	"testing"
 )
 
-// windowsRoot and posixRoot are the two spellings a snapshot root comes in.
-//
-// Both are exercised on every platform on purpose. The parser reads whatever
-// the host's toolchain prints, but the shapes it has to survive — a drive
-// letter, backslash separators, a `.\` prefix — are properties of the output
-// rather than of the machine reading it, and a Windows-only test of them is a
-// test that only runs where the bug was going to be found anyway.
 const (
 	windowsRoot = `C:\Users\dev\AppData\Local\Temp\go-mutants-snap-1234`
 	posixRoot   = "/tmp/go-mutants-snap-1234"
 )
 
-// TestParseDiagnostics reads real compiler output shapes into located
-// messages.
-//
-// Several rows below are transcripts from the era when a guard around a named
-// boolean type was itself the compile error, and they name a `flag.go` the
-// fixture no longer has. They are kept deliberately: what this parser has to
-// survive is the *shape* of a message — a `.\` prefix, a drive letter, a
-// subdirectory printed without one — and the body is incidental to that, so a
-// corpus of shapes the compiler has really printed is worth more than one
-// narrowed to the failures today's fixture happens to produce. Nothing here is
-// a claim about what fixtures/rejectable now contains; see its README for why
-// the named boolean stopped being a trap.
 func TestParseDiagnostics(t *testing.T) {
 	t.Parallel()
 
@@ -62,12 +43,6 @@ func TestParseDiagnostics(t *testing.T) {
 			want:   []diagnostic{{Path: "pkg/flag.go", Inside: true, Line: 8, Column: 9}},
 		},
 		{
-			// A package in a subdirectory, which the go tool prints *without*
-			// the leading "./" it gives a file in the working directory. This
-			// is a transcript of real output rather than a guess: getting it
-			// wrong would leave the file unattributed, and the search would
-			// fall back to bisecting every undecided file in the module — the
-			// right answer at many times the cost.
 			name:   "a package in a subdirectory",
 			root:   windowsRoot,
 			output: "# fixture.example/rejectable/deep\ndeep\\deep.go:8:9: cannot use guard as Flag value\n",
@@ -80,11 +55,6 @@ func TestParseDiagnostics(t *testing.T) {
 			want:   []diagnostic{{Path: "pkg/deep/file.go", Inside: true, Line: 12, Column: 5}},
 		},
 		{
-			// A case-insensitive filesystem prints a path in whatever case the
-			// caller handed it, and a temporary directory reaches the compiler
-			// through several of them. A miss here would look like a file
-			// outside the snapshot and would never be blamed on the mutant that
-			// broke it.
 			name:   "an absolute Windows path in another case",
 			root:   windowsRoot,
 			output: strings.ToLower(windowsRoot) + "\\pkg\\file.go:1:1: undefined: x\n",
@@ -97,10 +67,6 @@ func TestParseDiagnostics(t *testing.T) {
 			want:   []diagnostic{{Path: "pkg/file.go", Inside: true, Line: 3, Column: 4}},
 		},
 		{
-			// The root is a prefix of this path as a *string* and not as a
-			// path. A comparison that forgot the separator would pull a file
-			// from a neighbouring directory into the snapshot's coordinates and
-			// bisect a file that is not there.
 			name:   "a sibling directory whose name starts with the root",
 			root:   posixRoot,
 			output: posixRoot + "-other/pkg/file.go:3:4: undefined: x\n",
@@ -125,8 +91,6 @@ func TestParseDiagnostics(t *testing.T) {
 			want:   []diagnostic{{Path: "go.mod", Inside: true, Line: 5}},
 		},
 		{
-			// The message carries colons and digits of its own, which is the
-			// case a left-to-right split on ":" gets wrong.
 			name:   "a message full of colons",
 			root:   posixRoot,
 			output: "./a.go:7:2: cannot use m (map[string]int) as map[string]string: 1:2 is not 3:4\n",
@@ -145,10 +109,6 @@ func TestParseDiagnostics(t *testing.T) {
 			},
 		},
 		{
-			// Both spellings of the compiler giving up have been printed by
-			// released toolchains. The located one is a diagnostic like any
-			// other; the bare one is not, and must not be folded into the
-			// message above it.
 			name: "too many errors, located and bare",
 			root: posixRoot,
 			output: "./a.go:1:1: undefined: a\n" +
@@ -193,13 +153,6 @@ func TestParseDiagnostics(t *testing.T) {
 	}
 }
 
-// TestParseDiagnosticsKeepsContinuationLines proves a multi-line error reaches
-// a rejection whole.
-//
-// The "have"/"want" lines under a type error are usually the only part that
-// says what the compiler actually wanted, so a parser that kept the first line
-// and dropped the rest would produce rejections that name a problem without
-// describing it.
 func TestParseDiagnosticsKeepsContinuationLines(t *testing.T) {
 	t.Parallel()
 
@@ -217,9 +170,6 @@ func TestParseDiagnosticsKeepsContinuationLines(t *testing.T) {
 	}
 }
 
-// TestBlamedPaths pins the order and the deduplication of the file list a
-// failing build produces, and that a file outside the snapshot never reaches
-// it.
 func TestBlamedPaths(t *testing.T) {
 	t.Parallel()
 
@@ -234,13 +184,6 @@ func TestBlamedPaths(t *testing.T) {
 	}
 }
 
-// TestChooseDiagnostic pins which lines a rejection carries.
-//
-// The tiers matter in the order they are written. Line preservation means the
-// guard that failed sits on the line the candidate sat on, so the exact match
-// is the common case and the right answer; the fallbacks exist because a type
-// checker sometimes reports at the enclosing statement, and a rejection with no
-// explanation at all is the one outcome that is never acceptable.
 func TestChooseDiagnostic(t *testing.T) {
 	t.Parallel()
 
@@ -303,16 +246,6 @@ func TestChooseDiagnostic(t *testing.T) {
 	}
 }
 
-// TestNormalizePathPutsEverySpellingIntoOneCoordinateSystem is the whole of
-// what a diagnostic's path has to survive before it can be compared with a
-// catalogue path.
-//
-// The go tool prints `./pkg/file.go` from a build at the snapshot root and
-// `.\pkg\file.go` on Windows, and everything else -- the module cache, the
-// standard library, a package outside the module -- comes through absolute. A
-// path that failed to land in the catalogue's coordinates is a file never
-// blamed for the mutant that broke it, which is a search that bisects the wrong
-// file and a rejection with no reason attached.
 func TestNormalizePathPutsEverySpellingIntoOneCoordinateSystem(t *testing.T) {
 	t.Parallel()
 
@@ -341,8 +274,6 @@ func TestNormalizePathPutsEverySpellingIntoOneCoordinateSystem(t *testing.T) {
 		{name: "a path that climbs out", raw: "../file.go", ok: false},
 		{name: "a path that cleans to a climb", raw: "pkg/../../file.go", ok: false},
 		{name: "a path that cleans to the directory", raw: "pkg/..", ok: false},
-		// The standard library and the module cache, which is what most of a
-		// failing build's output is about.
 		{name: "the standard library", raw: "/usr/local/go/src/fmt/print.go", ok: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -358,20 +289,14 @@ func TestNormalizePathPutsEverySpellingIntoOneCoordinateSystem(t *testing.T) {
 		})
 	}
 
-	// A root with its own trailing slash names the same tree, which is the one
-	// piece of tidying underRoot does for its caller.
 	if got, ok := normalizePath("/snap/tree/pkg/file.go", "/snap/tree/"); !ok || got != "pkg/file.go" {
 		t.Errorf("normalizePath under a root with a trailing slash = %q, %v", got, ok)
 	}
-	// And an empty root places nothing: there is no tree to be inside of.
 	if got, ok := normalizePath("/anything/file.go", ""); ok {
 		t.Errorf("normalizePath with no root = %q, want nothing placed", got)
 	}
 }
 
-// TestUnderRootIsAWholeElementPrefixAndNotAStringOne pins the boundary that
-// separates a file inside the snapshot from a sibling whose name begins the
-// same way.
 func TestUnderRootIsAWholeElementPrefixAndNotAStringOne(t *testing.T) {
 	t.Parallel()
 
@@ -381,10 +306,7 @@ func TestUnderRootIsAWholeElementPrefixAndNotAStringOne(t *testing.T) {
 	}{
 		{p: "/a/b/c.go", root: "/a/b", want: "c.go", ok: true},
 		{p: "/a/b/deep/c.go", root: "/a/b", want: "deep/c.go", ok: true},
-		// Exactly the root: there is no file at a directory, so there is
-		// nothing under it to name.
 		{p: "/a/b", root: "/a/b", ok: false},
-		// One byte longer than the root and not a separator.
 		{p: "/a/bc", root: "/a/b", ok: false},
 		{p: "/a/bc/d.go", root: "/a/b", ok: false},
 		{p: "/x/y.go", root: "/a/b", ok: false},
@@ -398,14 +320,6 @@ func TestUnderRootIsAWholeElementPrefixAndNotAStringOne(t *testing.T) {
 	}
 }
 
-// TestEqualPathOnIsCaseInsensitiveWhereThePlatformIs asserts both halves of the
-// comparison on every platform, which is the reason the platform is a value.
-//
-// A snapshot root reached as `C:\Users\…` and printed as `c:\users\…` is the
-// ordinary way the two spellings differ, and a file that failed to match would
-// be treated as outside the snapshot and never blamed for the mutant that broke
-// it. Elsewhere the comparison is exact, because a POSIX filesystem really does
-// hold `Pkg` and `pkg` as two directories.
 func TestEqualPathOnIsCaseInsensitiveWhereThePlatformIs(t *testing.T) {
 	t.Parallel()
 
@@ -418,8 +332,6 @@ func TestEqualPathOnIsCaseInsensitiveWhereThePlatformIs(t *testing.T) {
 		{goos: "darwin", a: "/snap/Tree", b: "/snap/tree", want: false},
 		{goos: "windows", a: "/snap/Tree", b: "/snap/tree", want: true},
 		{goos: "windows", a: "/snap/one", b: "/snap/two", want: false},
-		// A drive letter is what makes a path Windows', whichever platform is
-		// reading it: the compiler that printed it was describing that one.
 		{goos: "linux", a: "C:/Users/x", b: "c:/users/x", want: true},
 		{goos: "linux", a: "c:/users/x", b: "C:/Users/x", want: true},
 		{goos: "linux", a: "C:/Users/x", b: "C:/Users/y", want: false},
@@ -429,15 +341,11 @@ func TestEqualPathOnIsCaseInsensitiveWhereThePlatformIs(t *testing.T) {
 		}
 	}
 
-	// And the host's own answer goes through the same function, so that the
-	// two cannot drift apart.
 	if equalPath("/a", "/a") != equalPathOn(runtime.GOOS, "/a", "/a") {
 		t.Error("equalPath and equalPathOn disagree about this platform")
 	}
 }
 
-// TestHasVolumeIsADriveLetterAndAColon pins the alphabet, both ends of it, and
-// the length below which there is no drive letter to find.
 func TestHasVolumeIsADriveLetterAndAColon(t *testing.T) {
 	t.Parallel()
 
@@ -452,14 +360,11 @@ func TestHasVolumeIsADriveLetterAndAColon(t *testing.T) {
 		{p: "z:", want: true},
 		{p: "A:", want: true},
 		{p: "Z:", want: true},
-		// The bytes on either side of the two ranges, which is where an
-		// off-by-one in the alphabet shows up.
 		{p: "`:", want: false},
 		{p: "{:", want: false},
 		{p: "@:", want: false},
 		{p: "[:", want: false},
 		{p: "0:", want: false},
-		// No colon, or nothing long enough to hold one.
 		{p: "CC", want: false},
 		{p: "C", want: false},
 		{p: "", want: false},
@@ -471,8 +376,6 @@ func TestHasVolumeIsADriveLetterAndAColon(t *testing.T) {
 	}
 }
 
-// TestIsAbsolutePathAnswersForBothPlatformsSpellings covers the rootedness this
-// parser has to decide about output another platform's compiler wrote.
 func TestIsAbsolutePathAnswersForBothPlatformsSpellings(t *testing.T) {
 	t.Parallel()
 
@@ -484,8 +387,6 @@ func TestIsAbsolutePathAnswersForBothPlatformsSpellings(t *testing.T) {
 		{p: "/", want: true},
 		{p: "C:", want: true},
 		{p: "C:/Users/x", want: true},
-		// A drive-relative path: rooted at the drive's current directory
-		// rather than at its root, which is not a path this parser can place.
 		{p: "C:x", want: false},
 		{p: "pkg/file.go", want: false},
 		{p: "./pkg/file.go", want: false},
@@ -497,8 +398,6 @@ func TestIsAbsolutePathAnswersForBothPlatformsSpellings(t *testing.T) {
 	}
 }
 
-// TestAbsIsTheDistanceAndNeverTheSign pins the arithmetic the nearest-diagnostic
-// tier is chosen by.
 func TestAbsIsTheDistanceAndNeverTheSign(t *testing.T) {
 	t.Parallel()
 
@@ -515,14 +414,6 @@ func TestAbsIsTheDistanceAndNeverTheSign(t *testing.T) {
 	}
 }
 
-// TestChooseDiagnosticPrefersTheNearestWhenNoneIsInside is the middle tier, and
-// the one whose arithmetic decides which line a reader is shown.
-//
-// A candidate's own line range is the first choice; failing that the closest
-// line above or below it, measured from the range's start; failing that the
-// first diagnostic of the build. The tiers exist so that a rejection always
-// carries a reason, and the middle one has to break its ties the same way every
-// time or two runs would explain one mutant differently.
 func TestChooseDiagnosticPrefersTheNearestWhenNoneIsInside(t *testing.T) {
 	t.Parallel()
 
@@ -533,9 +424,6 @@ func TestChooseDiagnosticPrefersTheNearestWhenNoneIsInside(t *testing.T) {
 	t.Run("the nearest above and the nearest below at equal distance", func(t *testing.T) {
 		t.Parallel()
 
-		// Two lines the same distance from the start of the range. The first
-		// one seen wins, because `<` keeps the earlier of two equal distances
-		// and a run has to explain one mutant one way.
 		got := chooseDiagnostic([]diagnostic{
 			inside(8, "above"),
 			inside(12, "below"),

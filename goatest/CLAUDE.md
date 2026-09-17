@@ -35,11 +35,11 @@ every word of the difference is in
   entry fails as loudly as a new offender. It holds 69 lines. One seam holds a
   whole package serial: three of them cost `internal/app` 184 seconds, and
   removing them left it at 9.
-- **Comments are checked, not banned.** Every exported name in a package on
-  `internal/devgates/documented_packages.txt` carries a doc comment, every path
-  a comment names exists, and every `[Name]` link resolves. That ledger may grow
-  and never shrink: it is the mirror of the seam ledger, where a line is a debt
-  paid rather than a debt.
+- **Comments are banned.** A source file may carry an SPDX header, a tool or
+  language directive, and a doc comment of one line. Nothing else. A reason
+  worth keeping is enforced by a type, a gate, or an ADR, not written beside the
+  code where nothing checks it. `internal/devgates` refuses the rest, and
+  `ocomment` refuses it in every file that is not Go.
 - **Goldens fail closed.** A missing golden is a failure, never a silent first
   recording.
 - **A trace is not evidence.** [ADR 0015](docs/adr/0015-trace-is-not-evidence.md).
@@ -77,7 +77,7 @@ and the only question is when.
 | `REUSE.toml` | every file git holds | `internal/devgates/license_test.go` |
 | `.gitleaks.toml` allowlist | what git ignores, and what it tracks | `internal/devgates/gitleaks_test.go` |
 | where this repository names itself | `repository_references.txt` | `internal/devgates/repository_references_test.go` |
-| exported doc comments, and the paths and links inside them | the tree | `internal/devgates/docs_test.go` |
+| that no file carries a comment that is not allowed | every tracked file | `internal/devgates/comments_test.go` |
 | which files may start a toolchain | the build tags | `internal/devgates/tiers_test.go` |
 | package-level seams | `seam_allowlist.txt` | `internal/devgates/seams_test.go` |
 | the worker ceiling a run derives | the engine's, read from the tree beside this one | `internal/devgates/worker_default_test.go` |

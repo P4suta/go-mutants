@@ -13,15 +13,6 @@ import (
 	"testing"
 )
 
-// samplePreparedCatalog is a catalogue with one of everything the prepared
-// digest hashes and one of everything it does not: three mutants covering the
-// three flag combinations a real preparation produces, two test packages so
-// that a count and an order are both observable, and one rejection naming the
-// mutant that is not accepted.
-//
-// It is built by hand rather than prepared, because the recipe is a claim about
-// the encoding and not about any run: a test that hashed a real catalogue could
-// only compare the value to itself.
 func samplePreparedCatalog() Catalog {
 	return Catalog{
 		WorkspaceDigest: strings.Repeat("1", 64),
@@ -108,14 +99,6 @@ func samplePreparedCatalog() Catalog {
 	}
 }
 
-// TestPreparedDigestFollowsTheDocumentedRecipe recomputes the digest here, from
-// the words of the documentation rather than from the implementation.
-//
-// The encoding is written out again in this test — a four-byte big-endian byte
-// length and then the bytes — instead of calling the engine's own helper,
-// because the value is a wire format. A consumer keying its evidence on it has
-// to be able to reproduce it from the recipe alone, and a test that reused the
-// engine's encoder would go on passing if the encoder changed under both.
 func TestPreparedDigestFollowsTheDocumentedRecipe(t *testing.T) {
 	t.Parallel()
 
@@ -135,26 +118,26 @@ func TestPreparedDigestFollowsTheDocumentedRecipe(t *testing.T) {
 	}
 
 	write("go-mutants-prepared-catalog-v1")
-	write(strings.Repeat("2", 64)) // Digest
-	write(strings.Repeat("1", 64)) // WorkspaceDigest
-	write("example.com/m")         // ModulePath
-	write("1.26")                  // GoVersion
-	write("go1.26.6")              // Toolchain
-	write("balanced")              // Profile
-	write("2")                     // len(TestPackages)
+	write(strings.Repeat("2", 64))
+	write(strings.Repeat("1", 64))
+	write("example.com/m")
+	write("1.26")
+	write("go1.26.6")
+	write("balanced")
+	write("2")
 	write("example.com/m/alpha")
 	write("example.com/m/beta")
-	write("3") // len(Mutants)
+	write("3")
 	write(strings.Repeat("a", 64))
 	write("example.com/m/alpha")
-	write("aps") // accepted, probed, selected
+	write("aps")
 	write(strings.Repeat("b", 64))
 	write("example.com/m/alpha")
-	write("a-s") // accepted, not probed, selected
+	write("a-s")
 	write(strings.Repeat("c", 64))
 	write("example.com/m/beta")
-	write("--s") // rejected, not probed, selected
-	write("1")   // len(Rejections)
+	write("--s")
+	write("1")
 	write(strings.Repeat("c", 64))
 	want := hex.EncodeToString(h.Sum(nil))
 
@@ -168,21 +151,6 @@ func TestPreparedDigestFollowsTheDocumentedRecipe(t *testing.T) {
 	}
 }
 
-// TestPreparedDigestIsSensitiveToExactlyItsInputs is the pair of claims that
-// makes the digest usable as a cache key.
-//
-// A field inside the recipe that did not move it would let a consumer reuse
-// evidence gathered against a different session; a field outside the recipe
-// that did move it would invalidate a cache every time a line number shifted,
-// which is the cost the plain [Catalog.Digest] already pays for being narrow.
-//
-// The table is a *ledger*: every field of [Catalog], [Mutant] and [Rejection]
-// appears in one half of it or the other. That is what makes it worth reading
-// as the answer to "does X change the key?" — a field missing from a table that
-// looked complete would be read as one nobody had needed to decide about, when
-// it is in fact one nobody has checked. Adding a field to the API means adding
-// a row here, and the recipe on [Catalog.PreparedDigest] lists the same split
-// in prose.
 func TestPreparedDigestIsSensitiveToExactlyItsInputs(t *testing.T) {
 	t.Parallel()
 
@@ -239,18 +207,9 @@ func TestPreparedDigestIsSensitiveToExactlyItsInputs(t *testing.T) {
 			c.Rejections = nil
 		}},
 
-		// The digest is not hashed into itself, so a catalogue that already
-		// carries one hashes to the same value. That is what lets makeCatalog
-		// compute it last, over the finished struct, rather than over a copy
-		// with the field blanked.
 		{name: "the prepared digest already on the value", mutate: func(c *Catalog) {
 			c.PreparedDigest = strings.Repeat("e", 64)
 		}},
-		// Both halves of a selection are outside the recipe, and
-		// [TestPreparedDigestIsUnchangedBySelection] argues why at length: a
-		// selection is the caller's plan, it changes nothing the engine does,
-		// and per-mutant evidence keyed on this digest is a fact about the tree
-		// and the mutant rather than about what somebody meant to run.
 		{name: "the selected flag", mutate: func(c *Catalog) {
 			c.Mutants[0].Selected = false
 		}},
@@ -345,32 +304,6 @@ func TestPreparedDigestIsSensitiveToExactlyItsInputs(t *testing.T) {
 	}
 }
 
-// TestPreparedDigestIsUnchangedBySelection is the decision that a selection is
-// *not* part of a prepared session's identity, pinned from both directions.
-//
-// The temptation is obvious: a narrowed session executes fewer mutants, so it
-// looks like a different session. It is not, and hashing [Mutant.Selected] would
-// be the most expensive kind of wrong. PreparedDigest is what a consumer keys
-// **per-mutant evidence** on — "this mutant survived against this prepared
-// tree" — and that evidence is a fact about the tree, the toolchain and the
-// mutant, none of which a selection touches. Move the key with the selection
-// and the first narrowed run of the very consumer this feature was built for
-// misses on every row it has ever stored, then re-measures a module's worth of
-// mutants to write down answers it already had.
-//
-// The rule that makes this safe is the caller's, and it is one line: **never
-// store "not run, out of selection" as evidence.** A mutant the selection left
-// out was not measured, so there is nothing to record about it; recording an
-// absence as a result is what would make two sessions under one key disagree.
-// Selected is advisory — it changes nothing the engine does, and [Session.Exec]
-// runs an unselected mutant like any other — so it is a fact about the caller's
-// plan rather than about the session, and it stays out of the session's name.
-//
-// The literal is the pin on the other side. The recipe's third flag byte was
-// and remains the constant 's', so this value is what it was before selection
-// existed and what it will be after. If this ever fails, the answer is not to
-// update the number — it is to stop, because every key any consumer has stored
-// has just moved.
 func TestPreparedDigestIsUnchangedBySelection(t *testing.T) {
 	t.Parallel()
 
@@ -421,13 +354,6 @@ func TestPreparedDigestIsUnchangedBySelection(t *testing.T) {
 	}
 }
 
-// TestEndLineCountsNewlines pins the one rule the CLI's `--changed` already
-// applies, so that a consumer selecting by line range gets the same answer from
-// the catalogue as it would from `go-mutants run --changed`.
-//
-// The carriage return case is the one worth writing down: a CRLF file's line
-// break is one newline preceded by a byte that is not one, so counting "\n" is
-// exactly right and counting line terminators would double it.
 func TestEndLineCountsNewlines(t *testing.T) {
 	t.Parallel()
 
@@ -453,16 +379,6 @@ func TestEndLineCountsNewlines(t *testing.T) {
 	}
 }
 
-// TestCheckInfectedRefusesInconsistentSets is the engine holding itself to the
-// promise [ProbeResult.Infected] makes.
-//
-// Every refusal here is an engine bug rather than a caller's mistake: the
-// indices come from go-mutants' own probe runtime and are filtered by
-// go-mutants' own catalogue. That is exactly why it is an error and not a
-// dropped index — a set quietly repaired would be reported as a measurement,
-// and a measurement licenses a consumer to skip executions. The empty set and
-// nil are the two shapes that must survive untouched, because they are the two
-// answers that mean something.
 func TestCheckInfectedRefusesInconsistentSets(t *testing.T) {
 	t.Parallel()
 
@@ -476,15 +392,12 @@ func TestCheckInfectedRefusesInconsistentSets(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		indices []uint32
-		want    int // the index the message must name; -1 for no error
+		want    int
 	}{
 		{name: "no facts at all", indices: nil, want: -1},
 		{name: "a measured empty set", indices: []uint32{}, want: -1},
 		{name: "one probed mutant", indices: []uint32{0}, want: -1},
 		{name: "every probed mutant", indices: []uint32{0, 2}, want: -1},
-		// The one surprising index that is not a bug: the probe tree is
-		// instrumented from the whole catalogue, so its log legitimately names a
-		// site whose mutation did not compile. That index is dropped, not refused.
 		{name: "a mutant the mutant tree rejected", indices: []uint32{0, 3}, want: -1},
 		{name: "an unsorted set", indices: []uint32{2, 0}, want: 0},
 		{name: "a duplicated index", indices: []uint32{0, 0}, want: 0},
@@ -518,14 +431,6 @@ func TestCheckInfectedRefusesInconsistentSets(t *testing.T) {
 	}
 }
 
-// probeInfected runs the checks [Session.Probe] runs, in the order it runs
-// them, over a raw set as the probe runtime would have written it.
-//
-// The order is half the contract, so the tests drive the sequence rather than
-// one function of it: proving the shape of the raw set and the probe status of
-// what survives filtering are two different claims about two different sets,
-// and a test that only ever saw the filtered one could not tell whether the
-// first had been made at all.
 func probeInfected(raw []uint32, mutants []Mutant) error {
 	if err := checkInfectedShape(raw, len(mutants)); err != nil {
 		return err
@@ -533,18 +438,6 @@ func probeInfected(raw []uint32, mutants []Mutant) error {
 	return checkInfectedProbed(filterInfected(raw, mutants), mutants)
 }
 
-// TestProbeRefusesARawIndexTheFilterWouldHaveHidden is the ordering claim, and
-// it is the reason the shape of the set is proved before anything is dropped
-// from it.
-//
-// [filterInfected] exists to drop the indices the mutant tree's validation
-// rejected, and it is written not to panic on one outside the catalogue — so it
-// drops those too, in silence. That is the right behaviour for a filter and the
-// wrong place for the only bounds check: an index past the end of the catalogue
-// is the probe runtime writing about a catalogue that is not this one, which is
-// exactly the engine bug [ErrProbeInconsistent] exists to surface. Checked
-// after the filter it is indistinguishable from a rejected mutant, and the pass
-// is handed over as a measurement.
 func TestProbeRefusesARawIndexTheFilterWouldHaveHidden(t *testing.T) {
 	t.Parallel()
 
@@ -554,8 +447,6 @@ func TestProbeRefusesARawIndexTheFilterWouldHaveHidden(t *testing.T) {
 	}
 	raw := []uint32{0, 7}
 
-	// The premise: filtering leaves a set nothing downstream could object to.
-	// Without it the claim below could hold for the wrong reason.
 	if filtered := filterInfected(raw, mutants); len(filtered) != 1 || filtered[0] != 0 {
 		t.Fatalf("filterInfected(%v) = %v; the premise of this test is that the filter"+
 			" drops the offending index and leaves a well-formed set", raw, filtered)
@@ -575,15 +466,11 @@ func TestProbeRefusesARawIndexTheFilterWouldHaveHidden(t *testing.T) {
 	}
 }
 
-// TestCheckInfectedRendersTheSessionProbeMessage pins the sentence, because it
-// is the one a consumer sees and the C.1 prefix every probe failure carries.
 func TestCheckInfectedRendersTheSessionProbeMessage(t *testing.T) {
 	t.Parallel()
 
 	const want = "gomutants: session probe: the probe log names a mutant the catalogue" +
 		" cannot account for: index 7"
-	// Both checks render it, and a consumer must not be able to tell which
-	// fired: which half of the invariant an engine bug broke is not its business.
 	for name, err := range map[string]error{
 		"shape":  checkInfectedShape([]uint32{7}, 1),
 		"probed": checkInfectedProbed([]uint32{7}, make([]Mutant, 8)),

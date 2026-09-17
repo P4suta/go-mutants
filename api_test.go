@@ -166,9 +166,6 @@ func TestConcurrentWorkspaceCloseWaitsForTheSameCleanup(t *testing.T) {
 		runtime.Gosched()
 	}
 
-	// Hold the workspace mutex until the second goroutine has entered Close.
-	// Once released, the old implementation returned immediately on closed
-	// even though the first caller was still blocked in Session.Close.
 	workspace.mu.Lock()
 	secondStarted := make(chan struct{})
 	secondDone := make(chan error, 1)

@@ -210,8 +210,6 @@ func TestCancelledRunDoesNotReplaceTheLatestCompletedReport(t *testing.T) {
 	}}
 
 	result, err := service.Execute(t.Context(), cli.CommandVerify, cli.Request{}, "")
-	// The cancelled run reports itself - the assertion here is that it does not
-	// become the report the next command reads, which is what the indexes are.
 	if !errors.Is(err, context.Canceled) || result.Verdict != report.VerdictInsufficient {
 		t.Fatalf("cancelled verify = %+v, %v", result, err)
 	}

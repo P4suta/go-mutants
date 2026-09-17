@@ -5,20 +5,6 @@ package testkit
 
 import "testing"
 
-// TestReuseMatchCrossesASeparatorOnlyForTheDoubleStar pins the semantics this
-// matcher was written to have, and names where they came from.
-//
-// The row that matters is the deep one. [path.Match], which this replaced, says
-// false there while `reuse lint` calls the same project compliant -- and
-// because the shallow row is true either way, the annotation still covers
-// something and is never reported as stale. The only symptom was one file
-// reported as carrying no header, which is a true sentence about the wrong
-// subject.
-//
-// The expectations are the reference implementation's answers, observed against
-// reuse 3.3 in both directions: `data/**` compliant with `data/deep/nested.txt`
-// present, `data/*` naming that file under MISSING COPYRIGHT AND LICENSING
-// INFORMATION.
 func TestReuseMatchCrossesASeparatorOnlyForTheDoubleStar(t *testing.T) {
 	t.Parallel()
 
@@ -52,12 +38,6 @@ func TestReuseMatchCrossesASeparatorOnlyForTheDoubleStar(t *testing.T) {
 	}
 }
 
-// TestReuseMatchRefusesAWildcardItDoesNotImplement is the fail-closed half.
-//
-// `?` and a character class are shapes [path.Match] accepts and nothing here
-// has been shown REUSE's answer for. Returning false for them would be the same
-// mistake in a new place: a pattern that covers a file, read as one that does
-// not, reported as a missing header.
 func TestReuseMatchRefusesAWildcardItDoesNotImplement(t *testing.T) {
 	t.Parallel()
 
@@ -68,16 +48,6 @@ func TestReuseMatchRefusesAWildcardItDoesNotImplement(t *testing.T) {
 	}
 }
 
-// TestReuseCoveringNamesEveryAnnotationThatClaimsAFile pins the shape rather
-// than a bug.
-//
-// A first-match version was tried against the real manifest with a wide glob
-// beside a narrow path the glob already covers -- the shape a manifest merged
-// from two products takes -- and the gate stayed green, because the staleness
-// verdict is re-derived by [ReuseAnnotationCoversATrackedFile] and never rested
-// on this. So this is not a regression test for something that broke; it is the
-// list being a list, so that a caller cannot quietly answer for one pattern
-// when it was asked about four.
 func TestReuseCoveringNamesEveryAnnotationThatClaimsAFile(t *testing.T) {
 	t.Parallel()
 
@@ -105,12 +75,6 @@ func TestReuseCoveringNamesEveryAnnotationThatClaimsAFile(t *testing.T) {
 	}
 }
 
-// TestReuseCoveringRefusesRatherThanSkippingAPatternItCannotRead is the
-// fail-closed half.
-//
-// Returning the patterns it could read and dropping the one it could not would
-// be the worst of the three answers: the file looks covered, the unreadable
-// entry looks stale, and neither report names the pattern that caused either.
 func TestReuseCoveringRefusesRatherThanSkippingAPatternItCannotRead(t *testing.T) {
 	t.Parallel()
 
@@ -120,19 +84,6 @@ func TestReuseCoveringRefusesRatherThanSkippingAPatternItCannotRead(t *testing.T
 	}
 }
 
-// TestAnAnnotationOfAFileThatCarriesAHeaderStillCoversSomething is the property
-// the gate's apparently redundant `||` exists for.
-//
-// The coverage pass skips a file that carries an inline header, so it never
-// writes down that an annotation also claims it. An annotation claiming only
-// such files is therefore absent from that bookkeeping while being perfectly
-// live, and a staleness check reading the bookkeeping alone accuses it of
-// matching nothing. Observed, with REUSE.toml annotating `internal/cache/key.go`:
-//
-//	REUSE.toml annotates "internal/cache/key.go", which no committed file matches
-//
-// Nothing about that sentence is a clue to what is wrong, which is what makes
-// this worth a test rather than a comment.
 func TestAnAnnotationOfAFileThatCarriesAHeaderStillCoversSomething(t *testing.T) {
 	t.Parallel()
 

@@ -17,29 +17,10 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// controlRun is one control run with the budget every test here uses. It is
-// never waited on — the fake runner answers immediately — so the timeout's only
-// job is to be a value an assertion can recognise.
 func controlRun(args ...string) execute.ControlRun {
 	return execute.ControlRun{Timeout: mutantTimeout, Args: args}
 }
 
-// TestControlEnvCarriesNoActivationOrProbeVariable is the whole claim the
-// control run rests on, stated about the environment it composes.
-//
-// The mutant tree's binaries are the user's program plus a switch, and the
-// switch is one environment variable. So a control is only "the original
-// program" if that variable is absent — and absent rather than empty, because
-// the generated runtime reads it with os.Getenv and an empty value is not an
-// identity it knows. The probe variable is here for the same reason in the
-// other direction: a control that happened to inherit one would record
-// infections into somebody else's log while claiming to be a plain run.
-//
-// The environment is compared against [execute.BaseEnv] entry for entry rather
-// than only searched for the two names, because that is the actual contract: a
-// control is the scrubbed base environment and nothing added to it, and a
-// variable invented here later would be one more difference between the program
-// the control ran and the program the mutant run ran.
 func TestControlEnvCarriesNoActivationOrProbeVariable(t *testing.T) {
 	t.Setenv(instrument.ActiveEnv, "from-the-users-shell")
 	t.Setenv(instrument.ProbeEnv, "/tmp/somebody-elses-infection.log")
@@ -63,14 +44,6 @@ func TestControlEnvCarriesNoActivationOrProbeVariable(t *testing.T) {
 	}
 }
 
-// TestRunControlStopsAtTheFirstFailure pins the short circuit, and here it is a
-// statement about meaning rather than about cost.
-//
-// A control run asks one question — does the original program pass these tests?
-// — and the first binary that answers no has answered it. Running the rest
-// could not change the answer and would spend the run's time budget saying so
-// again, and the attempt has to name the binary that decided, because "the
-// control failed" without a package is a fact nobody can act on.
 func TestRunControlStopsAtTheFirstFailure(t *testing.T) {
 	f := &fake{respond: func(_ context.Context, c call) runner.Result {
 		if c.program() == "example.com/b.test" {
@@ -106,15 +79,6 @@ func TestRunControlStopsAtTheFirstFailure(t *testing.T) {
 	}
 }
 
-// TestRunControlReportsTimeout is the other terminal answer, and the exit
-// status is the half worth pinning.
-//
-// internal/runner reports no status at all for a tree it killed, and it says so
-// with [runner.ExitCodeUnavailable] rather than by inventing one. That value is
-// carried up unchanged, exactly as [CommandResult] carries it for a workspace
-// command with the same field set: a zero there would read as *green* to a
-// caller that forgot to look at TimedOut, and a status the child never returned
-// is the one thing a status field must not claim.
 func TestRunControlReportsTimeout(t *testing.T) {
 	f := &fake{respond: func(context.Context, call) runner.Result { return timedOut() }}
 	bins := testBins("example.com/a", "example.com/b")
@@ -139,13 +103,6 @@ func TestRunControlReportsTimeout(t *testing.T) {
 	}
 }
 
-// TestRunControlRefusesEmptyBinarySet refuses the two ways a control can be
-// asked to run the original program in nothing at all.
-//
-// Both would come back as exit 0 having started no process, which is the same
-// string of bytes as "the original program passes" — and a consumer comparing a
-// mutant's failure against that control would read every mutant as killed by a
-// suite that never ran.
 func TestRunControlRefusesEmptyBinarySet(t *testing.T) {
 	f := &fake{}
 
@@ -187,18 +144,6 @@ func TestRunControlRefusesEmptyBinarySet(t *testing.T) {
 	}
 }
 
-// TestRunControlAndRunOneShareTheLaunchShape is the guarantee the whole feature
-// is for: a control is the same binary, started the same way, minus the switch.
-//
-// A control is only evidence about a mutant run if the two ran the same
-// program: same executable, same working directory — a Go test resolves
-// testdata relative to where it runs — same paired timeouts, same arguments in
-// the same order, and the same composed environment. So the two specs are
-// compared field for field rather than on the two fields somebody remembered,
-// and the *only* difference allowed is the activation variable. A change to one
-// launch path that did not reach the other would silently turn the control into
-// a measurement of something else, which is the failure this test exists to
-// catch and the one nothing downstream could notice.
 func TestRunControlAndRunOneShareTheLaunchShape(t *testing.T) {
 	args := []string{"-test.run=^TestRoundTrip$", "-test.count=1"}
 	base := execute.Options{Env: []string{"FROZEN=value", "PATH=/usr/bin"}}
@@ -244,8 +189,6 @@ func TestRunControlAndRunOneShareTheLaunchShape(t *testing.T) {
 	}
 }
 
-// withoutActivation is one child environment with the activation entry removed,
-// which is the whole of what a control's may differ by.
 func withoutActivation(env []string) []string {
 	return slices.DeleteFunc(slices.Clone(env), func(entry string) bool {
 		key, _, _ := strings.Cut(entry, "=")
@@ -253,19 +196,6 @@ func withoutActivation(env []string) []string {
 	})
 }
 
-// TestRunControlInterruptedIsAnError keeps a Ctrl-C from being read as an
-// answer.
-//
-// A cancelled child comes back from internal/runner with no exit status, and
-// [runner.ExitCodeUnavailable] is very much non-zero — so reading it as an
-// ordinary status would report the original program as *failing* whenever
-// somebody stopped the run, which is the worst of the three possible wrong
-// answers: a consumer comparing a mutant against that control would conclude
-// the suite was already red and score nothing.
-//
-// The binary is named when there was one and left unnamed when there was not,
-// which is [RunProbe]'s rule and is the same argument: a diagnostic that named
-// a process that never existed sends a reader looking for it.
 func TestRunControlInterruptedIsAnError(t *testing.T) {
 	t.Run("a child the cancellation killed", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
@@ -327,13 +257,6 @@ func TestRunControlInterruptedIsAnError(t *testing.T) {
 	})
 }
 
-// TestRunControlHonoursTheOutputLimitAndReportsTruncation is the output budget
-// applied to a control, and the reporting half is the one that matters here.
-//
-// A control's capture is what a consumer shows beside a mutant's failure, so
-// one that silently lost the first megabyte — where a panic or a build failure
-// would be — reads exactly like a suite that failed for the reason shown at the
-// end.
 func TestRunControlHonoursTheOutputLimitAndReportsTruncation(t *testing.T) {
 	deciding := runner.Result{
 		ExitCode:    1,
@@ -367,15 +290,6 @@ func TestRunControlHonoursTheOutputLimitAndReportsTruncation(t *testing.T) {
 	}
 }
 
-// TestRunControlRecordsOneExecPerBinaryStarted joins a control to the commands
-// underneath it.
-//
-// There is no summarising payload for a control in the trace contract, so the
-// per-binary `exec` events *are* the account of one: they carry the argv, the
-// directory, the environment names and the exit status, and their kind is what
-// tells a control apart from the mutant run beside it. An attempt whose
-// sequences did not match the recording's would leave a consumer's own
-// recording joined to nothing.
 func TestRunControlRecordsOneExecPerBinaryStarted(t *testing.T) {
 	f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
 	opts, sink := traced(t, f, options(f, 1))

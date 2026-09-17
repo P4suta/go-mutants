@@ -13,42 +13,10 @@ import (
 	"testing"
 )
 
-// This file implements the correctness oracle for the flattener: two syntax
-// trees are compared for structural equality modulo everything flattening is
-// allowed to change, and nothing else.
-//
-// What is deliberately ignored, and why each is a change flattening is
-// entitled to make:
-//
-//   - Positions. Every byte moves when a fragment is folded onto one line;
-//     that is the entire point.
-//   - Comments. Flatten drops the comments that cannot survive the fold, and
-//     go/parser attaches the survivors to different nodes once the line breaks
-//     are gone. Comment text carries no meaning to the compiler.
-//   - ast.EmptyStmt.Implicit. This field records nothing but whether a
-//     semicolon was written by the author or inserted by the scanner at a line
-//     break — precisely the distinction Flatten converts, by design, and one
-//     that no compiler behaviour depends on.
-//   - The spelling of a string or rune literal, as opposed to its value. A raw
-//     literal spanning lines is re-rendered as an interpreted literal, so the
-//     comparison unquotes both sides and compares the values. This is the
-//     stronger check of the two: it is what proves the rewrite preserved the
-//     string rather than merely producing some literal.
-//
-// Everything else — node types, tree shape, operators, identifier names,
-// numeric literal spelling, field presence and nil-ness — must match exactly.
-
-// astDiff returns a description of the first structural difference between two
-// syntax trees, or the empty string when they are structurally equal.
 func astDiff(a, b ast.Node) string {
 	return diffValue("", reflect.ValueOf(a), reflect.ValueOf(b))
 }
 
-// The types the walk stops at. ast.Object and ast.Scope are deprecated and
-// named here for exactly that reason: go/parser still fills those fields in
-// when object resolution is on, ast.Object.Decl points back up the tree, and a
-// comparator that followed it would recurse forever. Naming the type is how
-// the walk refuses to follow it.
 var (
 	posType          = reflect.TypeOf(token.NoPos)
 	objectType       = reflect.TypeOf((*ast.Object)(nil)) //nolint:staticcheck // deprecated, still present in ast.Ident, and cyclic
@@ -107,7 +75,6 @@ func diffValue(path string, a, b reflect.Value) string {
 		return diffValue(path, a.Elem(), b.Elem())
 
 	case reflect.Slice:
-		// A nil slice and an empty slice mean the same thing in a syntax tree.
 		if a.Len() != b.Len() {
 			return fmt.Sprintf("%s: length %d != %d", path, a.Len(), b.Len())
 		}
@@ -123,7 +90,7 @@ func diffValue(path string, a, b reflect.Value) string {
 		for i := range t.NumField() {
 			f := t.Field(i)
 			if f.PkgPath != "" {
-				continue // unexported; no ast node has one, but do not panic if that changes
+				continue
 			}
 			if t == emptyStmtType && f.Name == "Implicit" {
 				continue
@@ -148,9 +115,6 @@ func diffValue(path string, a, b reflect.Value) string {
 	}
 }
 
-// basicLitDiff compares two literals by kind and by value, so that a raw
-// string re-rendered as an interpreted string compares equal exactly when it
-// still denotes the same string.
 func basicLitDiff(path string, a, b *ast.BasicLit) string {
 	if a.Kind != b.Kind {
 		return fmt.Sprintf("%s: literal kind %s != %s", path, a.Kind, b.Kind)
@@ -160,8 +124,6 @@ func basicLitDiff(path string, a, b *ast.BasicLit) string {
 		av, aerr := strconv.Unquote(a.Value)
 		bv, berr := strconv.Unquote(b.Value)
 		if aerr != nil || berr != nil {
-			// Unparsable literals are compared verbatim rather than silently
-			// treated as equal.
 			if a.Value != b.Value {
 				return fmt.Sprintf("%s: unquotable literal %s != %s", path, a.Value, b.Value)
 			}
@@ -179,10 +141,6 @@ func basicLitDiff(path string, a, b *ast.BasicLit) string {
 	}
 }
 
-// A fragmentKind records how a fragment had to be parsed, so that the original
-// and the flattened copy are always parsed the same way. Comparing an
-// expression tree against a statement tree would report a difference that is
-// an artefact of the harness.
 type fragmentKind int
 
 const (
@@ -197,8 +155,6 @@ func (k fragmentKind) String() string {
 	return "statement list"
 }
 
-// parseFragment parses src the way the instrumenter would have to: as an
-// expression if it is one, and otherwise as the body of a function.
 func parseFragment(src string, kind fragmentKind) (ast.Node, error) {
 	if kind == kindExpr {
 		return parser.ParseExpr(src)
@@ -209,9 +165,6 @@ func parseFragment(src string, kind fragmentKind) (ast.Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	// A fragment containing an unbalanced "}" would close the wrapper and turn
-	// the rest of itself into further declarations, leaving this function
-	// comparing two empty bodies and reporting every such pair as equal.
 	if len(file.Decls) != 1 {
 		return nil, fmt.Errorf("fragment does not stay inside the function body (%d declarations)", len(file.Decls))
 	}
@@ -222,7 +175,6 @@ func parseFragment(src string, kind fragmentKind) (ast.Node, error) {
 	return fn.Body, nil
 }
 
-// classify reports how src parses, preferring the expression reading.
 func classify(src string) (fragmentKind, error) {
 	if _, err := parser.ParseExpr(src); err == nil {
 		return kindExpr, nil
@@ -233,9 +185,6 @@ func classify(src string) (fragmentKind, error) {
 	return kindStmts, nil
 }
 
-// assertMeaningPreserved is the correctness property every flattener test
-// funnels through: the flattened copy parses the same way the original did and
-// yields a structurally identical tree.
 func assertMeaningPreserved(t *testing.T, original string, flattened []byte) {
 	t.Helper()
 
@@ -257,8 +206,6 @@ func assertMeaningPreserved(t *testing.T, original string, flattened []byte) {
 	}
 }
 
-// TestASTDiffDetectsDifferences guards the oracle itself. A comparator that
-// always returned "equal" would make every flattener test pass.
 func TestASTDiffDetectsDifferences(t *testing.T) {
 	t.Parallel()
 
@@ -303,8 +250,6 @@ func TestASTDiffDetectsDifferences(t *testing.T) {
 	}
 }
 
-// TestASTDiffIgnoresImplicitSemicolons pins the one ignored field that is not
-// a position or a comment.
 func TestASTDiffIgnoresImplicitSemicolons(t *testing.T) {
 	t.Parallel()
 

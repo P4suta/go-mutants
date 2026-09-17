@@ -26,27 +26,14 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// traceTick is how far the tests' clock moves on every reading. It is a whole
-// number of milliseconds because the contract records durations in whole
-// milliseconds, so anything smaller would record every span as zero and the
-// assertions about durations would pass for a recorder that measured nothing.
 const traceTick = 5 * time.Millisecond
 
-// tickingClock is the clock these tests hand the engine: every reading is one
-// [traceTick] later than the last, so every span is non-zero and every event
-// carries a distinct timestamp without a test having to script one.
 func tickingClock() func() time.Time {
 	clock := testkit.NewClock(time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC))
 	clock.Tick(traceTick)
 	return clock.Now
 }
 
-// recording runs the engine with a drained event channel and returns what both
-// streams saw: the engine's own events, and the trace the sink kept.
-//
-// It is the unit-test counterpart of the integration suite's `collect`, and it
-// is separate because the engine's sends block: a consumer that is not already
-// running when Run is called deadlocks the run.
 func recording(t *testing.T, opts Options) (RunOutcome, []Event, error) {
 	t.Helper()
 	events := make(chan Event, 64)
@@ -63,8 +50,6 @@ func recording(t *testing.T, opts Options) (RunOutcome, []Event, error) {
 	return outcome, <-done, err
 }
 
-// eventNames names each engine event by its type, so that two streams can be
-// compared as data.
 func eventNames(events []Event) []string {
 	names := make([]string, 0, len(events))
 	for _, e := range events {
@@ -73,7 +58,6 @@ func eventNames(events []Event) []string {
 	return names
 }
 
-// typesOf names the trace events a recording holds, in order.
 func typesOf(events []trace.Event) []string {
 	names := make([]string, 0, len(events))
 	for _, e := range events {
@@ -82,23 +66,9 @@ func typesOf(events []trace.Event) []string {
 	return names
 }
 
-// TestRunWithoutATraceSinkRecordsNothingAndIsUnchanged is the promise the whole
-// workstream rests on: an untraced run is the run there was before there was a
-// recorder to leave out.
-//
-// The recorder is nil when no sink was given — "no trace" is one representation
-// rather than two — so every call site records unconditionally and there is no
-// branch for a verdict to come to depend on. What this checks is that the branch
-// really is absent: the same invocation, with and without a sink, publishes the
-// same engine events and reaches the same outcome, and the untraced one asks for
-// nothing to be published even when [Options.PublishTrace] is set.
 func TestRunWithoutATraceSinkRecordsNothingAndIsUnchanged(t *testing.T) {
 	t.Parallel()
 
-	// A run that fails before it copies anything: what is being compared is the
-	// two code paths through Run, not the work between them, and a unit test
-	// cannot have a toolchain. The traced run of a whole pipeline is
-	// TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture.
 	base := func() Options {
 		return Options{
 			Config:        config.Defaults(),
@@ -132,22 +102,12 @@ func TestRunWithoutATraceSinkRecordsNothingAndIsUnchanged(t *testing.T) {
 			t.Error("a run with no sink published a Traced event: PublishTrace has invented a recorder")
 		}
 	}
-	// And the sink really was wired up, or the comparison above would hold for
-	// an engine that ignores the option.
 	if got := typesOf(sink.Events()); len(got) < 2 || got[0] != trace.TypeRunStart || got[len(got)-1] != trace.TypeRunEnd {
 		t.Errorf("the recording is %v, want it to open with %s and close with %s",
 			got, trace.TypeRunStart, trace.TypeRunEnd)
 	}
 }
 
-// TestPhaseCompletedFollowsEveryPhaseChangedWithADuration pins the pairing the
-// verbose renderer and the report's timing both read.
-//
-// It drives the phase seam directly rather than a whole run, because the phases
-// of a whole run need a toolchain, a snapshot and a test suite between them —
-// and none of that is what is being pinned here. What is pinned is that a phase
-// is announced once, closed once, closed before the next one opens, and timed
-// when it closes, on the engine's stream and in the recording alike.
 func TestPhaseCompletedFollowsEveryPhaseChangedWithADuration(t *testing.T) {
 	t.Parallel()
 
@@ -159,9 +119,6 @@ func TestPhaseCompletedFollowsEveryPhaseChangedWithADuration(t *testing.T) {
 	for _, phase := range Phases() {
 		s.enterPhase(phase, "doing the "+phase.String())
 	}
-	// The last phase is closed by Run on every return path; here that is this
-	// call, and it is idempotent so that a defer and an early return are one
-	// span.
 	s.closePhase()
 	s.closePhase()
 	close(events)
@@ -189,7 +146,6 @@ func TestPhaseCompletedFollowsEveryPhaseChangedWithADuration(t *testing.T) {
 		}
 	}
 
-	// The same spans, in the same order, in [RunOutcome.Timing].
 	if len(s.timing.Phases) != len(Phases()) {
 		t.Fatalf("timing recorded %d phases, want %d", len(s.timing.Phases), len(Phases()))
 	}
@@ -199,8 +155,6 @@ func TestPhaseCompletedFollowsEveryPhaseChangedWithADuration(t *testing.T) {
 		}
 	}
 
-	// And the recording says the same, one start/end pair per phase and never
-	// two ends for one start.
 	got := typesOf(sink.Events())
 	wantTrace := []string{trace.TypeRunStart}
 	for range Phases() {
@@ -211,11 +165,6 @@ func TestPhaseCompletedFollowsEveryPhaseChangedWithADuration(t *testing.T) {
 	}
 }
 
-// TestRunIDOptionIsUsedWhenGiven keeps one run to one identity.
-//
-// internal/cli mints the id so that it can name the trace directory before the
-// engine starts, and the report has to be filed under that same id or the two
-// cannot be paired afterwards.
 func TestRunIDOptionIsUsedWhenGiven(t *testing.T) {
 	t.Parallel()
 
@@ -245,8 +194,6 @@ func TestRunIDOptionIsUsedWhenGiven(t *testing.T) {
 		t.Errorf("run-start.kind = %q, want %q", events[0].Start.Kind, trace.StartKindRun)
 	}
 
-	// Nothing named means a fresh id from the run's own clock, which is what
-	// every caller before internal/cli grew a `--trace` flag passes.
 	minted, _, err := recording(t, Options{
 		Config:        config.Defaults(),
 		WorkspaceRoot: "   ",
@@ -260,15 +207,9 @@ func TestRunIDOptionIsUsedWhenGiven(t *testing.T) {
 	}
 }
 
-// TestTracedAndPhaseCompletedAreSealedEvents is a compile-time assertion: both
-// travel on the engine's stream, so both have to be part of the sealed
-// interface a renderer switches over.
 func TestTracedAndPhaseCompletedAreSealedEvents(t *testing.T) {
 	t.Parallel()
 
-	// The declarations are the assertion: the interface's marker method is
-	// unexported, so a type outside this package cannot satisfy it and a type
-	// inside it that forgot to would not compile here.
 	var traced Event = Traced{Event: trace.Event{Seq: 1, Type: trace.TypeNote}}
 	var completed Event = PhaseCompleted{Phase: PhaseDiscover, Duration: time.Second}
 
@@ -277,23 +218,12 @@ func TestTracedAndPhaseCompletedAreSealedEvents(t *testing.T) {
 	}
 }
 
-// TestMutantResultCarriesKilledByAttemptsAndCoveringPackages closes the gap
-// between the report and the stream.
-//
-// All three facts were in the document and in none of the events, so `-v` could
-// not say which binary caught a mutant, how many attempts it took, or which
-// binaries reach a survivor's line without re-reading the report the run has not
-// written yet. They arrive by three routes — a measured mutant, a mutant adopted
-// from the cache, and the summary block read back out of the document — and each
-// one is checked, because a fact carried by two of the three is a renderer that
-// prints it sometimes.
 func TestMutantResultCarriesKilledByAttemptsAndCoveringPackages(t *testing.T) {
 	t.Parallel()
 
 	const id = "aa"
 	covering := []string{"example.com/m/a", "example.com/m/b"}
 
-	// Measured: internal/execute's result, folded into the display data.
 	events := make(chan Event, 8)
 	s := &session{events: events}
 	st := newState()
@@ -316,7 +246,6 @@ func TestMutantResultCarriesKilledByAttemptsAndCoveringPackages(t *testing.T) {
 		t.Errorf("measured covering packages = %v, want %v", measured.CoveringTestPackages, covering)
 	}
 
-	// Adopted: the same three facts, second-hand, out of the cache entry.
 	adopted := make(chan Event, 8)
 	c := &session{events: adopted}
 	cs := newState()
@@ -343,8 +272,6 @@ func TestMutantResultCarriesKilledByAttemptsAndCoveringPackages(t *testing.T) {
 		t.Errorf("adopted covering packages = %v, want %v", reused.CoveringTestPackages, covering)
 	}
 
-	// And the summary block, which reads the published document rather than the
-	// run beside it.
 	killedBy := "example.com/m/a"
 	rep := &report.Report{Mutants: []report.Mutant{{
 		ID:                   id,
@@ -366,13 +293,6 @@ func TestMutantResultCarriesKilledByAttemptsAndCoveringPackages(t *testing.T) {
 	}
 }
 
-// TestNarrowRecordsOneCoverageMapEventPerMutant is the account of the decision
-// that skips most of a run.
-//
-// A coverage-guided run does not execute the mutants nothing reaches, and the
-// only evidence for that is the mapping. One event per mapped mutant — the
-// covered ones with the binaries that reach them, the uncovered ones saying so
-// explicitly — is what lets a reader check the skipping rather than take it.
 func TestNarrowRecordsOneCoverageMapEventPerMutant(t *testing.T) {
 	t.Parallel()
 
@@ -426,14 +346,6 @@ func TestNarrowRecordsOneCoverageMapEventPerMutant(t *testing.T) {
 	}
 }
 
-// TestCachePhaseRecordsOpenLookupAndStoreDecisions is the one event that
-// explains an absence of work.
-//
-// A warm run executes almost nothing, and without the cache's own account there
-// is no way to tell that from a run that decided there was nothing to do. The
-// store it opened, every lookup and what it answered, and every write-back are
-// recorded, expectations included: a mutant the ledger names is never asked
-// about, and "never asked" has to be distinguishable from "asked and missed".
 func TestCachePhaseRecordsOpenLookupAndStoreDecisions(t *testing.T) {
 	t.Parallel()
 
@@ -489,7 +401,6 @@ func TestCachePhaseRecordsOpenLookupAndStoreDecisions(t *testing.T) {
 		}
 	}
 
-	// And the second run says which answers it did not have to compute.
 	warm := &session{clock: tickingClock()}
 	warmSink := trace.NewMemorySink(0)
 	warm.trace = trace.New(warmSink, warm.now, trace.StartRecord{Kind: trace.StartKindRun})
@@ -510,7 +421,6 @@ func TestCachePhaseRecordsOpenLookupAndStoreDecisions(t *testing.T) {
 	}
 }
 
-// cacheRecords splits a recording's cache events by operation, in order.
 func cacheRecords(events []trace.Event) (opens, lookups, stores []trace.CacheRecord) {
 	for _, e := range events {
 		if e.Type != trace.TypeCache {
@@ -528,14 +438,6 @@ func cacheRecords(events []trace.Event) (opens, lookups, stores []trace.CacheRec
 	return opens, lookups, stores
 }
 
-// TestSweepTemporaryRecordsWhatItCollected is the run's account of the disk it
-// took back.
-//
-// It used to be recorded nowhere on purpose: it is a fact about the machine
-// rather than about the workspace, so it has no place in a report two runs are
-// compared by. A recording is exactly where it does belong — a run that paused
-// to delete four gigabytes has an explanation for the pause, and a sweep that
-// left something behind has named it.
 func TestSweepTemporaryRecordsWhatItCollected(t *testing.T) {
 	t.Parallel()
 
@@ -575,20 +477,6 @@ func TestSweepTemporaryRecordsWhatItCollected(t *testing.T) {
 	}
 }
 
-// TestPublishingATraceDoesNotStallTheRecordingBehindASlowConsumer is the
-// back-pressure boundary of `-vv`.
-//
-// A recorded event is handed to every sink under the recorder's own lock, so a
-// sink that blocks blocks the recorder — and with the trace published straight
-// onto the engine's stream, "blocks" meant "waits for a terminal to draw a
-// line". Every execution worker recording an attempt then queues behind one slow
-// consumer, and asking for verbosity would have made the run itself slower,
-// which is a diagnostic changing the thing it is a diagnostic of.
-//
-// The hand-off is a bounded buffer with one forwarding goroutine, so the
-// recorder's lock is never held across a send onto the stream. A consumer slower
-// than the buffer still applies back-pressure eventually — that is the point of
-// bounding it — but it applies it to the forwarder rather than to the run.
 func TestPublishingATraceDoesNotStallTheRecordingBehindASlowConsumer(t *testing.T) {
 	t.Parallel()
 
@@ -596,9 +484,7 @@ func TestPublishingATraceDoesNotStallTheRecordingBehindASlowConsumer(t *testing.
 		producers   = 4
 		perProducer = 50
 		crawl       = 50 * time.Millisecond
-		// Generous: serialised behind the consumer the burst below would take
-		// (4×50 + 1) × 50ms, which is over ten seconds.
-		budget = 2 * time.Second
+		budget      = 2 * time.Second
 	)
 
 	events := make(chan Event)
@@ -636,8 +522,6 @@ func TestPublishingATraceDoesNotStallTheRecordingBehindASlowConsumer(t *testing.
 	wg.Wait()
 	recording := time.Since(started)
 
-	// The consumer is let off the leash before the teardown, so that draining
-	// what is still queued costs the test nothing.
 	slow.Store(false)
 	s.drainPublished()
 	close(events)
@@ -652,20 +536,6 @@ func TestPublishingATraceDoesNotStallTheRecordingBehindASlowConsumer(t *testing.
 	}
 }
 
-// TestARunIDThatIsNotOneIsRefused keeps a caller's identity from naming files
-// the run has no business creating.
-//
-// The id names things: the run's own immutable document in the history store,
-// and — from the change after this one — the directory a recording is written
-// into. A caller that passes `../../etc` or an empty-looking string is not
-// asking for a differently named run, it is making a mistake about the
-// invocation, and the cheapest place to find that out is before a workspace has
-// been copied.
-//
-// It is refused rather than replaced. A caller that minted an id has something
-// of its own filed under it, and running under a quietly different one would
-// leave the two unable to find each other — which is exactly the pairing the
-// option exists to make possible.
 func TestARunIDThatIsNotOneIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -699,13 +569,9 @@ func TestARunIDThatIsNotOneIsRefused(t *testing.T) {
 			if !strings.Contains(err.Error(), strconv.Quote(id)) {
 				t.Errorf("the failure does not quote the id it refused: %v", err)
 			}
-			// Before anything was copied: the point of checking an invocation
-			// is to check it before it costs a snapshot.
 			if left := testkit.Entries(t, private); len(left) != 0 {
 				t.Errorf("the refused run left %v in its temporary directory", left)
 			}
-			// The run still has a name, so that the failure has one, and it is
-			// a real one rather than the value that was refused.
 			if !runIDPattern.MatchString(out.RunID) {
 				t.Errorf("the refused run reports the id %q, want one of the minted form", out.RunID)
 			}
@@ -715,8 +581,6 @@ func TestARunIDThatIsNotOneIsRefused(t *testing.T) {
 		})
 	}
 
-	// And the form itself is accepted, which is what keeps this a check on the
-	// spelling rather than on whether anybody passed one.
 	const minted = "20260907T120000Z-abcd"
 	out, _, err := recording(t, Options{
 		Config:        config.Defaults(),
@@ -730,28 +594,15 @@ func TestARunIDThatIsNotOneIsRefused(t *testing.T) {
 	if out.RunID != minted {
 		t.Errorf("RunID = %q, want the caller's %q", out.RunID, minted)
 	}
-	// The id NewRunID mints is one this check accepts, or the two would
-	// disagree about what a run id is.
 	if got := NewRunID(time.Now()); !runIDPattern.MatchString(got) {
 		t.Errorf("NewRunID minted %q, which this check would refuse", got)
 	}
 }
 
-// TestSweepReadsTheRunsOwnClock is what makes a recorded sweep pinnable.
-//
-// The one decision collection makes without a marker to read is about age: a
-// directory from before this package existed is unowned, so a day of inactivity
-// is the only evidence available that nobody is using it. Asking the wall clock
-// for that made the decision — and therefore the `sweep` event it is recorded in
-// — depend on what time the test ran at. It asks the run's own clock instead,
-// which is the same clock every timestamp in the recording is stamped from, so a
-// run and its account of itself agree about when they happened.
 func TestSweepReadsTheRunsOwnClock(t *testing.T) {
 	t.Parallel()
 
 	parent := t.TempDir()
-	// Unowned: no marker and no lock, which is the only shape the age rule is
-	// consulted for. It was made a moment ago, so the wall clock would spare it.
 	legacy := filepath.Join(parent, snapshot.DirPrefix+"from-an-older-binary")
 	if err := os.Mkdir(legacy, 0o755); err != nil {
 		t.Fatal(err)
@@ -762,8 +613,6 @@ func TestSweepReadsTheRunsOwnClock(t *testing.T) {
 		t.Fatalf("the sweep removed %v, want a young unowned directory left alone", got.Removed)
 	}
 
-	// The same directory, swept by a run whose clock says a year has passed.
-	// Nothing on disk changed; only the clock the decision is made against.
 	later := &session{clock: func() time.Time { return time.Now().Add(365 * 24 * time.Hour) }}
 	got := later.sweepTemporary(parent)
 	if !slices.Equal(got.Removed, []string{legacy}) {
@@ -772,20 +621,6 @@ func TestSweepReadsTheRunsOwnClock(t *testing.T) {
 	}
 }
 
-// TestNotesAreRecordedRightAfterRunStart puts the caller's notes where they
-// happened.
-//
-// The two things worth recording about a recording are decided outside the run:
-// a trace directory refused before the engine was called, and the collection of
-// older recordings that ran before this one opened its own. Both are facts about
-// the moment the recording began, so they belong immediately after the run-start
-// and nowhere else — not appended to the end, where they would have to displace
-// the run-end a reader relies on being the last line, and not left on a console
-// where the account of the run does not have them.
-//
-// The recorder stamps them, which is the other half: a note carries the sequence
-// number, timestamp and elapsed time of the moment it was recorded, exactly like
-// every other event, rather than a moment its author had to invent.
 func TestNotesAreRecordedRightAfterRunStart(t *testing.T) {
 	t.Parallel()
 
@@ -831,8 +666,6 @@ func TestNotesAreRecordedRightAfterRunStart(t *testing.T) {
 		}
 	}
 
-	// And a run given none records none: the notes are the caller's, not a
-	// section of every recording.
 	plain := base()
 	plainSink := trace.NewMemorySink(0)
 	plain.TraceSink = plainSink
@@ -846,15 +679,6 @@ func TestNotesAreRecordedRightAfterRunStart(t *testing.T) {
 	}
 }
 
-// TestAPublishedRecordingCarriesTheDigestAndNotTheBytes is the price of `-vv`,
-// held down.
-//
-// A recorded execution carries the captured output so that the sink writing it
-// to disk can preserve it beside the stream. The fan-out onto the event stream
-// is a copy for a screen: it deep-copies every event, the renderer never prints
-// those bytes — an `exec` line is the exit status, the duration and the argument
-// vector — and a mutant run can capture a megabyte of them. Publishing them
-// would make watching a run cost a copy of every test binary's output.
 func TestAPublishedRecordingCarriesTheDigestAndNotTheBytes(t *testing.T) {
 	t.Parallel()
 
@@ -900,8 +724,6 @@ func TestAPublishedRecordingCarriesTheDigestAndNotTheBytes(t *testing.T) {
 		t.Fatalf("published %d exec events, want 1: %v", execs, typesOf(published))
 	}
 
-	// The sink that was asked to keep the bytes still has them, which is what
-	// makes this a property of the fan-out rather than of the recorder.
 	for _, e := range kept.Events() {
 		if e.Type == trace.TypeExec && len(e.Exec.Output) != len(captured) {
 			t.Errorf("the run's own recording kept %d of %d bytes", len(e.Exec.Output), len(captured))

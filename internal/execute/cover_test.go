@@ -20,11 +20,8 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// coverPkg is the pattern a coverage-guided run builds with.
 const coverPkg = "example.com/m/..."
 
-// coverOptions wires a fake runner into options that can build and profile, and
-// returns the coverage directory the pass is pointed at.
 func coverOptions(t *testing.T, f *fake) (execute.Options, string) {
 	t.Helper()
 	work := t.TempDir()
@@ -40,9 +37,6 @@ func coverOptions(t *testing.T, f *fake) (execute.Options, string) {
 	return execute.WithRunner(opts, f.run), filepath.Join(work, "coverage")
 }
 
-// TestCoverPkgTurnsCoverageOnForEveryBuild pins the two flags and their order,
-// because a `-coverpkg` without `-cover` is silently ignored by the go command
-// and would leave the profiling pass with nothing to collect.
 func TestCoverPkgTurnsCoverageOnForEveryBuild(t *testing.T) {
 	t.Parallel()
 
@@ -76,8 +70,6 @@ func TestCoverPkgTurnsCoverageOnForEveryBuild(t *testing.T) {
 	}
 }
 
-// TestNoCoverPkgBuildsPlainly is the other half: coverage is opt-in, and a run
-// that did not ask for it must not pay the teardown cost on every mutant.
 func TestNoCoverPkgBuildsPlainly(t *testing.T) {
 	t.Parallel()
 
@@ -99,16 +91,6 @@ func TestNoCoverPkgBuildsPlainly(t *testing.T) {
 	}
 }
 
-// TestCollectCoverageRunsEveryBinaryOnceIntoItsOwnDirectory pins the shape of
-// the profiling pass.
-//
-// Three things are asserted and each is a decision. The directory is per
-// binary, because merging two would answer "was this line reached by anything",
-// which is the question coverage-guided selection exists not to ask. The
-// activation variable is absent, because a profile taken with a mutant live
-// would describe the mutant. And the directory arrives as `-test.gocoverdir`
-// rather than as GOCOVERDIR, which is the difference between collecting data
-// and silently collecting none.
 func TestCollectCoverageRunsEveryBinaryOnceIntoItsOwnDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -161,9 +143,6 @@ func TestCollectCoverageRunsEveryBinaryOnceIntoItsOwnDirectory(t *testing.T) {
 	}
 }
 
-// TestCollectCoverageRefusesADirectoryInsideTheSnapshot is the drift gate's
-// half of the contract, enforced where the data would be written rather than
-// where it would be noticed.
 func TestCollectCoverageRefusesADirectoryInsideTheSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -183,16 +162,12 @@ func TestCollectCoverageRefusesADirectoryInsideTheSnapshot(t *testing.T) {
 	}
 }
 
-// TestCollectCoverageRefusesADirectoryItCannotCreate covers the other way the
-// destination can be unusable.
 func TestCollectCoverageRefusesADirectoryItCannotCreate(t *testing.T) {
 	t.Parallel()
 
 	f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
 	opts, _ := coverOptions(t, f)
 
-	// A regular file where the pass wants a directory, which fails on every
-	// platform and needs no permission games.
 	blocked := filepath.Join(t.TempDir(), "coverage")
 	testkit.WriteFile(t, blocked, []byte("not a directory"))
 
@@ -205,8 +180,6 @@ func TestCollectCoverageRefusesADirectoryItCannotCreate(t *testing.T) {
 	}
 }
 
-// TestCollectCoverageReportsAFailingBinary proves the pass does not quietly
-// return a profile for a run that never happened.
 func TestCollectCoverageReportsAFailingBinary(t *testing.T) {
 	t.Parallel()
 
@@ -231,9 +204,6 @@ func TestCollectCoverageReportsAFailingBinary(t *testing.T) {
 	}
 }
 
-// TestCollectCoverageRefusesBinariesWithoutInstrumentation catches the caller
-// mistake that would otherwise produce empty profiles and a run that reported
-// every mutant as uncovered.
 func TestCollectCoverageRefusesBinariesWithoutInstrumentation(t *testing.T) {
 	t.Parallel()
 
@@ -250,9 +220,6 @@ func TestCollectCoverageRefusesBinariesWithoutInstrumentation(t *testing.T) {
 	}
 }
 
-// TestBinariesNarrowsWhatIsStarted is coverage-guided selection as this package
-// sees it: a mutant is measured against the binaries it was given and no
-// others.
 func TestBinariesNarrowsWhatIsStarted(t *testing.T) {
 	t.Parallel()
 
@@ -270,9 +237,6 @@ func TestBinariesNarrowsWhatIsStarted(t *testing.T) {
 	}
 }
 
-// TestNilBinariesRunsEveryBinary is the default every caller before
-// coverage-guided selection relied on, asserted so that adding the field cannot
-// have changed it.
 func TestNilBinariesRunsEveryBinary(t *testing.T) {
 	t.Parallel()
 
@@ -287,8 +251,6 @@ func TestNilBinariesRunsEveryBinary(t *testing.T) {
 	}
 }
 
-// TestBinariesStillStopsAtTheFirstKill proves narrowing changes which binaries
-// are candidates, not how an attempt reads them.
 func TestBinariesStillStopsAtTheFirstKill(t *testing.T) {
 	t.Parallel()
 
@@ -311,13 +273,6 @@ func TestBinariesStillStopsAtTheFirstKill(t *testing.T) {
 	}
 }
 
-// TestBinariesRefusesAnEmptySubset is the guard against a free survivor.
-//
-// An empty subset would walk zero binaries and report the mutant as survived
-// having started nothing, which is the flattering green [CodeNoTestBinaries]
-// refuses for a whole run. A mutant no binary covers is not executed at all and
-// is recorded by internal/engine, so an empty list reaching here can only be a
-// caller bug — and it should be loud rather than free.
 func TestBinariesRefusesAnEmptySubset(t *testing.T) {
 	t.Parallel()
 
@@ -337,8 +292,6 @@ func TestBinariesRefusesAnEmptySubset(t *testing.T) {
 	}
 }
 
-// TestBinariesRefusesAnIndexOutOfRange catches the two sides of the run holding
-// different binary lists, which is the only way a bad index can arise.
 func TestBinariesRefusesAnIndexOutOfRange(t *testing.T) {
 	t.Parallel()
 
@@ -357,8 +310,6 @@ func TestBinariesRefusesAnIndexOutOfRange(t *testing.T) {
 	}
 }
 
-// TestScheduleHonoursPerMutantSubsets is the same narrowing seen through the
-// scheduler, which is how internal/engine reaches it.
 func TestScheduleHonoursPerMutantSubsets(t *testing.T) {
 	t.Parallel()
 
@@ -394,22 +345,6 @@ func TestScheduleHonoursPerMutantSubsets(t *testing.T) {
 	}
 }
 
-// TestTheProfileFlagIsWhatTheToolchainReads documents, as an executable note,
-// the two discoveries that shaped the profiling pass.
-//
-// The first: a `go build -cover` program reads GOCOVERDIR; a *test* binary does
-// not. Its data is emitted by testing's coverTearDown, which is handed only
-// what the flags say and, when they say nothing, writes into a temporary
-// directory it then deletes -- so a profiling pass driven by the environment
-// variable prints a coverage percentage, exits 0, and leaves nothing behind.
-//
-// The second is why the flag is `-test.coverprofile` rather than
-// `-test.gocoverdir`, and it is about *processes*. A coverage directory holds
-// raw counters that `go tool covdata textfmt` has to render before anything can
-// read them, which is one more child process per profile -- and a run that
-// profiles a suite test by test pays it once per test. The binary writes the
-// text format itself when asked for a profile, and the two documents are the
-// same format from the same data.
 func TestTheProfileFlagIsWhatTheToolchainReads(t *testing.T) {
 	t.Parallel()
 
@@ -438,10 +373,6 @@ func TestTheProfileFlagIsWhatTheToolchainReads(t *testing.T) {
 	}
 }
 
-// TestCollectCoverageCreatesTheWorkerTemporaryDirectory covers the quiet
-// dependency the pass has on the same isolation a mutant run gets: a `-cover`
-// binary writes into the temporary directory even when told where to put its
-// coverage data.
 func TestCollectCoverageCreatesTheWorkerTemporaryDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -461,14 +392,6 @@ func TestCollectCoverageCreatesTheWorkerTemporaryDirectory(t *testing.T) {
 	}
 }
 
-// TestCollectCoverageLabelsEachProfilingRun names the pass that is invisible in
-// a report and expensive in a run.
-//
-// The profiling pass runs every test binary once more, before a single mutant
-// is executed, and a reader wondering where the first minute of a run went can
-// only tell it from the mutant runs by its label. The subject is the package
-// whose profile is being taken, which is the identity the coverage map and the
-// report both know a binary by.
 func TestCollectCoverageLabelsEachProfilingRun(t *testing.T) {
 	t.Parallel()
 
@@ -503,18 +426,6 @@ func TestCollectCoverageLabelsEachProfilingRun(t *testing.T) {
 	}
 }
 
-// TestCollectCoverageProfilesTheBinariesConcurrently is the binary-level pass's
-// half of the same rule.
-//
-// It is one process per *package* rather than per test, so it is the smaller of
-// the two -- and it is paid before a run measures anything, by every project
-// with more than a handful of packages. Each binary writes a profile of its own
-// under a scratch directory of its own and shares nothing but the package
-// directory it already reads from, which the mutant runs of that same binary
-// already overlap on.
-//
-// The barrier is the proof, as it is for the per-test pass: a serial
-// implementation does not fail this slowly, it deadlocks.
 func TestCollectCoverageProfilesTheBinariesConcurrently(t *testing.T) {
 	t.Parallel()
 
@@ -545,8 +456,6 @@ func TestCollectCoverageProfilesTheBinariesConcurrently(t *testing.T) {
 		t.Fatalf("CollectCoverage: %v", err)
 	}
 
-	// And in the binaries' order rather than the workers': what the mapping
-	// sees has to be a function of the tree.
 	for i, data := range collected {
 		if data.ImportPath != bins[i].ImportPath {
 			t.Errorf("profile %d is for %q, want %q", i, data.ImportPath, bins[i].ImportPath)

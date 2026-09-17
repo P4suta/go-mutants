@@ -61,15 +61,6 @@ const (
 	mutationControlUnavailable        = "no positive clean observation is available to bound mutation execution"
 )
 
-// MutationSession is the prepared go-mutants session a run measures through.
-//
-// Control is the fourth method and the newest. Before it existed, "did the
-// original program pass these tests" was answered two different ways depending
-// on the kind of run - a second workspace running a `go test` argv it built
-// itself, or the probe tree's test-failed outcome read as a red suite - and
-// neither was the binaries the mutants were measured against. The engine
-// answers it directly now: the same prepared binaries, the same launch shape,
-// with nothing activated.
 type MutationSession interface {
 	Catalog() gomutants.Catalog
 	Exec(context.Context, gomutants.ExecRequest) (gomutants.MutantResult, error)
@@ -113,17 +104,8 @@ type MutationOptions struct {
 
 	Checkpoint func(string, MutationEvaluation)
 
-	// OriginalControl runs the original program under the same request a
-	// mutant is about to run under, memoised so that every mutant sharing a
-	// request pays for one.
 	OriginalControl OriginalControl
 
-	// freshControl is the same measurement without the memo.
-	//
-	// A mutant that exhausted its budget is answered by a fresh control rather
-	// than by the expiration: a derived budget is a claim about how long the
-	// work takes, and a mutant that timed out has just falsified it. Reusing
-	// the memoised answer would re-use the claim that was falsified.
 	freshControl OriginalControl
 
 	Trace *trace.Recorder
@@ -350,8 +332,6 @@ func mutationAccounting(catalog gomutants.Catalog, replayID string, evaluation M
 			Package: mutant.Package, Rule: mutant.Rule, Detail: detail,
 			Reused: reused, Provenance: provenance,
 		})
-		//exhaustive:total MutantOutOfScope is counted by subtraction above -- Discovered minus
-		// Selected -- and a case here would count it twice.
 		switch status {
 		case report.MutantKilled:
 			accounting.Killed++
@@ -374,6 +354,7 @@ func mutationAccounting(catalog gomutants.Catalog, replayID string, evaluation M
 			accounting.Accepted++
 		case report.MutantUnknown:
 			accounting.Unknown++
+		case report.MutantOutOfScope:
 		}
 	}
 	return accounting, dispositions
@@ -471,21 +452,6 @@ func evaluateMutationSeed(ctx context.Context, session MutationSession, mutant g
 		options.Trace.Route(mutationSeedRoute(mutant, route, nil))
 		summary := mutationDischargedSummary(route.discharged)
 		seed.evaluation.addFinding(mutant, "surviving-mutant", summary, options.Accepted)
-		// Recorded, like every other verdict this function reaches. It was not,
-		// and the omission stayed invisible for as long as the engine's
-		// discharge list was empty here: a mutant every target is discharged
-		// from is settled on this line, the report counts it a survivor, and
-		// with nothing written down the next run settles it from scratch. The
-		// symptom was a run that reused eight kills and no survivors, which
-		// reads as a broken cache rather than as a verdict that was never
-		// stored.
-		//
-		// It goes through the unreached recorder because that is what this is:
-		// no target reaches the mutant. The branches above say so when the
-		// suite's own coverage or probe says so; this one says it when every
-		// target that executed the block was discharged — the same fact
-		// established by a different instrument, and invalidated by the same
-		// suite key.
 		options.Evidence.recordUnreached(mutant, route.suiteWholeTree, "surviving-mutant", summary)
 		seed.resolved = true
 		return seed
@@ -683,12 +649,6 @@ func mutationOutcomeProtocolError(mutant gomutants.Mutant, outcome gomutants.Out
 	return fmt.Errorf("goatest: mutant %s returned %q without an execution error", mutant.DisplayID, outcome)
 }
 
-// OriginalControl measures the original program under one mutant's request.
-//
-// It takes an ExecRequest rather than a ControlRequest because the caller is
-// always holding the execution it is a control for, and a control of a
-// different target is a control of nothing. The narrowing to what a control
-// may carry happens in one place, at the session boundary.
 type OriginalControl func(context.Context, gomutants.ExecRequest) (gomutants.ControlResult, error)
 
 type controlOutcome struct {

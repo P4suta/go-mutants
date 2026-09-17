@@ -19,14 +19,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// The rule that decides whether this phase happens at all — whether the test
-// command is one go-mutants can read as a scope — lives in scope_test.go, next
-// to the classifier that applies it.
-
-// TestUnavailableWarningSaysWhatTheRunWillDoInstead covers the fail-open
-// message, whose second half is the load-bearing one: a warning saying only
-// that coverage failed leaves a reader wondering whether the results can be
-// trusted, and they can.
 func TestUnavailableWarningSaysWhatTheRunWillDoInstead(t *testing.T) {
 	t.Parallel()
 
@@ -49,8 +41,6 @@ func TestUnavailableWarningSaysWhatTheRunWillDoInstead(t *testing.T) {
 			t.Errorf("the warning does not mention %q:\n%s", needle, w.Message)
 		}
 	}
-	// One line, with no doubled full stop where the cause's own punctuation met
-	// the clause after it.
 	if strings.ContainsAny(w.Message, "\n\r") {
 		t.Errorf("the warning is not one line: %q", w.Message)
 	}
@@ -59,8 +49,6 @@ func TestUnavailableWarningSaysWhatTheRunWillDoInstead(t *testing.T) {
 	}
 }
 
-// TestCoverageMutantsDerivesTheLineIntervalFromTheOriginal is the join between
-// the catalogue and the mapping.
 func TestCoverageMutantsDerivesTheLineIntervalFromTheOriginal(t *testing.T) {
 	t.Parallel()
 
@@ -80,14 +68,6 @@ func TestCoverageMutantsDerivesTheLineIntervalFromTheOriginal(t *testing.T) {
 	}
 }
 
-// TestCoverageMutantsLeavesOutAMutantItCannotLocate is the fail-open rule
-// applied to one mutant rather than to the run.
-//
-// A catalogued mutant with no coordinates is documented as impossible. If it
-// ever happened, including it here would give it no covering binary and turn it
-// into an uncovered survivor — a mutant silently never executed. Leaving it out
-// of the mapping instead leaves it with a nil binary list, which is every
-// binary.
 func TestCoverageMutantsLeavesOutAMutantItCannotLocate(t *testing.T) {
 	t.Parallel()
 
@@ -105,14 +85,6 @@ func TestCoverageMutantsLeavesOutAMutantItCannotLocate(t *testing.T) {
 	}
 }
 
-// TestCoveragePhaseKeepsAMutantItCouldNotAskAbout is the other half of the
-// same rule, and the reason the phase tracks which mutants it submitted.
-//
-// A mutant left out of the mapping has no answer, and an absent answer must not
-// read as "nothing covers it": that would turn the impossible case — a
-// catalogued mutant with no coordinates — into a mutant silently never
-// executed, reported as an uncovered survivor. It keeps a nil binary list
-// instead, which internal/execute reads as every binary.
 func TestCoveragePhaseKeepsAMutantItCouldNotAskAbout(t *testing.T) {
 	t.Parallel()
 
@@ -121,7 +93,6 @@ func TestCoveragePhaseKeepsAMutantItCouldNotAskAbout(t *testing.T) {
 	st := &state{
 		results: map[string]report.MutantResult{},
 		display: map[string]MutantResult{
-			// No coordinates, so coverageMutants leaves it out.
 			"nowhere": {ID: "nowhere", DisplayID: "nowhere"},
 		},
 	}
@@ -161,9 +132,6 @@ func TestCoveragePhaseKeepsAMutantItCouldNotAskAbout(t *testing.T) {
 	}
 }
 
-// TestIndicesOfTranslatesCoveringPathsIntoBinaryPositions covers the last hop
-// before internal/execute, including the guard that turns an impossible mismatch
-// into an unnarrowed mutant rather than a failed one.
 func TestIndicesOfTranslatesCoveringPathsIntoBinaryPositions(t *testing.T) {
 	t.Parallel()
 
@@ -177,8 +145,6 @@ func TestIndicesOfTranslatesCoveringPathsIntoBinaryPositions(t *testing.T) {
 	if got := indicesOf([]string{"example.com/m/a", "example.com/m/c"}, index); !slices.Equal(got, []int{0, 2}) {
 		t.Errorf("indicesOf = %v, want [0 2]", got)
 	}
-	// Nil rather than an empty slice, because internal/execute reads nil as
-	// "every binary" and an empty subset as a caller bug worth refusing.
 	if got := indicesOf([]string{"example.com/m/z"}, index); got != nil {
 		t.Errorf("indicesOf of an unknown binary = %v, want nil", got)
 	}
@@ -187,8 +153,6 @@ func TestIndicesOfTranslatesCoveringPathsIntoBinaryPositions(t *testing.T) {
 	}
 }
 
-// TestRecordUncoveredFilesASurvivorNobodyExecuted pins the three things the
-// engine states about a mutant no binary reaches.
 func TestRecordUncoveredFilesASurvivorNobodyExecuted(t *testing.T) {
 	t.Parallel()
 
@@ -234,13 +198,6 @@ func TestRecordUncoveredFilesASurvivorNobodyExecuted(t *testing.T) {
 	}
 }
 
-// TestNotableGroupsUncoveredSurvivorsAfterCoveredOnes is the sub-order inside
-// the survivor rank.
-//
-// Both are survivors and neither outranks the other as a finding, but they call
-// for different work — sharpen a test, or write one — so a reader gets the two
-// kinds in two runs. It stays a sub-order rather than a rank of its own: an
-// uncovered survivor still comes before every timeout.
 func TestNotableGroupsUncoveredSurvivorsAfterCoveredOnes(t *testing.T) {
 	t.Parallel()
 
@@ -275,7 +232,6 @@ func TestNotableGroupsUncoveredSurvivorsAfterCoveredOnes(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("notable = %v, want %v", got, want)
 	}
-	// And the flag travels, or the renderer cannot say why the mutant survived.
 	for _, m := range notable(st, rep.Mutants) {
 		if want := strings.HasPrefix(m.ID, "u-"); m.Uncovered != want {
 			t.Errorf("%s: Uncovered = %t, want %t", m.ID, m.Uncovered, want)
@@ -283,9 +239,6 @@ func TestNotableGroupsUncoveredSurvivorsAfterCoveredOnes(t *testing.T) {
 	}
 }
 
-// TestUncoveredOfCountsTheDocumentRatherThanTheRun keeps the closing summary's
-// number a reading of the published report, as every other number in that block
-// is.
 func TestUncoveredOfCountsTheDocumentRatherThanTheRun(t *testing.T) {
 	t.Parallel()
 
@@ -302,9 +255,6 @@ func TestUncoveredOfCountsTheDocumentRatherThanTheRun(t *testing.T) {
 	}
 }
 
-// TestReportCoverageModeMapsBothSpellings holds the engine's enum and the
-// document's together, as [TestReportTimeoutSourceMapsBothSpellings] does for
-// the other pair.
 func TestReportCoverageModeMapsBothSpellings(t *testing.T) {
 	t.Parallel()
 
@@ -314,8 +264,6 @@ func TestReportCoverageModeMapsBothSpellings(t *testing.T) {
 	if got := reportCoverageMode(CoverageOff); got != report.CoverageOff {
 		t.Errorf("reportCoverageMode(%s) = %q, want %q", CoverageOff, got, report.CoverageOff)
 	}
-	// The zero value is a run that never reached the coverage phase, and it has
-	// to name a mode rather than the empty string the document would refuse.
 	if got := reportCoverageMode(""); got != report.CoverageOff {
 		t.Errorf("reportCoverageMode(zero) = %q, want %q", got, report.CoverageOff)
 	}
@@ -333,8 +281,6 @@ func TestReportCoverageModeMapsBothSpellings(t *testing.T) {
 	}
 }
 
-// TestWarnCodeCarriesAnotherPackagesBlock is why the coverage warnings do not
-// need a GOM40xx code of their own.
 func TestWarnCodeCarriesAnotherPackagesBlock(t *testing.T) {
 	t.Parallel()
 
@@ -348,16 +294,11 @@ func TestWarnCodeCarriesAnotherPackagesBlock(t *testing.T) {
 	if s.warnings[0].Code != "GOM7601" || s.warnings[1].Code != string(CodeSnapshotNotRemoved) {
 		t.Errorf("warnings = %+v, want the coverage code first and this package's second", s.warnings)
 	}
-	// The GOM76xx codes stay out of this package's own table: one condition,
-	// one identifier, defined next to the rule it is about.
 	if slices.Contains(Codes(), Code(coverage.CodeCustomTestCommand)) {
 		t.Error("a coverage code is listed in the engine's own block")
 	}
 }
 
-// TestCoveragePassSkipsARunWithNothingToNarrow is the one shortcut worth
-// stating: the pass costs a full run of every test binary, and paying that to
-// decide the fate of no mutants is pure loss.
 func TestCoveragePassSkipsARunWithNothingToNarrow(t *testing.T) {
 	t.Parallel()
 
@@ -374,9 +315,6 @@ func TestCoveragePassSkipsARunWithNothingToNarrow(t *testing.T) {
 		{name: "neither"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			// The options are deliberately unusable: reaching internal/execute
-			// at all would fail, so a pass that returns cleanly is a pass that
-			// never started.
 			runs, result, err := s.coveragePhase(t.Context(), execute.Options{}, "", "example.com/m",
 				test.bins, test.runs, st, config.NarrowingPackage)
 			if err != nil {
@@ -395,20 +333,6 @@ func TestCoveragePassSkipsARunWithNothingToNarrow(t *testing.T) {
 	}
 }
 
-// TestBuildFallsBackToAPlainBuildWhenCoverageWillNotCompile is the fail-open
-// rule applied at the earliest point it can bite.
-//
-// Coverage is on by default and was never asked for, and a
-// `-cover -coverpkg=<module>/...` build reaches packages an ordinary
-// `go test -c` of one package does not — so it can fail where the plain build
-// would have succeeded. Letting that fail the run would turn a green workspace
-// red for the sake of an optimisation, and would report it as
-// [execute.CodeTestBuildFailed], whose own documentation reads it as a
-// go-mutants bug in the instrumented rewrite.
-//
-// The options here are deliberately unusable, so both builds fail: what is
-// being asserted is that the *second* one was attempted at all, without
-// coverage, and that the run said why.
 func TestBuildFallsBackToAPlainBuildWhenCoverageWillNotCompile(t *testing.T) {
 	t.Parallel()
 
@@ -437,9 +361,6 @@ func TestBuildFallsBackToAPlainBuildWhenCoverageWillNotCompile(t *testing.T) {
 		t.Errorf("the warning does not say what was given up:\n%s", w.Message)
 	}
 
-	// Two builds, recorded as two, and the second saying it was the plain one.
-	// A fallback is where a run's minutes go when it happens, and a recording
-	// showing one build would not account for them.
 	var details []string
 	for _, e := range sink.Events() {
 		if e.Type == trace.TypeStage && e.Stage.Name == "build-binaries" && e.Stage.State == trace.StateStarted {
@@ -450,11 +371,6 @@ func TestBuildFallsBackToAPlainBuildWhenCoverageWillNotCompile(t *testing.T) {
 		t.Errorf("recorded the build stages %v, want the coverage one and then the plain one", details)
 	}
 
-	// And the whole failure, under its own kind. The console got one line
-	// because the run would ordinarily have gone on to succeed; this is the copy
-	// for somebody asking why coverage was given up, and the compiler's own
-	// diagnostics are the only evidence there is that go-mutants' `-coverpkg`
-	// build is what broke.
 	var notes []trace.NoteRecord
 	for _, e := range sink.Events() {
 		if e.Type == trace.TypeNote && e.Note.Kind == trace.NoteCoverageUnavailable {
@@ -472,8 +388,6 @@ func TestBuildFallsBackToAPlainBuildWhenCoverageWillNotCompile(t *testing.T) {
 	}
 }
 
-// TestPlainBuildFailureIsNotACoverageWarning keeps the fallback from
-// misdescribing an ordinary build failure as a coverage problem.
 func TestPlainBuildFailureIsNotACoverageWarning(t *testing.T) {
 	t.Parallel()
 
@@ -492,9 +406,6 @@ func TestPlainBuildFailureIsNotACoverageWarning(t *testing.T) {
 	}
 }
 
-// TestInterruptedBuildIsNotRetried is the last fail-open boundary: a cancelled
-// run is not a coverage failure, and retrying would spend a second build on a
-// run that is already unwinding.
 func TestInterruptedBuildIsNotRetried(t *testing.T) {
 	t.Parallel()
 
@@ -528,13 +439,6 @@ func TestInterruptedBuildIsNotRetried(t *testing.T) {
 	}
 }
 
-// TestUsableProfilesRefusesASetThatSaysNothing pins the last fail-open trigger:
-// every document parsed, and not one block between them.
-//
-// A workspace with no statements at all has no mutants either, and this phase
-// is only reached when there are some — so an empty profile set is coverage
-// collection having silently produced nothing, which is the failure that would
-// otherwise report a perfectly tested workspace as entirely uncovered.
 func TestUsableProfilesRefusesASetThatSaysNothing(t *testing.T) {
 	t.Parallel()
 
@@ -559,8 +463,6 @@ func TestUsableProfilesRefusesASetThatSaysNothing(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			// One binary that covered nothing is ordinary; what matters is that
-			// something, somewhere, has blocks.
 			name: "one profile with blocks is enough",
 			profiles: map[string]coverage.Profile{
 				"example.com/m/a": {Mode: "set"},
@@ -569,8 +471,6 @@ func TestUsableProfilesRefusesASetThatSaysNothing(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			// Blocks with zero counts are the point of the whole mapping: they
-			// are what makes a mutant honestly uncovered rather than unknown.
 			name: "blocks that were never reached still count as data",
 			profiles: map[string]coverage.Profile{
 				"example.com/m/a": {Mode: "set", Blocks: []coverage.Block{block}},
@@ -594,18 +494,6 @@ func TestUsableProfilesRefusesASetThatSaysNothing(t *testing.T) {
 	}
 }
 
-// TestTheCoverageWarningCarriesTheWholeReasonWhenThereIsMoreOfIt is what lets a
-// console print the compiler's own words under the one-line warning without
-// reading the recording.
-//
-// The two texts are deliberately different lengths — see
-// [session.unavailableInFull] — and the long one had nowhere to go but the
-// trace. Carrying it on the event is what anchors it to the warning it
-// explains: a `-v` console prints it directly underneath, deterministically,
-// and a run whose recording could not be opened still gets it.
-//
-// A reason that already fits on the warning line carries no detail at all,
-// because a detail identical to the message would print one sentence twice.
 func TestTheCoverageWarningCarriesTheWholeReasonWhenThereIsMoreOfIt(t *testing.T) {
 	t.Parallel()
 
@@ -621,8 +509,6 @@ func TestTheCoverageWarningCarriesTheWholeReasonWhenThereIsMoreOfIt(t *testing.T
 	if got := s.warnings[0].Detail; got != whole {
 		t.Errorf("Detail = %q, want the whole reason %q", got, whole)
 	}
-	// The message stays the folded line it was: a console at the default
-	// verbosity prints exactly what it printed before this field existed.
 	if strings.ContainsAny(s.warnings[0].Message, "\n\r") {
 		t.Errorf("the message grew the detail: %q", s.warnings[0].Message)
 	}

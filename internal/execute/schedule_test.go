@@ -24,9 +24,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// attemptCounter counts how many attempts each mutant has had, so that a fake
-// can answer the first attempt differently from the retry. It is the whole
-// mechanism the timeout policy tests are built on.
 type attemptCounter struct {
 	mu sync.Mutex
 	n  map[string]int
@@ -34,8 +31,6 @@ type attemptCounter struct {
 
 func newAttemptCounter() *attemptCounter { return &attemptCounter{n: map[string]int{}} }
 
-// next records an attempt at id and returns which attempt it is, counting
-// from one.
 func (a *attemptCounter) next(id string) int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -43,23 +38,14 @@ func (a *attemptCounter) next(id string) int {
 	return a.n[id]
 }
 
-// activeOf reads the mutant a call activated. Every scheduled call carries one.
 func activeOf(c call) string { return c.active() }
 
-// TestScheduleReturnsResultsInTheInputOrder pins determinism.
-//
-// Twenty mutants over four workers finish in whatever order the scheduler and
-// the machine agree on, and none of that may reach the report: a run whose
-// result order moved between invocations would produce a different diff every
-// time for the same code.
 func TestScheduleReturnsResultsInTheInputOrder(t *testing.T) {
 	ids := make([]string, 20)
 	for i := range ids {
 		ids[i] = "mutant-" + string(rune('a'+i))
 	}
 	f := &fake{respond: func(_ context.Context, c call) runner.Result {
-		// One mutant in the middle of the queue is killed, so the outcomes vary
-		// along the slice and an order assertion is about more than identities.
 		if strings.HasSuffix(activeOf(c), "c") {
 			return failed("--- FAIL: TestX\n")
 		}
@@ -86,9 +72,6 @@ func TestScheduleReturnsResultsInTheInputOrder(t *testing.T) {
 	}
 }
 
-// TestScheduleConfirmsATimeoutOnlyWhenItRepeats is the detecting half of the
-// retry rule: two timeouts in a row are a confirmed detection, and both
-// attempts stay in the record so the report can show the confirmation happened.
 func TestScheduleConfirmsATimeoutOnlyWhenItRepeats(t *testing.T) {
 	f := &fake{respond: func(context.Context, call) runner.Result { return timedOut() }}
 
@@ -121,13 +104,6 @@ func TestScheduleConfirmsATimeoutOnlyWhenItRepeats(t *testing.T) {
 	}
 }
 
-// TestScheduleCallsAMixedTimeoutInconclusive is the other half, and the reason
-// the retry exists at all. A timeout that does not reproduce on an idle machine
-// said something about the machine; reporting it as a detection would inflate
-// the score exactly where the run is least entitled to.
-//
-// Both spellings of "the retry finished" are pinned, because the tempting bug
-// is to treat a failing retry as confirmation of the timeout.
 func TestScheduleCallsAMixedTimeoutInconclusive(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -170,25 +146,10 @@ func TestScheduleCallsAMixedTimeoutInconclusive(t *testing.T) {
 	}
 }
 
-// TestScheduleLeavesAnUnconfirmedTimeoutNotRun covers the corner where the
-// retry policy meets Ctrl-C: a mutant that timed out once and was cancelled
-// before anybody could try to reproduce it.
-//
-// One timeout nobody was able to repeat measures nothing, so the verdict stays
-// [mutation.OutcomeNotRun] — and under cancellation that *is* the settled
-// outcome, which is why Finished fires for it. The blanket reading in
-// TestScheduleFinishesEachMutantExactlyOnce, that a not-run mutant announced as
-// finished was announced too early, holds only for a run that completed.
-//
-// What this branch really owns is the attempt. The timeout that did happen
-// stays in the record, so a report can say the run tried once and gave up,
-// and no second process is ever started.
 func TestScheduleLeavesAnUnconfirmedTimeoutNotRun(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	f := &fake{respond: func(context.Context, call) runner.Result {
-		// The plug is pulled while the first attempt is still in flight, so the
-		// timeout is recorded and the retry pass never gets its turn.
 		cancel()
 		return timedOut()
 	}}
@@ -232,8 +193,6 @@ func TestScheduleLeavesAnUnconfirmedTimeoutNotRun(t *testing.T) {
 	if got.KilledBy != "" {
 		t.Errorf("credited %q with a detection that was never confirmed", got.KilledBy)
 	}
-	// The heart of it: a retry that ran anyway would leave two attempts, and a
-	// branch that threw the evidence away would leave none.
 	if len(got.Attempts) != 1 {
 		t.Fatalf("kept %d attempts, want the one timeout that really happened", len(got.Attempts))
 	}
@@ -254,29 +213,13 @@ func TestScheduleLeavesAnUnconfirmedTimeoutNotRun(t *testing.T) {
 	}
 }
 
-// TestScheduleLetsAFailedRetryStandInsteadOfPromotingTheTimeout covers the
-// third arm of the retry rule, the one that is neither a confirmation nor a
-// disagreement: a retry that established nothing at all.
-//
-// The tempting bug is to read "the retry did not finish cleanly" as a second
-// timeout and call the mutant detected. It is not one. A binary that could not
-// be started, or a child killed without a status, says something about the
-// machine or about go-mutants, so the retry's own outcome stands — and the
-// mutant is not credited to the binary it once hung on.
 func TestScheduleLetsAFailedRetryStandInsteadOfPromotingTheTimeout(t *testing.T) {
 	cases := []struct {
-		name string
-		// retry answers the second attempt. It is handed the run's cancel so
-		// that the killed-mid-flight case can produce the state internal/runner
-		// really reports for one.
-		retry func(cancel context.CancelFunc) runner.Result
-		// wantFinal is the verdict the retry's own outcome must impose.
-		wantFinal mutation.Outcome
-		// wantMutantCode is the code on the result's error, or "" when the
-		// outcome carries none.
+		name           string
+		retry          func(cancel context.CancelFunc) runner.Result
+		wantFinal      mutation.Outcome
 		wantMutantCode execute.Code
-		// wantRunCode is the code Schedule itself returns, or "" for success.
-		wantRunCode execute.Code
+		wantRunCode    execute.Code
 	}{
 		{
 			name:           "the retry could not be started",
@@ -326,8 +269,6 @@ func TestScheduleLetsAFailedRetryStandInsteadOfPromotingTheTimeout(t *testing.T)
 			if code := execute.CodeOf(got.Err); code != c.wantMutantCode {
 				t.Errorf("code = %q, want %q (%v)", code, c.wantMutantCode, got.Err)
 			}
-			// The tell of the bug this pins: promoting the timeout would carry
-			// the name of the binary it hung on into the verdict with it.
 			if got.KilledBy != "" {
 				t.Errorf("credited %q with a detection, want none", got.KilledBy)
 			}
@@ -337,10 +278,6 @@ func TestScheduleLetsAFailedRetryStandInsteadOfPromotingTheTimeout(t *testing.T)
 			if got.Attempts[0].Outcome != mutation.OutcomeTimedOut {
 				t.Errorf("first attempt = %s, want the timeout that was retried", got.Attempts[0].Outcome)
 			}
-			// Where an interruption goes: onto the attempt that was cut off,
-			// naming the binary still running, and never onto the verdict — a
-			// mutant nobody measured did not error, which is what the
-			// wantMutantCode assertion above is the other half of.
 			if c.wantFinal == mutation.OutcomeNotRun {
 				retry := got.Attempts[1].Err
 				if code := execute.CodeOf(retry); code != execute.CodeInterrupted {
@@ -356,13 +293,6 @@ func TestScheduleLetsAFailedRetryStandInsteadOfPromotingTheTimeout(t *testing.T)
 	}
 }
 
-// TestScheduleRetriesTimeoutsOneAtATime is the serialisation the whole retry
-// policy rests on.
-//
-// A retry run alongside the rest of the queue would be measuring the same
-// loaded machine that produced the first timeout, and the confirmation would
-// confirm nothing. The check is an in-flight counter rather than a sleep: a
-// sleep alone can pass by luck on a machine that happened not to interleave.
 func TestScheduleRetriesTimeoutsOneAtATime(t *testing.T) {
 	const jobs = 4
 
@@ -379,9 +309,6 @@ func TestScheduleRetriesTimeoutsOneAtATime(t *testing.T) {
 			return timedOut()
 		}
 		retries.Add(1)
-		// Held long enough that a parallel retry would be seen, and asserted on
-		// rather than merely hoped about: nothing else — retry or main pass —
-		// may be running while this one is.
 		if concurrent > 1 {
 			overlaps.Add(1)
 		}
@@ -412,10 +339,6 @@ func TestScheduleRetriesTimeoutsOneAtATime(t *testing.T) {
 	}
 }
 
-// TestScheduleRetriesWithTheSameTimeout pins that the retry is the same
-// experiment run again. A retry given a longer budget would answer a different
-// question, and "it finished when we let it run longer" is not evidence that
-// the first timeout was noise.
 func TestScheduleRetriesWithTheSameTimeout(t *testing.T) {
 	counter := newAttemptCounter()
 	f := &fake{respond: func(_ context.Context, c call) runner.Result {
@@ -441,10 +364,6 @@ func TestScheduleRetriesWithTheSameTimeout(t *testing.T) {
 	}
 }
 
-// TestScheduleFinishesEachMutantExactlyOnce pins the hook contract the retry
-// policy forces: an attempt is announced every time one starts, and a mutant is
-// finished only when its outcome is settled — so a timed-out mutant is started
-// twice and finished once, and never finished with the unconfirmed timeout.
 func TestScheduleFinishesEachMutantExactlyOnce(t *testing.T) {
 	counter := newAttemptCounter()
 	f := &fake{respond: func(_ context.Context, c call) runner.Result {
@@ -499,9 +418,6 @@ func TestScheduleFinishesEachMutantExactlyOnce(t *testing.T) {
 	}
 }
 
-// TestScheduleHandsFinishedItsOwnAttempts proves a hook may keep what it is
-// given: the slice it receives does not alias the one Schedule goes on to
-// return, so a renderer that stored the result cannot be rewritten underneath.
 func TestScheduleHandsFinishedItsOwnAttempts(t *testing.T) {
 	f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
 
@@ -523,9 +439,6 @@ func TestScheduleHandsFinishedItsOwnAttempts(t *testing.T) {
 	}
 }
 
-// TestScheduleReportsAStaleCatalogAsErrored carries the exit-97 rule through
-// the scheduler, where it decides an entry in the report rather than a return
-// value.
 func TestScheduleReportsAStaleCatalogAsErrored(t *testing.T) {
 	f := &fake{respond: func(context.Context, call) runner.Result { return staleCatalog() }}
 
@@ -547,23 +460,12 @@ func TestScheduleReportsAStaleCatalogAsErrored(t *testing.T) {
 	}
 }
 
-// TestScheduleReturnsNotRunAfterCancellation pins the Ctrl-C contract: the
-// mutants that were measured keep their outcomes, everything else comes back
-// not run, and the caller is told the run was interrupted in a form
-// internal/engine already recognises.
-//
-// It runs at two widths deliberately. With a single worker the early return is
-// indistinguishable from a pool that merely happened to stop; with four, several
-// workers observe the cancellation at once and the assertions are about the
-// pool draining rather than about one goroutine noticing.
 func TestScheduleReturnsNotRunAfterCancellation(t *testing.T) {
 	for _, jobs := range []int{1, 4} {
 		t.Run("with "+countNoun(jobs, "worker"), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			var done atomic.Int64
 			f := &fake{respond: func(ctx context.Context, _ call) runner.Result {
-				// The first call always answers normally, so there is always
-				// something measured to assert about; the second pulls the plug.
 				if done.Add(1) == 2 {
 					cancel()
 				}
@@ -603,7 +505,6 @@ func TestScheduleReturnsNotRunAfterCancellation(t *testing.T) {
 			if notRun == 0 {
 				t.Error("every mutant was measured; the cancellation did not stop the queue")
 			}
-			// The queue must stop rather than drain: far fewer starts than mutants.
 			if got := len(f.seen()); got >= len(ids) {
 				t.Errorf("started %d children for %d mutants; a cancelled run must stop taking work",
 					got, len(ids))
@@ -612,7 +513,6 @@ func TestScheduleReturnsNotRunAfterCancellation(t *testing.T) {
 	}
 }
 
-// countNoun renders "1 worker" or "4 workers" for a subtest name.
 func countNoun(n int, noun string) string {
 	if n == 1 {
 		return "1 " + noun
@@ -620,9 +520,6 @@ func countNoun(n int, noun string) string {
 	return strconv.Itoa(n) + " " + noun + "s"
 }
 
-// TestScheduleLeavesNoGoroutinesBehind proves the shutdown is a join and not a
-// hope. Schedule returning while a worker is still starting processes would
-// leave test binaries running after the run reported its results.
 func TestScheduleLeavesNoGoroutinesBehind(t *testing.T) {
 	before := runtime.NumGoroutine()
 
@@ -648,9 +545,6 @@ func TestScheduleLeavesNoGoroutinesBehind(t *testing.T) {
 		t.Fatal("scheduling a cancelled run reported success")
 	}
 
-	// Polled rather than sampled once: the goroutines this test is about are
-	// already joined when Schedule returns, but the test binary's own runtime
-	// has transients that would make a single sample flaky.
 	for range 100 {
 		if runtime.NumGoroutine() <= before {
 			return
@@ -661,9 +555,6 @@ func TestScheduleLeavesNoGoroutinesBehind(t *testing.T) {
 		runtime.NumGoroutine(), before)
 }
 
-// TestScheduleRefusesToMeasureAgainstNoBinaries is the flattering-green
-// refusal. Every mutant would otherwise be reported as survived by a run that
-// executed nothing at all.
 func TestScheduleRefusesToMeasureAgainstNoBinaries(t *testing.T) {
 	f := &fake{}
 	results, err := execute.Schedule(t.Context(), options(f, 2),
@@ -682,14 +573,6 @@ func TestScheduleRefusesToMeasureAgainstNoBinaries(t *testing.T) {
 	}
 }
 
-// TestScheduleGivesEachWorkerItsOwnTemporaryDirectory proves the isolation the
-// package documentation promises. Two mutants running at once that shared a
-// temporary directory could overwrite each other's files, and the resulting
-// failure would be indistinguishable from a detection.
-//
-// The workers are held at a rendezvous so that all of them really are in flight
-// at once; without it one worker could take the whole queue and the assertion
-// would be about nothing.
 func TestScheduleGivesEachWorkerItsOwnTemporaryDirectory(t *testing.T) {
 	const jobs = 3
 	scratch := t.TempDir()
@@ -746,11 +629,6 @@ func TestScheduleGivesEachWorkerItsOwnTemporaryDirectory(t *testing.T) {
 	}
 }
 
-// TestScheduleResolvesARelativeScratchParent carries the resolution rule
-// through the scheduler, which is where it matters in a real run: every worker
-// derives its own directory from the parent, so a parent that stayed relative
-// would give every worker at once a temporary directory that means one place to
-// go-mutants and another to the child running inside the snapshot.
 func TestScheduleResolvesARelativeScratchParent(t *testing.T) {
 	work := t.TempDir()
 	t.Chdir(work)
@@ -778,8 +656,6 @@ func TestScheduleResolvesARelativeScratchParent(t *testing.T) {
 	}
 }
 
-// TestScheduleWithoutMutantsIsNotAnError covers the empty queue, which a
-// `--changed` or `--shard` selection can legitimately produce.
 func TestScheduleWithoutMutantsIsNotAnError(t *testing.T) {
 	f := &fake{}
 	results, err := execute.Schedule(t.Context(), options(f, 4), nil,
@@ -792,8 +668,6 @@ func TestScheduleWithoutMutantsIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestWorkerScratchDirNamesOneDirectoryPerWorker pins the naming, including the
-// empty parent that means "leave the inherited temporary directory alone".
 func TestWorkerScratchDirNamesOneDirectoryPerWorker(t *testing.T) {
 	if got := execute.WorkerScratchDir("", 3); got != "" {
 		t.Errorf("with no scratch parent = %q, want empty", got)
@@ -808,7 +682,6 @@ func TestWorkerScratchDirNamesOneDirectoryPerWorker(t *testing.T) {
 	}
 }
 
-// mapsEqual compares two counting maps.
 func mapsEqual(got, want map[string]int) bool {
 	if len(got) != len(want) {
 		return false
@@ -821,22 +694,11 @@ func mapsEqual(got, want map[string]int) bool {
 	return true
 }
 
-// TestScheduleInterruptionNamesTheBinaryThatWasCutOff carries the one thing a
-// reader of a Ctrl-C is looking for all the way out to the error they see.
-//
-// The attempt that was cut off knows which binary it was in, and until now that
-// was where the knowledge stopped: a report keeps the *number* of attempts and
-// not the attempts, so nothing downstream could reach it, and the error this
-// function returns — the one internal/cli prints — said only that the phase was
-// interrupted. The verdict is untouched by this: a mutant nobody measured is
-// still not-run and still carries no error of its own.
 func TestScheduleInterruptionNamesTheBinaryThatWasCutOff(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	f := &fake{respond: func(context.Context, call) runner.Result {
 		cancel()
-		// The partial output of a child the supervisor killed mid-test: how
-		// far the suite got before the signal arrived.
 		return runner.Result{
 			ExitCode: runner.ExitCodeUnavailable,
 			Duration: time.Millisecond,
@@ -851,8 +713,6 @@ func TestScheduleInterruptionNamesTheBinaryThatWasCutOff(t *testing.T) {
 	if code := execute.CodeOf(err); code != execute.CodeInterrupted {
 		t.Fatalf("code = %q, want %q (%v)", code, execute.CodeInterrupted, err)
 	}
-	// The message is the stable contract and does not change because the error
-	// grew a command.
 	if want := "GOM7520: the execution phase was interrupted"; !strings.HasPrefix(err.Error(), want) {
 		t.Errorf("Error() = %q, want it to begin %q", err.Error(), want)
 	}
@@ -880,9 +740,6 @@ func TestScheduleInterruptionNamesTheBinaryThatWasCutOff(t *testing.T) {
 		t.Errorf("RetainedOutput() = %q, want what the killed child had printed", got)
 	}
 
-	// And the verdict is exactly what it was: not run, with no error of its
-	// own. Naming the command is a diagnostic about the run, not a statement
-	// that this mutant errored.
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
@@ -894,16 +751,6 @@ func TestScheduleInterruptionNamesTheBinaryThatWasCutOff(t *testing.T) {
 	}
 }
 
-// TestScheduleRecordsOneMutantExecPerAttemptWithWorkerAndBinaries is the claim
-// the whole recording of this phase rests on: one event per *attempt*, not per
-// mutant.
-//
-// A mutant that timed out and was retried is two measurements with two
-// durations, and collapsing them into the one verdict they produced is exactly
-// what makes a flaky suite unreadable after the fact. Each event names the
-// worker that ran it — which is what a reader with an overloaded machine is
-// looking for — the binaries the attempt tried, and the executions underneath
-// it, so the account of an attempt and the commands it issued are one thing.
 func TestScheduleRecordsOneMutantExecPerAttemptWithWorkerAndBinaries(t *testing.T) {
 	t.Parallel()
 
@@ -919,20 +766,12 @@ func TestScheduleRecordsOneMutantExecPerAttemptWithWorkerAndBinaries(t *testing.
 		return passed()
 	}}
 	opts, sink := traced(t, f, options(f, 3))
-	// The scope the *binaries* were built from is deliberately several
-	// patterns, so that a `package` taken from it rather than from the mutant
-	// would be visibly wrong.
 	opts.Packages = []string{"./internal/...", "./cmd/..."}
 
 	queue := mutants(mutantTimeout, "quick", "slow", "steady")
 	queue[0].Package = "example.com/m/a"
 	queue[1].Package = "example.com/m/b"
-	// The third names none, which a caller that has no package for a mutant
-	// says by leaving it empty.
 
-	// The worker a mutant ran on is not this test's to predict, so it is taken
-	// from the hook that announces it: the event and the hook are two accounts
-	// of one attempt and have to agree.
 	var mu sync.Mutex
 	started := map[string][]int{}
 	hooks := execute.Hooks{Started: func(id string, worker int) {
@@ -955,9 +794,6 @@ func TestScheduleRecordsOneMutantExecPerAttemptWithWorkerAndBinaries(t *testing.
 			len(events))
 	}
 
-	// The mutant's own package, verbatim, and nothing at all for the mutant
-	// that has none: `package` is a join key a consumer reads as an import
-	// path, and the test scope a run happens to have been given is not one.
 	packages := map[string]string{}
 	for _, event := range events {
 		packages[event.Mutant.ID] = event.Mutant.Package
@@ -1010,8 +846,6 @@ func TestScheduleRecordsOneMutantExecPerAttemptWithWorkerAndBinaries(t *testing.
 		}
 	}
 
-	// Every sequence an attempt points at is an execution the recording holds,
-	// and every execution belongs to exactly one attempt.
 	var pointed []int64
 	for _, event := range events {
 		pointed = append(pointed, event.Mutant.ExecSeqs...)
@@ -1022,14 +856,6 @@ func TestScheduleRecordsOneMutantExecPerAttemptWithWorkerAndBinaries(t *testing.
 	}
 }
 
-// TestScheduleRecordsTheRetryPassAsAStage times the serial pass rather than
-// leaving it as a gap in the recording.
-//
-// The retry pass is the one part of an execution phase that is deliberately not
-// parallel, so on a queue with many timeouts it is where a run's wall-clock time
-// disappears — and to a reader of a recording that has no stage it looks like
-// the phase simply took longer for no reason. The detail says how much work the
-// pass was given, which is the number that explains the duration.
 func TestScheduleRecordsTheRetryPassAsAStage(t *testing.T) {
 	t.Parallel()
 
@@ -1060,8 +886,6 @@ func TestScheduleRecordsTheRetryPassAsAStage(t *testing.T) {
 		t.Errorf("the retry pass finished as %q, want %q", got, trace.ResultSucceeded)
 	}
 
-	// The retried attempts are inside the pair, which is what makes the stage a
-	// span rather than a label.
 	for _, event := range eventsOf(sink, trace.TypeMutantExec) {
 		if event.Mutant.Attempt != 2 {
 			continue
@@ -1073,20 +897,11 @@ func TestScheduleRecordsTheRetryPassAsAStage(t *testing.T) {
 	}
 }
 
-// TestScheduleRecordsARetryPassACancellationSkippedAsFailed is the other half
-// of the stage's result.
-//
-// A retry pass that was cut off left the very evidence it existed to gather
-// ungathered — the mutants it did not reach stay not-run — so reporting it as
-// succeeded would make a run stopped halfway read like a run that finished. The
-// stage is still a pair, because a step that started and was abandoned is
-// exactly what a reader needs to see.
 func TestScheduleRecordsARetryPassACancellationSkippedAsFailed(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(t.Context())
 	f := &fake{respond: func(context.Context, call) runner.Result {
-		// Timed out and, by the time the retry pass begins, cancelled.
 		cancel()
 		return timedOut()
 	}}
@@ -1110,16 +925,6 @@ func TestScheduleRecordsARetryPassACancellationSkippedAsFailed(t *testing.T) {
 	}
 }
 
-// TestScheduleRecordsARetryPassACancellationCutOffAsFailed is the same claim
-// about the retry that *did* start.
-//
-// A retry the signal killed mid-suite is not visible in the pass's own control
-// flow: the loop asked the context before starting it and got no cancellation,
-// and [RunOne] comes back with the not-run outcome rather than with an error.
-// The mutant is left exactly as unretried as one the pass never reached — its
-// timeout was never reproduced and its verdict is not-run — so the stage has to
-// close the same way, or a run stopped during its last retry would read as a
-// pass that finished.
 func TestScheduleRecordsARetryPassACancellationCutOffAsFailed(t *testing.T) {
 	t.Parallel()
 
@@ -1129,7 +934,6 @@ func TestScheduleRecordsARetryPassACancellationCutOffAsFailed(t *testing.T) {
 		if attempts.next(activeOf(c)) == 1 {
 			return timedOut()
 		}
-		// The retry started, and the signal arrived while it was running.
 		cancel()
 		return cancelled()
 	}}
@@ -1157,10 +961,6 @@ func TestScheduleRecordsARetryPassACancellationCutOffAsFailed(t *testing.T) {
 	}
 }
 
-// TestScheduleRecordsNoRetryStageWhenNothingTimedOut keeps the stage a
-// statement about work that happened. A run in which nothing timed out has no
-// serial pass, and a zero-length "retry" in every recording would be a line
-// every reader learns to skip.
 func TestScheduleRecordsNoRetryStageWhenNothingTimedOut(t *testing.T) {
 	t.Parallel()
 
@@ -1176,15 +976,6 @@ func TestScheduleRecordsNoRetryStageWhenNothingTimedOut(t *testing.T) {
 	}
 }
 
-// TestScheduleWithoutARecorderIsUnchanged is the promise the whole feature is
-// worth nothing without: a recording is an account of a run and never a
-// participant in it.
-//
-// The one difference between the two runs is the sequences an attempt points
-// at, because an untraced run has no recording to point into. Everything a
-// verdict is computed from — the outcomes, the binaries, the durations, the
-// attempts kept — is identical, and this compares the whole of it rather than
-// the fields somebody thought to check.
 func TestScheduleWithoutARecorderIsUnchanged(t *testing.T) {
 	t.Parallel()
 
@@ -1224,12 +1015,6 @@ func TestScheduleWithoutARecorderIsUnchanged(t *testing.T) {
 					untraced[i].ID, j+1, untraced[i].Attempts[j].ExecSeqs)
 			}
 			recorded[i].Attempts[j].ExecSeqs = nil
-			// The worker is set aside for the same reason, and it is not the
-			// same reason: it is a real field of both runs, and which of two
-			// workers claimed a mutant is decided by whichever goroutine got to
-			// the queue first. It is a fact about the scheduling and not about
-			// the measurement, so two runs of one queue may differ in it and be
-			// the same measurement — which is exactly what this test is about.
 			recorded[i].Attempts[j].Worker = 0
 			untraced[i].Attempts[j].Worker = 0
 		}
@@ -1239,20 +1024,6 @@ func TestScheduleWithoutARecorderIsUnchanged(t *testing.T) {
 	}
 }
 
-// TestAProvedRunawayIsNotMeasuredTwice is what a termination proof buys, and
-// the only thing it changes.
-//
-// A timeout is ordinarily measured twice before it is believed, because one
-// timeout is as much a fact about the machine as about the mutant: a loaded
-// runner, a budget derived from a quieter moment. Discovery can answer that
-// question before anything runs -- a loop whose measure the edit removed does
-// not leave -- and when it has, the second measurement pays the whole budget
-// again to learn what is already known. On a scope holding a handful of
-// runaway mutants that is most of a run's wall clock.
-//
-// What it must not change is a verdict. A proved mutant that is killed is
-// killed and one that survives survives; the only attempt it removes is the
-// repeat of a timeout.
 func TestAProvedRunawayIsNotMeasuredTwice(t *testing.T) {
 	t.Parallel()
 
@@ -1286,16 +1057,13 @@ func TestAProvedRunawayIsNotMeasuredTwice(t *testing.T) {
 			var started atomic.Int64
 			f := &fake{respond: func(context.Context, call) runner.Result {
 				started.Add(1)
-				//exhaustive:total The fake answers the outcomes this table asks for; every other one is a
-				// passing run, which is the default.
-				switch c.outcome {
-				case mutation.OutcomeTimedOut:
+				if c.outcome == mutation.OutcomeTimedOut {
 					return runner.Result{TimedOut: true, ExitCode: runner.ExitCodeUnavailable}
-				case mutation.OutcomeKilled:
-					return failed("--- FAIL: TestX\n")
-				default:
-					return passed()
 				}
+				if c.outcome == mutation.OutcomeKilled {
+					return failed("--- FAIL: TestX\n")
+				}
+				return passed()
 			}}
 			opts := options(f, 2)
 			runs := []execute.MutantRun{{

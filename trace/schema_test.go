@@ -15,12 +15,8 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// schemaID is the name the schema is registered and compiled under. The host is
-// deliberately unresolvable: these identifiers are names, not addresses.
 const schemaID = "https://go-mutants.invalid/schema/trace-v1.schema.json"
 
-// documentOf marshals an event and decodes it back as a free-form document, so
-// a test can add a field the Go type has no room for.
 func documentOf(t *testing.T, event trace.Event) map[string]any {
 	t.Helper()
 	encoded, err := json.Marshal(event)
@@ -34,7 +30,6 @@ func documentOf(t *testing.T, event trace.Event) map[string]any {
 	return document
 }
 
-// scriptedDocuments is the scripted recording as free-form documents.
 func scriptedDocuments(t *testing.T) []map[string]any {
 	t.Helper()
 	events := scriptedEvents(t)
@@ -45,8 +40,6 @@ func scriptedDocuments(t *testing.T) []map[string]any {
 	return documents
 }
 
-// validates reports whether a document satisfies the published contract,
-// through the very validator a consumer would use.
 func validates(t *testing.T, document map[string]any) error {
 	t.Helper()
 	encoded, err := json.Marshal(document)
@@ -56,13 +49,11 @@ func validates(t *testing.T, document map[string]any) error {
 	return schemas.Validate(schemas.TraceEventV1, encoded)
 }
 
-// payloadNames is every payload key in the contract.
 var payloadNames = []string{
 	"start", "phase", "stage", "prepare", "exec", "mutant", "probe", "validate",
 	"coverage", "cache", "snapshot", "sweep", "artifact", "note", "run",
 }
 
-// ownPayload is the payload key the given event type carries.
 func ownPayload(eventType string) string {
 	switch eventType {
 	case trace.TypeRunStart:
@@ -113,8 +104,6 @@ func TestSchemaIdentifiesTheTraceFormat(t *testing.T) {
 	if document["$schema"] != "https://json-schema.org/draft/2020-12/schema" {
 		t.Errorf("$schema = %v, want draft 2020-12", document["$schema"])
 	}
-	// JSONSchema hands out a copy, so a consumer that writes into what it was
-	// given cannot change what the next one reads.
 	first := trace.JSONSchema()
 	first[0] = 'x'
 	if slices.Equal(first, trace.JSONSchema()) {
@@ -159,10 +148,6 @@ func TestSchemaRejectsUnknownFields(t *testing.T) {
 	}
 }
 
-// TestSchemaRejectsAPayloadThatIsNotTheEventsOwn checks the pairing in both
-// directions, for every type against every foreign payload: a line carries the
-// payload its type names and never another one, so a reader may switch on
-// `type` and reach for that payload alone.
 func TestSchemaRejectsAPayloadThatIsNotTheEventsOwn(t *testing.T) {
 	t.Parallel()
 
@@ -183,13 +168,11 @@ func TestSchemaRejectsAPayloadThatIsNotTheEventsOwn(t *testing.T) {
 			if foreign == own {
 				continue
 			}
-			// Beside its own payload: two payloads is one too many.
 			both := clone(document)
 			both[foreign] = payloads[foreign]
 			if err := validates(t, both); err == nil {
 				t.Errorf("a %s event carrying both %s and %s was accepted", eventType, own, foreign)
 			}
-			// And instead of it: the type names a payload that is not there.
 			instead := clone(document)
 			delete(instead, own)
 			instead[foreign] = payloads[foreign]
@@ -197,7 +180,6 @@ func TestSchemaRejectsAPayloadThatIsNotTheEventsOwn(t *testing.T) {
 				t.Errorf("a %s event carrying %s instead of %s was accepted", eventType, foreign, own)
 			}
 		}
-		// And with nothing at all.
 		empty := clone(document)
 		delete(empty, own)
 		if err := validates(t, empty); err == nil {
@@ -217,9 +199,6 @@ func clone(document map[string]any) map[string]any {
 func TestSchemaRejectsAnUnknownExecKind(t *testing.T) {
 	t.Parallel()
 
-	// The enum is what makes "every subprocess is labelled" checkable: a call
-	// site can only forget to label one, and an unlabelled command is a
-	// recording that does not validate.
 	document := documentOf(t, execEvent(t))
 	payload, _ := document["exec"].(map[string]any)
 	for _, kind := range []string{"", "go-build", "mutant_run", "MUTANT-RUN"} {
@@ -240,7 +219,6 @@ func TestSchemaRejectsAnUnknownExecKind(t *testing.T) {
 	}
 }
 
-// execEvent is the scripted exec event.
 func execEvent(t *testing.T) trace.Event {
 	t.Helper()
 	for _, event := range scriptedEvents(t) {
@@ -255,9 +233,6 @@ func execEvent(t *testing.T) trace.Event {
 func TestSchemaRejectsEnvironmentValues(t *testing.T) {
 	t.Parallel()
 
-	// The recorder is what reduces an entry to its name, and this is the
-	// backstop: an `env_names` item holding a value is not a trace, so a
-	// recording carrying one does not validate whatever produced it.
 	document := documentOf(t, execEvent(t))
 	payload, _ := document["exec"].(map[string]any)
 	payload["env_names"] = []any{"PATH=/usr/bin"}
@@ -301,8 +276,6 @@ func TestSchemaRejectsRunStartWithoutSchemaAndSchemaOffRunStart(t *testing.T) {
 func TestSchemaRequiresAccountingOnRunEnd(t *testing.T) {
 	t.Parallel()
 
-	// The accounting is never optional, because it is what tells a complete
-	// recording from a lossy one.
 	documents := scriptedDocuments(t)
 	runEnd := documents[len(documents)-1]
 	if runEnd["type"] != trace.TypeRunEnd {
@@ -329,9 +302,6 @@ func TestSchemaRequiresAccountingOnRunEnd(t *testing.T) {
 func TestSchemaTiesInfectedToAMeasuredProbe(t *testing.T) {
 	t.Parallel()
 
-	// Facts come from a measured pass alone. The other outcomes say nothing
-	// about any mutant, so a list of infections beside one of them would be a
-	// measurement to one reader and an error to another.
 	var probe map[string]any
 	for _, document := range scriptedDocuments(t) {
 		if document["type"] == trace.TypeProbeExec {
@@ -363,13 +333,6 @@ func TestSchemaTiesInfectedToAMeasuredProbe(t *testing.T) {
 	}
 }
 
-// TestSchemaAcceptsEveryEventOfTheFailureRecording validates the shapes a
-// healthy run never produces, against the same contract.
-//
-// The happy path is the easy half. An error string, a timeout, a probe pass
-// that never reached an outcome, an uncovered mutant and a lossy accounting are
-// the lines a reader actually opens a recording for, and a schema that only
-// ever saw a green run would be a contract for half the format.
 func TestSchemaAcceptsEveryEventOfTheFailureRecording(t *testing.T) {
 	t.Parallel()
 
@@ -384,15 +347,6 @@ func TestSchemaAcceptsEveryEventOfTheFailureRecording(t *testing.T) {
 	}
 }
 
-// TestSchemaAcceptsTheEnginesOwnContextKey ties the schema's `context_key`
-// pattern to the value the engine will actually record.
-//
-// A cache key in a trace is the identity a warm run answered from, and it is
-// `cache.Context.ContextKey()` — the truncation to `cache.ContextKeyLength`
-// that names an entry's directory, not the full digest. A pattern written for
-// the wrong length would reject every real recording while accepting every
-// fixture, which is the one way a published contract can be wrong and green at
-// the same time.
 func TestSchemaAcceptsTheEnginesOwnContextKey(t *testing.T) {
 	t.Parallel()
 
@@ -419,8 +373,6 @@ func TestSchemaAcceptsTheEnginesOwnContextKey(t *testing.T) {
 	if validateErr := validates(t, document); validateErr != nil {
 		t.Errorf("the engine's own context key %q was rejected: %v", key, validateErr)
 	}
-	// The full key is not what an entry is filed under, and a schema that took
-	// either would not be describing anything.
 	full, err := context.Key()
 	if err != nil {
 		t.Fatal(err)
@@ -432,9 +384,6 @@ func TestSchemaAcceptsTheEnginesOwnContextKey(t *testing.T) {
 	}
 }
 
-// TestSchemaRequiresInfectedOnAMeasuredProbe is the required half of the same
-// pairing [TestSchemaTiesInfectedToAMeasuredProbe] checks the forbidden half
-// of.
 func TestSchemaRequiresInfectedOnAMeasuredProbe(t *testing.T) {
 	t.Parallel()
 
@@ -455,10 +404,6 @@ func TestSchemaRequiresInfectedOnAMeasuredProbe(t *testing.T) {
 	}
 }
 
-// TestSchemaPairsPhaseDurationWithThePhaseThatEnded keeps a phase's timing
-// where it means something. A phase is only timed when it ends, so a
-// `phase-start` carrying a duration and a `phase-end` missing one each describe
-// a span that was never measured.
 func TestSchemaPairsPhaseDurationWithThePhaseThatEnded(t *testing.T) {
 	t.Parallel()
 
@@ -491,20 +436,12 @@ func TestSchemaPairsPhaseDurationWithThePhaseThatEnded(t *testing.T) {
 	if err := validates(t, end); err == nil {
 		t.Error("a phase-end without a duration was accepted")
 	}
-	// Zero is a duration a phase really can have, and absent is not the same
-	// statement, which is why the field is a pointer in Go.
 	endPayload["duration_ms"] = 0
 	if err := validates(t, end); err != nil {
 		t.Errorf("a phase that took under a millisecond was rejected: %v", err)
 	}
 }
 
-// TestSchemaAcceptsADisplayIDOfTheConfiguredLength keeps the pattern off a
-// value the catalogue decides at run time.
-//
-// `mutation.DisplayIDLength` is 20 today, and it is a constant the project may
-// change; a pattern pinned to twenty would turn that change into a recording
-// nothing accepts.
 func TestSchemaAcceptsADisplayIDOfTheConfiguredLength(t *testing.T) {
 	t.Parallel()
 
@@ -529,16 +466,6 @@ func TestSchemaAcceptsADisplayIDOfTheConfiguredLength(t *testing.T) {
 	}
 }
 
-// TestSchemaAcceptsTheMemoryFactsAndRejectsNonsense pins the two fields a
-// bounded run adds, on both records that carry them.
-//
-// They are additive and optional, so the first thing checked is that a
-// recording without them still validates — which is what makes a recording an
-// older build wrote readable by this one. What is rejected is a negative size,
-// which is not a quantity of memory, and `memory_exceeded` on an `exec` record,
-// which does not have it: whether a *command* was stopped by a bound is a fact
-// the attempt above it states, and inventing a second place to say it is how
-// two places come to disagree.
 func TestSchemaAcceptsTheMemoryFactsAndRejectsNonsense(t *testing.T) {
 	t.Parallel()
 

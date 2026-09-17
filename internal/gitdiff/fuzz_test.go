@@ -8,29 +8,10 @@ import (
 	"testing"
 )
 
-// FuzzParseDiff is the promise this package makes about another program's
-// output.
-//
-// `git diff --unified=0` is written by a program go-mutants does not control
-// and cannot pin: a git release may change a hunk header, a rename marker, or
-// how it quotes a path with a newline in it. `--changed` is documented to fail
-// rather than guess when it cannot read a diff, because "a narrowing that
-// silently fell back to everything, or to nothing, would be worse than not
-// running at all" -- and that promise is only worth having if the failure is a
-// refusal rather than a panic.
-//
-// Three properties, and the last is the one a table cannot state:
-//
-//   - it never panics, whatever git wrote;
-//   - a refusal is a typed error with a code, so a user can look it up;
-//   - every range it produces is well formed -- First is never above Last, and
-//     a line number is never below one -- because a range that is neither is
-//     one the selection would silently apply to nothing.
 func FuzzParseDiff(f *testing.F) {
 	f.Add("diff --git a/a.go b/a.go\n@@ -1,0 +2,3 @@\n", "")
 	f.Add("diff --git a/a.go b/a.go\n@@ -1 +1 @@\n", "")
 	f.Add("diff --git a/x/a.go b/x/a.go\n@@ -0,0 +1,2 @@\n", "x/")
-	// The shapes that have broken diff readers before.
 	f.Add("", "")
 	f.Add("\n", "")
 	f.Add("@@ -1 +1 @@\n", "")
@@ -73,10 +54,6 @@ func FuzzParseDiff(f *testing.F) {
 					t.Fatalf("%s: a range runs from %d to %d, which selects nothing", path, r.First, r.Last)
 				}
 			}
-			// Merge is what the selection actually consumes, and it is
-			// documented to return disjoint ranges in order. A parse that
-			// produced something Merge cannot normalise would be a narrowing
-			// nobody could reason about.
 			merged := Merge(ranges)
 			for i, r := range merged {
 				if r.First > r.Last {

@@ -17,22 +17,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/gocmd"
 )
 
-// The small decisions the loader makes about paths, environments and wording.
-//
-// Each of them is a rule the rest of the phase relies on without restating:
-// which files a package owns, which environment a child gets, whether two
-// spellings of a directory are the same directory. None of them needs a
-// toolchain to answer, and each of them is wrong in a way the phase above would
-// report as something else — a file left out of a package is a mutant nobody
-// ever writes, and it looks exactly like a file with no candidates in it.
-
-// TestTwoNamesAreTheSameUnderThePlatformsRules is the pair of comparisons that
-// take the platform as a value.
-//
-// Both halves of each are asserted here whatever this runner is, which is the
-// whole reason they take a parameter: written as a `runtime.GOOS` branch, the
-// Windows half would be a line only a Windows runner ever reaches, and the
-// claim it makes would be one only a Windows runner could check.
 func TestTwoNamesAreTheSameUnderThePlatformsRules(t *testing.T) {
 	t.Parallel()
 
@@ -77,8 +61,6 @@ func TestTwoNamesAreTheSameUnderThePlatformsRules(t *testing.T) {
 		})
 	}
 
-	// And that the platform each is asked about by default is this one, which
-	// is the connection a parameterised comparison could otherwise lose.
 	windows := runtime.GOOS == "windows"
 	if got := sameEnvKey("Path", "PATH"); got != windows {
 		t.Errorf("sameEnvKey(Path, PATH) = %v, want %v on %s", got, windows, runtime.GOOS)
@@ -88,15 +70,6 @@ func TestTwoNamesAreTheSameUnderThePlatformsRules(t *testing.T) {
 	}
 }
 
-// TestTwoSpellingsOfOneDirectoryAreOneDirectory is [samePath], which decides
-// whether the package the loader placed at the module root is the snapshot
-// root.
-//
-// Cleaning is not enough, and the reason is on every macOS machine: the
-// temporary directory is behind a symlink, and the go command may report either
-// spelling. So both are resolved, and the resolution falling back to the
-// cleaned comparison is what makes a path that no longer exists answerable at
-// all.
 func TestTwoSpellingsOfOneDirectoryAreOneDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -119,9 +92,6 @@ func TestTwoSpellingsOfOneDirectoryAreOneDirectory(t *testing.T) {
 	if samePath(real, filepath.Join(root, "other")) {
 		t.Error("two different directories are the same")
 	}
-	// Neither exists, so neither resolves, and the cleaned comparison is the
-	// whole answer. Both directions matter: a run over a tree that has already
-	// been cleaned up must not claim two unrelated paths are one.
 	gone := filepath.Join(root, "gone")
 	if !samePath(gone, filepath.Join(root, "sub", "..", "gone")) {
 		t.Error("two spellings of one path that does not exist are not the same")
@@ -131,14 +101,6 @@ func TestTwoSpellingsOfOneDirectoryAreOneDirectory(t *testing.T) {
 	}
 }
 
-// TestWhichFilesAPackageOwns is [moduleFiles], and every clause of it is a file
-// that would otherwise be mutated or missed.
-//
-// Ignored files are listed beside the built ones because which of the two a cgo
-// file lands in is decided by CGO_ENABLED rather than by anything about the
-// file. Test files are never mutated. A file outside the module root is not the
-// module's to mutate. And the order is the module-relative path, so that a
-// catalogue is the same whatever order the loader answered in.
 func TestWhichFilesAPackageOwns(t *testing.T) {
 	t.Parallel()
 
@@ -169,13 +131,6 @@ func TestWhichFilesAPackageOwns(t *testing.T) {
 	}
 }
 
-// TestAFileThatImportsCIsRecognisedWithoutACompiler pins [importsC], which is
-// what lets a cgo package be skipped by name on a machine with no C compiler.
-//
-// The unparsable file is the clause worth stating. Guessing that it is cgo
-// would exempt it from the very check that would have explained the problem,
-// so it is reported as not importing C and the parse error is left to be
-// reported as a parse error.
 func TestAFileThatImportsCIsRecognisedWithoutACompiler(t *testing.T) {
 	t.Parallel()
 
@@ -208,8 +163,6 @@ func TestAFileThatImportsCIsRecognisedWithoutACompiler(t *testing.T) {
 	}
 }
 
-// TestACountIsRenderedWithItsNoun pins [plural], which is in every message the
-// package-error gate writes.
 func TestACountIsRenderedWithItsNoun(t *testing.T) {
 	t.Parallel()
 
@@ -227,12 +180,6 @@ func TestACountIsRenderedWithItsNoun(t *testing.T) {
 	}
 }
 
-// TestTheEnvironmentAChildLoadIsGiven pins the three edits made to it.
-//
-// The located toolchain has to be on the child's PATH, because `go list` runs
-// `go` again for the toolchain switch and a bare `go` there resolves through
-// the child's own PATH — which under a toolchain manager is not the `go` the
-// run says it is using. Prepending it is what makes the two the same.
 func TestTheEnvironmentAChildLoadIsGiven(t *testing.T) {
 	t.Parallel()
 
@@ -282,14 +229,6 @@ func TestTheEnvironmentAChildLoadIsGiven(t *testing.T) {
 	}
 }
 
-// TestWhichPackagesACgoImportExempts pins [cgoExemption.covers].
-//
-// A cgo package is excluded from mutation wholesale, so whether its C
-// preprocessing step succeeded is not a question discovery has to have an
-// answer to -- and the compile gate has to know that before it refuses the
-// tree. The exemption answers for the packages the loader returned and for no
-// others: one entry per package the scan found a cgo import in, matched by the
-// loader's own ID, and nothing inferred from how a path is spelled.
 func TestWhichPackagesACgoImportExempts(t *testing.T) {
 	t.Parallel()
 
@@ -305,9 +244,6 @@ func TestWhichPackagesACgoImportExempts(t *testing.T) {
 			want: true,
 		},
 		{
-			// The loader is not asked for test variants, so a path spelled
-			// like one is a package somebody wrote under that name -- and its
-			// build errors are its own.
 			name: "a package named like the cgo package's external test package",
 			pkg:  &packages.Package{ID: "x", PkgPath: "example.com/m/cgopkg_test"},
 		},
@@ -337,23 +273,12 @@ func TestWhichPackagesACgoImportExempts(t *testing.T) {
 		})
 	}
 
-	// And an exemption that found nothing exempts nothing, which is what every
-	// run on a tree with no cgo in it is.
 	empty := cgoExemption{}
 	if empty.covers(&packages.Package{ID: "x", PkgPath: "example.com/m/pkg"}) {
 		t.Error("an empty exemption covers a package")
 	}
 }
 
-// TestACgoImportIsFoundInTheSourceRatherThanInTheGraph pins [findCgoPackages].
-//
-// The question is asked of the file on disk because that is the only place the
-// truth survives: with cgo enabled the import is rewritten away before the
-// loader produces syntax, and with cgo disabled the file is not part of the
-// package at all. What is recorded is the loader's own ID, which is the one
-// coordinate every package has -- a package the loader could not place has no
-// import path at all, and keying on that would exempt every other such package
-// with it.
 func TestACgoImportIsFoundInTheSourceRatherThanInTheGraph(t *testing.T) {
 	t.Parallel()
 
@@ -375,8 +300,6 @@ func TestACgoImportIsFoundInTheSourceRatherThanInTheGraph(t *testing.T) {
 	loaded := &loadResult{packages: []*packages.Package{
 		{ID: "example.com/m/cgopkg", PkgPath: "example.com/m/cgopkg", GoFiles: []string{cgoFile}},
 		{ID: "example.com/m/plain", PkgPath: "example.com/m/plain", GoFiles: []string{plainFile}},
-		// The loader leaves the path empty for a package it could not place,
-		// and the ID is then the only coordinate there is.
 		{ID: "unplaced", PkgPath: "", GoFiles: []string{cgoFile}},
 	}}
 
@@ -393,21 +316,11 @@ func TestACgoImportIsFoundInTheSourceRatherThanInTheGraph(t *testing.T) {
 		t.Error("the exemption holds the empty ID, which every unnamed package would match")
 	}
 
-	// And what recording the ID is for: the compile gate asks `covers`, and a
-	// package the loader could only give an ID has to be covered by it.
 	if !exemption.covers(&packages.Package{ID: "unplaced"}) {
 		t.Error("a package named only by its loader ID is not covered")
 	}
 }
 
-// TestTheCompileGateNamesWhatStoppedIt pins [gate] and the sample it quotes.
-//
-// Discovery needs a tree that compiles, because the types it reads are what
-// every rule's applicability is decided by. What makes the refusal usable is
-// the sample: a build with four hundred errors in it is a wall of text nobody
-// reads, so a handful are quoted and the rest are counted -- and the count has
-// to be the arithmetic rather than an impression, because "and 3 more errors"
-// is how somebody decides whether to look.
 func TestTheCompileGateNamesWhatStoppedIt(t *testing.T) {
 	t.Parallel()
 
@@ -472,8 +385,6 @@ func TestTheCompileGateNamesWhatStoppedIt(t *testing.T) {
 	t.Run("exactly as many errors as the sample holds", func(t *testing.T) {
 		t.Parallel()
 
-		// The boundary the count is written across: with nothing left over,
-		// the refusal must not offer to count what it has already quoted.
 		loaded := &loadResult{packages: []*packages.Package{failing("example.com/m/a", errorSample)}}
 		err := gate(loaded, empty)
 		if err == nil {
@@ -487,9 +398,6 @@ func TestTheCompileGateNamesWhatStoppedIt(t *testing.T) {
 	t.Run("errors in an exempt package", func(t *testing.T) {
 		t.Parallel()
 
-		// A cgo package is excluded from mutation wholesale, so whether its C
-		// preprocessing step succeeded is not a question this gate has to have
-		// an answer to. A machine with no C compiler must still be able to run.
 		loaded := &loadResult{packages: []*packages.Package{failing("example.com/m/cgopkg", 4)}}
 		exempt := cgoExemption{"example.com/m/cgopkg": true}
 		if err := gate(loaded, exempt); err != nil {
@@ -498,14 +406,6 @@ func TestTheCompileGateNamesWhatStoppedIt(t *testing.T) {
 	})
 }
 
-// TestTheMainModuleIsTheOneRootedAtTheSnapshot pins [mainModule], whose two
-// refusals are different discoveries about the same tree.
-//
-// Every identity go-mutants mints is module-relative and the snapshot manifest
-// is rooted at the snapshot, so a main module rooted anywhere else would make a
-// candidate's path name a file the snapshot does not hold. "No package here
-// belongs to a module rooted here" and "the module is rooted somewhere else"
-// send a user to two different places, so they are two sentences.
 func TestTheMainModuleIsTheOneRootedAtTheSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -575,13 +475,6 @@ func TestTheMainModuleIsTheOneRootedAtTheSnapshot(t *testing.T) {
 	}
 }
 
-// TestAFailedLoadNamesTheToolchainItFound pins [toolchainHint].
-//
-// go/packages runs the `go` command found on the child's PATH, and a load that
-// failed is most often a load that ran a different `go` from the one the run
-// reported. Naming the located toolchain in the refusal is what lets the two be
-// compared at a glance; naming nothing when nothing was located is what keeps
-// the sentence from ending in a dangling parenthesis.
 func TestAFailedLoadNamesTheToolchainItFound(t *testing.T) {
 	t.Parallel()
 
@@ -598,14 +491,6 @@ func TestAFailedLoadNamesTheToolchainItFound(t *testing.T) {
 	}
 }
 
-// TestAToolchainWithNoDirectoryChangesNoPath is the pair of early returns in
-// the environment builder.
-//
-// Prepending the toolchain's directory to PATH is what keeps a `go` that hands
-// work to another `go` -- the toolchain line in a go.mod is resolved that way --
-// from resolving a different one. When there is no directory to prepend, the
-// environment has to come back as it was: an empty entry in front of PATH would
-// put the *working directory* on it, which is a path this run does not control.
 func TestAToolchainWithNoDirectoryChangesNoPath(t *testing.T) {
 	t.Parallel()
 
@@ -628,10 +513,6 @@ func TestAToolchainWithNoDirectoryChangesNoPath(t *testing.T) {
 		})
 	}
 
-	// And a workspace run, which *removes* GOWORK rather than pinning it off:
-	// a module of a workspace has to be loaded with the workspace in force, and
-	// an empty GOWORK is read by the go command as "no workspace" rather than
-	// as "decide for yourself".
 	got := environmentFrom(base, gocmd.Toolchain{}, true)
 	for _, entry := range got {
 		if strings.HasPrefix(entry, "GOWORK=") {
@@ -640,15 +521,6 @@ func TestAToolchainWithNoDirectoryChangesNoPath(t *testing.T) {
 	}
 }
 
-// TestAPathWithNoRelativeFormIsOutsideTheModule is [relativePath]'s third
-// refusal, which is neither "outside" nor "unnormalizable".
-//
-// `filepath.Rel` refuses a pair it cannot express -- a relative root and an
-// absolute file have no relative path between them without knowing the working
-// directory -- and the answer has to be "not this module's" rather than a
-// guess. The root a real run passes is absolute, so this is the fail-closed
-// arm; without it a caller that passed a relative root would get a path that
-// looks fine and names a file somewhere else.
 func TestAPathWithNoRelativeFormIsOutsideTheModule(t *testing.T) {
 	t.Parallel()
 

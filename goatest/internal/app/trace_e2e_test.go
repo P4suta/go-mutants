@@ -316,21 +316,6 @@ func TestTracedVerifyDischargesTheTestsThatNeverTakeANarrowedBranch(t *testing.T
 	if clamp.Reason != trace.ReasonCoverageReaching || clamp.Granularity != trace.GranularityBlock {
 		t.Fatalf("clamp route = %+v, want a route decided by coverage blocks", clamp)
 	}
-	// TestClampAbove is discharged for the reason this test is named after, and
-	// it is asserted by presence rather than by being the only one.
-	//
-	// The engine discharges more than it used to. Against the pinned version
-	// this was exactly one entry; against the engine in this workspace a second
-	// target comes back `never-infected`, because a probe observed that the
-	// mutated value never differs from the original there. That is the engine
-	// getting better at the same question, and a test that demanded a list of
-	// length one would refuse the improvement while reporting it as a
-	// regression -- which is what it did the first time both products were
-	// built from one tree, and is the kind of thing two repositories could not
-	// show anybody.
-	//
-	// What the reasons may be is still closed: trace.DischargeReasons() is the
-	// vocabulary, and a reason outside it is a failure here.
 	if !slices.ContainsFunc(clamp.Discharged, func(d trace.Discharge) bool {
 		return d.Target == identified["TestClampAbove"] && d.Reason == trace.DischargeBranchNeverTaken
 	}) {
@@ -343,16 +328,6 @@ func TestTracedVerifyDischargesTheTestsThatNeverTakeANarrowedBranch(t *testing.T
 				discharge.Reason)
 		}
 	}
-	// Reaching and discharged partition the targets that executed the block,
-	// and the partition is what this asserts rather than either half's members.
-	//
-	// A list of two was right against the pinned engine and is wrong against
-	// this one, for the same reason the discharge list grew: every target the
-	// engine can rule out is a target that no longer reaches. Asserting the
-	// members would make a better engine look like a broken runner. Asserting
-	// the partition says the thing that has to stay true however good the
-	// engine gets -- nothing is in both, nothing that executed is in neither,
-	// and TestClampAbove is on the discharged side.
 	discharged := make(map[string]bool, len(clamp.Discharged))
 	for _, d := range clamp.Discharged {
 		discharged[d.Target] = true
@@ -382,7 +357,6 @@ func TestTracedVerifyDischargesTheTestsThatNeverTakeANarrowedBranch(t *testing.T
 		len(load.ReachingTargets) != 0 || len(load.Plan) != 0 {
 		t.Fatalf("load route = %+v, want a coverage-reaching route with nothing left to run", load)
 	}
-	// By presence, for the reason the clamp route above is.
 	if !slices.ContainsFunc(load.Discharged, func(d trace.Discharge) bool {
 		return d.Target == identified["TestLoad"] && d.Reason == trace.DischargeBranchNeverTaken
 	}) {

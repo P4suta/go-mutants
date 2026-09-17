@@ -18,25 +18,11 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// The variables that switch the two helper tests below on, and the file the
-// second one reports through. None begins with GO_MUTANTS_, because the
-// environment policy strips that whole prefix from every child it composes.
 const (
 	cleanupHelperEnv    = "MUTANTKIT_CLEANUP_HELPER"
 	cleanupHelperMarker = "MUTANTKIT_CLEANUP_MARKER"
 )
 
-// TestSnapshotAgesTheCopy is cmd/go's two-second index cutoff, as an assertion.
-//
-// The go command puts a package directory's index into the build cache only when
-// every file in it is at least two seconds old. A snapshot taken a moment ago is
-// therefore a different input from the same tree on a user's disk: the first `go
-// list` over it indexes nothing, the second one might, and any assertion about
-// cache entries, misses, or a build being reused becomes a function of how long
-// the copy took. [snapshot.Create] carries the source's own modification times
-// across, which is most of the answer — but os.CopyFS and every synthesized file
-// stamp "now", so the constructor ages the whole tree afterwards rather than
-// trusting where each file came from.
 func TestSnapshotAgesTheCopy(t *testing.T) {
 	snap := mutantkit.Snapshot(t, "simple")
 
@@ -60,10 +46,6 @@ func TestSnapshotAgesTheCopy(t *testing.T) {
 	}
 }
 
-// TestSnapshotCleanupHelperProcess is not a test: it is the failing test
-// [TestSnapshotCleanupRunsEvenWhenTheTestFails] re-executes. It returns silently
-// when it was not asked for, so an ordinary run neither runs it nor reports it
-// as skipped.
 func TestSnapshotCleanupHelperProcess(t *testing.T) {
 	if !testkit.HelperEnabled(cleanupHelperEnv) {
 		return
@@ -73,19 +55,6 @@ func TestSnapshotCleanupHelperProcess(t *testing.T) {
 	t.Fatal("failing on purpose, so that the cleanup runs after a failure")
 }
 
-// TestSnapshotCleanupRunsEvenWhenTheTestFails is why the removal is registered
-// before anything else in the constructor can go wrong.
-//
-// A failing test is exactly the case that leaves debris: the ageing walk that
-// follows [snapshot.Create] can fail the test, and a cleanup registered after it
-// would never be reached. The claim is checked from outside, in a child process,
-// because a test cannot observe its own cleanups running.
-//
-// Two things are asserted together, and it takes both. The snapshot is gone —
-// which t.TempDir's own removal would also achieve — and the child said nothing
-// about a cleanup that failed, which is what the wrong ordering produces: a
-// snap.Cleanup that runs after the temporary directory has already been removed
-// reports the directory it cannot find.
 func TestSnapshotCleanupRunsEvenWhenTheTestFails(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "snapshot-root")
 	env := testkit.Compose(t, t.TempDir())
@@ -112,10 +81,6 @@ func TestSnapshotCleanupRunsEvenWhenTheTestFails(t *testing.T) {
 	}
 }
 
-// TestInstrumentProducesATreeThatStillBuilds is the pipeline helper end to end,
-// and it is the assertion the four suites that wrote this sequence out by hand
-// each made in their own words: an instrumented tree holds every mutant at once
-// and still compiles, because that is what makes one build serve them all.
 func TestInstrumentProducesATreeThatStillBuilds(t *testing.T) {
 	toolchain := mutantkit.Toolchain(t)
 	snap := mutantkit.Snapshot(t, "simple")

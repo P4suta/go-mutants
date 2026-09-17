@@ -18,17 +18,12 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// headless returns a renderer that drives a real bubbletea program with no
-// terminal: no input, no output, and no renderer to paint with. Everything
-// about the lifecycle — the forwarding goroutine, the quit on
-// [engine.RunCompleted], the drain — is the production path.
 func headless(cancel func()) *Renderer {
 	r := New(io.Discard, nil, "0.1.0-dev", cancel)
 	r.programOptions = []tea.ProgramOption{tea.WithoutRenderer()}
 	return r
 }
 
-// completed is the closing event of a synthetic run.
 func completed() engine.RunCompleted {
 	return engine.RunCompleted{
 		Status: engine.StatusOK,
@@ -59,16 +54,6 @@ func TestRunDrawsTheStreamAndKeepsWhatOutlivesTheScreen(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	// What is kept is what the alternate screen destroys and a user still
-	// needs: the warnings, the report's paths, the directories the run was asked
-	// to leave on disk, and the closing block. In the order they arrived, so
-	// that internal/cli can replay them as a stream.
-	//
-	// The kept directory is the one of the four a user cannot recover from
-	// anywhere else. A path the dashboard drew and then erased is a path nobody
-	// can find again: a successful `--keep-temp` run writes no diagnostics
-	// bundle to look it up in, and nothing under the temporary parent says which
-	// of the directories there was this run's.
 	final := r.Final()
 	if len(final) != 4 {
 		t.Fatalf("Final() kept %d events, want 4: %#v", len(final), final)
@@ -96,16 +81,13 @@ func TestRunDrawsTheStreamAndKeepsWhatOutlivesTheScreen(t *testing.T) {
 }
 
 func TestRunKeepsDrainingAfterTheDashboardHasQuit(t *testing.T) {
-	// This is the second-Ctrl-C path in miniature: the program is gone and the
-	// engine is still sending. A renderer that stopped reading here would
-	// deadlock the very shutdown that publishes the report.
 	r := headless(func() {})
 	events := make(chan engine.Event)
 	done := make(chan error, 1)
 	go func() { done <- r.Run(context.Background(), events) }()
 
 	events <- engine.RunPlanned{RunID: "20260819T101112Z-a1b2", Workers: 2}
-	events <- completed() // the dashboard quits here
+	events <- completed()
 
 	for i := 0; i < 64; i++ {
 		select {
@@ -135,9 +117,6 @@ func TestRunKeepsDrainingAfterTheDashboardHasQuit(t *testing.T) {
 }
 
 func TestRunQuitsOnAStreamThatEndsWithoutRunCompleted(t *testing.T) {
-	// The engine promises a RunCompleted on every path. If one ever went
-	// missing the dashboard would be holding a terminal nobody could get back,
-	// so a closed channel ends it too.
 	r := headless(func() {})
 	events := make(chan engine.Event, 2)
 	events <- engine.RunPlanned{RunID: "20260819T101112Z-a1b2", Workers: 1}
@@ -152,11 +131,6 @@ func TestRunQuitsOnAStreamThatEndsWithoutRunCompleted(t *testing.T) {
 }
 
 func TestAnInputThatIsNotAKeyboardDoesNotFailTheRun(t *testing.T) {
-	// internal/cli hands the dashboard a terminal or nothing, so this should
-	// not happen — but a dashboard is decoration over a run that has already
-	// done the work, and a decoration that turned a successful run into a
-	// non-zero exit would be the worst bug this package could have. An input
-	// at end of file is what a redirected standard input looks like.
 	f, err := os.Open(os.DevNull)
 	if err != nil {
 		t.Fatalf("open %s: %v", os.DevNull, err)
@@ -178,16 +152,6 @@ func TestAnInputThatIsNotAKeyboardDoesNotFailTheRun(t *testing.T) {
 	}
 }
 
-// TestKeyboardRefusesAFileThatIsNotATerminalAndNothingElse states the rule the
-// test above depends on, directly and on every platform.
-//
-// The test above is the one that matters and the one that cannot be trusted to
-// notice: it only fails on Linux, because only Linux refuses to poll a
-// descriptor that is not a terminal, so widening [keyboard] to refuse every
-// reader that is not a terminal — or dropping it from the program options
-// altogether — would leave every other platform's gates green. os.DevNull is
-// not a terminal anywhere and a reader with no descriptor is not a file
-// anywhere, which is what makes both halves of the rule checkable here.
 func TestKeyboardRefusesAFileThatIsNotATerminalAndNothingElse(t *testing.T) {
 	f, err := os.Open(os.DevNull)
 	if err != nil {
@@ -202,10 +166,6 @@ func TestKeyboardRefusesAFileThatIsNotATerminalAndNothingElse(t *testing.T) {
 	if got := keyboard(nil); got != nil {
 		t.Errorf("keyboard(nil) = %v, want nil", got)
 	}
-	// A reader that is no file at all is handed over unchanged. It never
-	// reaches the platform machinery — cancelreader falls back to a goroutine
-	// for anything without a descriptor — so refusing it would take input away
-	// from a caller for no reason at all.
 	keys := strings.NewReader("q")
 	if got := keyboard(keys); got != keys {
 		t.Errorf("keyboard(a strings.Reader) = %v, want the reader itself", got)
@@ -228,8 +188,6 @@ func TestFinalIsACopy(t *testing.T) {
 	}
 }
 
-// runWithin runs the renderer and fails the test if it has not returned in
-// time, rather than letting the whole package time out with no clue why.
 func runWithin(t *testing.T, r *Renderer, events <-chan engine.Event, limit time.Duration) error {
 	t.Helper()
 	done := make(chan error, 1)
@@ -250,9 +208,6 @@ func TestCodesAreUniqueAndInBlock(t *testing.T) {
 			t.Errorf("code %q is listed twice", c)
 		}
 		seen[c] = true
-		// GOM770x, not the whole of GOM77xx: internal/gitdiff shares the block
-		// from GOM7710 upwards, and the tens digit is what keeps the two
-		// allocations from ever meeting.
 		if !strings.HasPrefix(string(c), "GOM770") || len(c) != 7 {
 			t.Errorf("code %q is outside the GOM770x range this package holds", c)
 		}

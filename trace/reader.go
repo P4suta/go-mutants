@@ -15,35 +15,18 @@ import (
 )
 
 const (
-	// readBufferSize and maximumLineBytes bound the reader. A recording is a
-	// file somebody else wrote — a CI runner, a colleague's bug report — so a
-	// line that would exhaust memory is refused rather than read.
 	readBufferSize   = 64 << 10
 	maximumLineBytes = 16 << 20
 )
 
-// An ExecTally is how many commands of one kind a recording holds and how long
-// they took between them.
 type ExecTally struct {
 	Count      int
 	DurationMS int64
 }
 
-// A Summary is what one recording says about itself, without the events.
-//
-// It is what `trace summary` prints and what a baseline is compared against. A
-// reader has two things to check before trusting a recording: that [HasRunEnd]
-// is true, and that [EventsDropped] and [MissingSequences] are zero. A
-// recording failing the first was interrupted; one failing the second is lossy,
-// and says so.
 type Summary struct {
-	// Path is the stream that was read, which is the file named even when a
-	// directory was given.
 	Path string
 
-	// Missing is a recording that does not exist. It is returned rather than
-	// reported as an error, because "there is no trace for that run" is an
-	// answer.
 	Missing bool
 
 	Events           int
@@ -56,33 +39,19 @@ type Summary struct {
 	ExitCode         int
 	Error            string
 
-	// Counts is how many events of each type the recording holds.
 	Counts map[string]int
 
-	// PhaseDurationMS is the total time each phase reported.
 	PhaseDurationMS map[string]int64
 
-	// StageDurationMS is the total time each stage reported, keyed by
-	// `<phase>/<name>` — or by the bare name for a stage recorded with no
-	// phase open. The same stage name appears in more than one phase, so a key
-	// of the name alone would add two unrelated spans together.
 	StageDurationMS map[string]int64
 
-	// PrepareDurationMS is the total time each library preparation stage
-	// reported.
 	PrepareDurationMS map[string]int64
 
-	// ExecByKind is how many commands of each kind ran and how long they took.
-	// It is the number a performance question is asked of: "where did the run
-	// go" is answered by the kinds, not by the event types.
 	ExecByKind map[string]ExecTally
 
-	// MutantOutcomes is how many attempts reached each outcome.
 	MutantOutcomes map[string]int
 }
 
-// A SummaryDiff is the difference between two recordings. It is a read-only
-// diagnostic comparison, never a verdict comparison and never evidence.
 type SummaryDiff struct {
 	EventsDelta           int
 	MissingSequencesDelta int64
@@ -101,42 +70,6 @@ type SummaryDiff struct {
 	MutantOutcomeDelta     map[string]int
 }
 
-// Read returns every event of a recording, in the order the file holds them.
-//
-// It is strict on purpose. A recording is a contract, and a reader that
-// silently accepted a document outside it would report a run that never
-// happened. Refused, in full:
-//
-//   - an unknown field, in the envelope or in a payload;
-//   - a trailing value after an event;
-//   - an event carrying no payload, two payloads, or a payload its type does
-//     not name;
-//   - an unknown event type;
-//   - a `schema` on anything but a run-start, or a run-start without one;
-//   - a run-start anywhere but the first line;
-//   - any event after a run-end, a second run-end included;
-//   - a sequence number that does not increase;
-//   - a started stage or preparation stage carrying a result or a duration, or
-//     a finished one carrying no duration;
-//   - a phase-start carrying a duration, or a phase-end carrying none;
-//   - an infection set on a probe pass that was not measured.
-//
-// The last four are rules the schema cannot state: the schema validates one
-// line at a time, so where a line sits in a stream is the reader's to enforce.
-//
-// A run-start that is missing altogether is *not* refused. A bounded ring that
-// overflowed begins partway through the run it recorded, and that is a lossy
-// recording rather than an invalid one — [Summary.MissingSequences] is where it
-// says so.
-//
-// A recording that does not exist is an error wrapping [os.ErrNotExist] and
-// naming the path, rather than no events and no error. "There is no recording
-// for that run" is an answer, but it is one this function has no field to give:
-// a caller who mistyped a path would read the empty slice as a run that
-// recorded nothing. [ReadSummary] is the one that can say it, in
-// [Summary.Missing].
-//
-// path may name the stream or the run directory that holds it.
 func Read(path string) ([]Event, error) {
 	var events []Event
 	summary, err := readStream(path, func(event Event) { events = append(events, event) })
@@ -149,11 +82,6 @@ func Read(path string) ([]Event, error) {
 	return events, nil
 }
 
-// ReadSummary reads a recording and returns what it says about itself.
-//
-// A recording that does not exist is [Summary.Missing] rather than an error;
-// every other failure of the file is an error, because a recording that cannot
-// be parsed is not a recording that says nothing.
 func ReadSummary(path string) (Summary, error) {
 	summary, err := readStream(path, nil)
 	if err != nil {
@@ -162,7 +90,6 @@ func ReadSummary(path string) (Summary, error) {
 	return summary, nil
 }
 
-// readStream is the one pass both readers make over a file.
 func readStream(path string, keep func(Event)) (Summary, error) {
 	stream := path
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
@@ -216,7 +143,6 @@ func newSummary(stream string) Summary {
 	}
 }
 
-// decodeEvent decodes one line strictly and checks it against the contract.
 func decodeEvent(line []byte, ordinal int) (Event, error) {
 	decoder := json.NewDecoder(bytes.NewReader(line))
 	decoder.DisallowUnknownFields()
@@ -233,13 +159,7 @@ func decodeEvent(line []byte, ordinal int) (Event, error) {
 	return event, nil
 }
 
-// accept folds one event into the summary and checks the stream's own
-// invariants: sequence numbers increase, and there is at most one run-end.
 func (summary *Summary) accept(event Event, previous *int64) error {
-	// Where a line sits is a rule of the stream rather than of the line, so it
-	// is checked here and not in validateEvent. A run-start opens a recording
-	// and a run-end closes it: a reader who found the last line has read the
-	// whole run, which is only true if nothing follows it.
 	if summary.HasRunEnd {
 		return fmt.Errorf("go-mutants: trace event %d follows the run-end event", event.Seq)
 	}
@@ -281,8 +201,6 @@ func (summary *Summary) accept(event Event, previous *int64) error {
 			summary.MutantOutcomes[event.Mutant.Outcome]++
 		}
 	case TypeRunEnd:
-		// A second run-end is refused by the rule above rather than here: it
-		// is one case of "nothing follows the last line".
 		summary.HasRunEnd = true
 		summary.EventsDropped = event.Run.EventsDropped
 		summary.Verdict = event.Run.Verdict
@@ -292,7 +210,6 @@ func (summary *Summary) accept(event Event, previous *int64) error {
 	return nil
 }
 
-// stageKey is how a stage is named in [Summary.StageDurationMS].
 func stageKey(record *StageRecord) string {
 	if record.Phase == "" {
 		return record.Name
@@ -300,9 +217,6 @@ func stageKey(record *StageRecord) string {
 	return record.Phase + "/" + record.Name
 }
 
-// validateEvent checks one event against the contract the schema states: a
-// well-formed envelope, exactly the payload the type names, and the two
-// span-shaped payloads' started/finished rules.
 func validateEvent(event Event, ordinal int) error {
 	if event.Seq <= 0 || event.Type == "" || event.Timestamp == "" || event.ElapsedMS < 0 {
 		return fmt.Errorf("go-mutants: trace event %d has an invalid envelope", ordinal)
@@ -327,8 +241,6 @@ func validateEvent(event Event, ordinal int) error {
 	return spanRules(event, ordinal)
 }
 
-// payloadOf reports whether the event carries the payload its type names, and
-// whether the type is one this contract knows at all.
 func payloadOf(event Event, eventType string) (carried, known bool) {
 	switch eventType {
 	case TypeRunStart:
@@ -382,10 +294,6 @@ func countPayloads(event Event) int {
 	return count
 }
 
-// spanRules checks the payloads whose fields depend on each other: the two
-// that come in started/finished pairs, a phase that is only timed when it
-// ends, the accounting a run-end is read for, and the outcome that licenses a
-// probe pass's infection set.
 func spanRules(event Event, ordinal int) error {
 	switch event.Type {
 	case TypePhaseStart:
@@ -401,10 +309,6 @@ func spanRules(event Event, ordinal int) error {
 	case TypePrepare:
 		return spanState(event.Prepare.State, event.Prepare.Result, event.Prepare.DurationMS, ordinal, "prepare")
 	case TypeProbeExec:
-		// Facts come from a measured pass alone, so an infection set beside
-		// any other outcome would be a measurement to one reader and an error
-		// to another. An empty set is still a measurement, which is why the
-		// test is on the field being present rather than on its length.
 		measured := event.Probe.Outcome == ProbeOutcomeMeasured
 		if event.Probe.Infected != nil && !measured {
 			return fmt.Errorf("go-mutants: trace event %d records infections for a probe pass that was not measured", ordinal)
@@ -436,7 +340,6 @@ func spanState(state, result string, duration *int64, ordinal int, name string) 
 	return nil
 }
 
-// Diff reports what changed between two recordings.
 func Diff(before, after Summary) SummaryDiff {
 	diff := SummaryDiff{
 		EventsDelta:           after.Events - before.Events,

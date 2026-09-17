@@ -15,37 +15,8 @@ import (
 	"testing"
 )
 
-// integrationTag is the build tag that separates the two tiers.
-//
-// `go test ./...` is the unit tier: everything that needs nothing but a
-// compiler, which is what a developer runs on every save and what CI runs on
-// three operating systems. `go test -tags integration ./...` adds the suites
-// that drive a real toolchain - a go build, a go list, a git history, a whole
-// mutation run - and costs tens of minutes.
-//
-// The split is not about speed, although speed is what it buys. It is about
-// what a test needs in order to mean anything, which is the same subject the
-// public API of this module is about. A suite that cannot say which of its
-// tests need a toolchain cannot be told that it lost one.
 const integrationTag = "integration"
 
-// toolchainNeedles are the spellings that mean "this file starts a real
-// process".
-//
-// They are the spellings this repository actually uses rather than a general
-// analysis. GoBinary and GitBinary are the harness facades every toolchain test
-// reaches a tool through; Git builds a repository with five git children;
-// LookPath is the hand-rolled form that predates the facades and is currently
-// absent, kept here so that its return is caught rather than welcomed.
-//
-// The first three are matched *unqualified*, which is the difference between a
-// rule and a rule with a hole in it. Written as testkit.GoBinary( they would
-// never match a call inside package testkit, and the one package whose whole
-// subject is which tools a test may reach would be exempt from the tier policy
-// by construction.
-//
-// Each is written as two pieces joined at compile time, so that this file is
-// not an offender because it states the rule.
 var toolchainNeedles = []string{
 	"GoBinary" + "(",
 	"GitBinary" + "(",
@@ -54,18 +25,6 @@ var toolchainNeedles = []string{
 	"LookPath" + `("git")`,
 }
 
-// TestEveryTestThatStartsAToolchainIsInTheIntegrationTier is checked in both
-// directions.
-//
-// A file that starts a process without the tag is an offender: it costs the
-// unit tier a process tree, and - worse - it makes the unit tier fail on a
-// machine that has no toolchain, which is the one thing the unit tier is for.
-//
-// A file that carries the tag and starts nothing is the other half, and it is
-// not a formality. The tag hides a file from `go test ./...` entirely, so a
-// stale one is a suite that silently stopped running. Nothing else in the tree
-// would notice: the tests are not skipped, not failed, not counted. They are
-// not compiled.
 func TestEveryTestThatStartsAToolchainIsInTheIntegrationTier(t *testing.T) {
 	t.Parallel()
 	root := repositoryRoot(t)
@@ -100,13 +59,6 @@ func TestEveryTestThatStartsAToolchainIsInTheIntegrationTier(t *testing.T) {
 	}
 }
 
-// TestTheTierScanReadsTheSpellingsThisRepositoryUses proves the scan can see an
-// offender, and that it does not see an ordinary test.
-//
-// Its fixtures are assembled from toolchainNeedles rather than written out, for
-// the same reason the needles themselves are joined at compile time: a file
-// that spelt them plainly would be reported as starting a toolchain because it
-// says what starting a toolchain looks like.
 func TestTheTierScanReadsTheSpellingsThisRepositoryUses(t *testing.T) {
 	t.Parallel()
 	for _, source := range []string{
@@ -130,22 +82,16 @@ func TestTheTierScanReadsTheSpellingsThisRepositoryUses(t *testing.T) {
 	}
 }
 
-// testFile is one test file and what the scan concluded about it.
 type testFile struct {
-	// path is the file, relative to the module root and slash-separated.
 	path string
 
-	// integration reports whether the file carries the build tag.
 	integration bool
 
-	// startsToolchain reports whether any needle matched.
 	startsToolchain bool
 
-	// needles are the spellings that matched, for the failure message.
 	needles []string
 }
 
-// scanTestFiles reads every _test.go in the tree.
 func scanTestFiles(root string) ([]testFile, error) {
 	var found []testFile
 	walk := func(path string, entry fs.DirEntry, err error) error {
@@ -190,20 +136,6 @@ func scanTestFiles(root string) ([]testFile, error) {
 	return found, nil
 }
 
-// hasIntegrationConstraint reports whether the file's build constraint names
-// the integration tag.
-//
-// The constraint is parsed rather than grepped, so that a file which mentions
-// the tag in prose is not mistaken for one that is gated on it.
-//
-// What is asked of the parsed expression is whether it *names* the tag, not
-// whether it evaluates true with the tag set. Evaluating was the first version
-// of this function and it was wrong in a way worth recording: `//go:build
-// !windows` evaluates true for a tag set holding nothing but "integration",
-// because windows is absent and the negation of absent is present. Three files
-// gated on an operating system were reported as stale integration files, which
-// would have had somebody delete a correct build constraint on the gate's
-// advice.
 func hasIntegrationConstraint(source string) bool {
 	for line := range strings.SplitSeq(source, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -227,8 +159,6 @@ func hasIntegrationConstraint(source string) bool {
 	return false
 }
 
-// namesTag reports whether a build expression mentions one tag anywhere,
-// however it is combined.
 func namesTag(expression constraint.Expr, tag string) bool {
 	switch typed := expression.(type) {
 	case *constraint.TagExpr:
@@ -243,18 +173,6 @@ func namesTag(expression constraint.Expr, tag string) bool {
 	return false
 }
 
-// withoutComments blanks every comment out of a source, keeping every other
-// byte where it was.
-//
-// The rule this gate states is about calls, and a comment is not a call. The
-// first version scanned the raw bytes and reported this very file as an
-// offender, because the paragraph above explains the rule by writing out the
-// spellings it looks for. Rewording the paragraph would have been the wrong
-// repair: the gate would still have been unable to tell a call from a sentence,
-// and the next file to describe its own behaviour would have paid for it.
-//
-// Comments are replaced with spaces rather than removed so that no byte moves,
-// which keeps the guard on the preceding byte in matchedNeedles meaningful.
 func withoutComments(path, source string) (string, error) {
 	fileSet := token.NewFileSet()
 	parsed, err := parser.ParseFile(fileSet, path, source, parser.ParseComments|parser.SkipObjectResolution)
@@ -277,15 +195,6 @@ func withoutComments(path, source string) (string, error) {
 	return string(blanked), nil
 }
 
-// matchedNeedles reports which spellings of "starts a real process" a source
-// holds.
-//
-// A needle that begins with an identifier byte is required not to follow one,
-// so that AnyGoBinary( does not match GoBinary(. The guard is applied only to
-// those needles: .Git() begins with a dot, and the byte before it is the end of
-// whatever the method was called on, which is an identifier every time it
-// matters. A guard applied to both would be a rule about spelling rather than
-// about calls, and would exempt exactly the calls it exists to find.
 func matchedNeedles(source string) []string {
 	var found []string
 	for _, needle := range toolchainNeedles {
@@ -306,7 +215,6 @@ func matchedNeedles(source string) []string {
 	return found
 }
 
-// isIdentifierByte reports whether a byte can appear inside a Go identifier.
 func isIdentifierByte(character byte) bool {
 	switch {
 	case character >= 'a' && character <= 'z',

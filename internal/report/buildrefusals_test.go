@@ -12,24 +12,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// The sentences [report.Build] refuses with, and the two of its fill-ins that
-// no golden can see.
-//
-// build_test.go proves the refusals happen and carry the right code. The code
-// is what a script branches on; the sentence is what a person acts on, and this
-// package writes several refusals that share one code and mean quite different
-// things — an id the catalogue does not hold and an id it holds twice are both
-// about a mutant nobody can find, and only the words say which. The counting in
-// those words is checked too: "1 attempt" and "3 attempts", "attempt 2 of", and
-// the short id a message quotes instead of sixty-four characters of hex.
-
-// TestARefusalNamesTheMutantByItsShortID pins the id a message quotes.
-//
-// Twenty characters is what `list`, the console and every other output show, so
-// a message quoting all sixty-four would be the one place a user cannot paste
-// an id from into anything else. The short id in a message is also the only
-// place the shortening is asked for a *short* input: an id a caller invented is
-// whatever they typed, and slicing twenty characters off four is a panic.
 func TestARefusalNamesTheMutantByItsShortID(t *testing.T) {
 	t.Parallel()
 
@@ -79,14 +61,6 @@ func TestARefusalNamesTheMutantByItsShortID(t *testing.T) {
 	})
 }
 
-// TestARowForAMutantNobodyCataloguedIsNamed reads the other half of the
-// counting argument in [report.Build].
-//
-// The check is that every row was consumed by the catalogue walk, and when the
-// counts disagree the walk is repeated to find *which* row was not. What it has
-// to name is the row the catalogue does not know — not the first row it looks
-// at, which is a mutant that is perfectly fine, and not an empty id, which is
-// what a message assembled from the wrong field would print.
 func TestARowForAMutantNobodyCataloguedIsNamed(t *testing.T) {
 	t.Parallel()
 
@@ -127,15 +101,6 @@ func TestARowForAMutantNobodyCataloguedIsNamed(t *testing.T) {
 	}
 }
 
-// TestBuildSaysWhichOutcomeItCouldNotWrite keeps two refusals that share a code
-// apart.
-//
-// An outcome outside the six fails twice on the way through [report.Build]: the
-// translation into the document's spelling refuses it, and so would the
-// counting underneath. They carry one code and one of them is reached first,
-// and it matters which: "this report cannot write that outcome" names the value
-// and the field, and "the outcomes could not be counted" is what a reader sees
-// when the translation let it through.
 func TestBuildSaysWhichOutcomeItCouldNotWrite(t *testing.T) {
 	t.Parallel()
 
@@ -153,12 +118,6 @@ func TestBuildSaysWhichOutcomeItCouldNotWrite(t *testing.T) {
 	}
 }
 
-// TestARefusalCountsInWordsAUserCanRead pins the singular and the plural.
-//
-// "1 attempt" and "2 executions" are the two halves of a sentence whose whole
-// point is that the numbers disagree, and a renderer that printed "1 attempts"
-// — or nothing at all — would make the one message that has to be read
-// carefully the hardest one to read.
 func TestARefusalCountsInWordsAUserCanRead(t *testing.T) {
 	t.Parallel()
 
@@ -199,8 +158,6 @@ func TestARefusalCountsInWordsAUserCanRead(t *testing.T) {
 		})
 	}
 
-	// The same counting on the cached and uncovered refusals, which name the
-	// rows rather than compare them.
 	opts := fixtureOptions(t)
 	results := slices.Clone(opts.Results)
 	results[0].Executions = []report.Execution{pass}
@@ -211,13 +168,6 @@ func TestARefusalCountsInWordsAUserCanRead(t *testing.T) {
 	}
 }
 
-// TestARefusalAboutOneAttemptNamesTheAttempt reads the number in front of the
-// two per-pass refusals.
-//
-// A mutant with three executions produces three chances to be wrong, and
-// "attempt 2 of mutant abc" is the whole of what tells somebody which row of
-// the document to look at. Counting from zero, or from the wrong end, points
-// them at a row that is fine.
 func TestARefusalAboutOneAttemptNamesTheAttempt(t *testing.T) {
 	t.Parallel()
 
@@ -258,14 +208,6 @@ func TestARefusalAboutOneAttemptNamesTheAttempt(t *testing.T) {
 	}
 }
 
-// TestARefusalListsTheValuesItWouldHaveAccepted covers the four messages that
-// end in a list.
-//
-// The lists are built from the same functions the schema's enumerations are
-// checked against, so that a value added in one place cannot go missing from
-// the sentence that offers it. What that buys is only real if the sentence
-// carries the list: "expected one of" followed by nothing is a refusal with the
-// answer removed.
 func TestARefusalListsTheValuesItWouldHaveAccepted(t *testing.T) {
 	t.Parallel()
 
@@ -346,14 +288,6 @@ func TestARefusalListsTheValuesItWouldHaveAccepted(t *testing.T) {
 	}
 }
 
-// TestBuildSurvivesARunThatCataloguedOnlyRejections is a run in which nothing
-// compiled.
-//
-// It is an ordinary thing for a fresh operator family to produce and a shape
-// this package had never been asked for: every candidate refused by validation,
-// so `mutants[]` is empty and `rejected[]` is not. The document has to come out
-// whole — which means every intermediate sized from those two counts has to
-// survive there being more of the second than of the first.
 func TestBuildSurvivesARunThatCataloguedOnlyRejections(t *testing.T) {
 	t.Parallel()
 
@@ -397,14 +331,6 @@ func TestBuildSurvivesARunThatCataloguedOnlyRejections(t *testing.T) {
 	}
 }
 
-// TestACoverageGuidedRunThatProfiledNoBinaries is the smallest honest
-// coverage-guided run: the pass worked, and there was nothing to instrument.
-//
-// Zero is a measurement here rather than an absence — an `off` run is what says
-// nothing was measured, by leaving the key out entirely — so the document has to
-// carry `binaries: 0` rather than refuse the run. A guard that treated zero as
-// impossible would fail a build on the one repository that has no test binaries
-// at all yet.
 func TestACoverageGuidedRunThatProfiledNoBinaries(t *testing.T) {
 	t.Parallel()
 
@@ -426,8 +352,6 @@ func TestACoverageGuidedRunThatProfiledNoBinaries(t *testing.T) {
 	}
 }
 
-// TestBuildRefusesACoverageBinaryCountThatIsNotOne is the other side of that
-// boundary: a negative count is not a measurement of anything.
 func TestBuildRefusesACoverageBinaryCountThatIsNotOne(t *testing.T) {
 	t.Parallel()
 
@@ -443,10 +367,6 @@ func TestBuildRefusesACoverageBinaryCountThatIsNotOne(t *testing.T) {
 	}
 }
 
-// TestBuildRefusesTestFactsOutsideTestMode: covering tests on a mutant, and a
-// selection on one of its passes, are statements only a test-narrowed run can
-// make, and a package-mode or off document carrying either would be describing
-// a measurement its own mode says never happened.
 func TestBuildRefusesTestFactsOutsideTestMode(t *testing.T) {
 	t.Parallel()
 
@@ -502,10 +422,6 @@ func TestBuildRefusesTestFactsOutsideTestMode(t *testing.T) {
 	}
 }
 
-// TestATestNarrowedRunThatProfiledNoTests is the boundary the negative-count
-// guard sits on: zero tests is a measurement, not an error — a run all of whose
-// binaries were dirty profiles no test on its own and still says so with
-// `tests: 0`, exactly as a zero binary count is stated rather than refused.
 func TestATestNarrowedRunThatProfiledNoTests(t *testing.T) {
 	t.Parallel()
 
@@ -527,8 +443,6 @@ func TestATestNarrowedRunThatProfiledNoTests(t *testing.T) {
 	}
 }
 
-// TestBuildRefusesANegativeTestCount is [TestBuildRefusesACoverageBinaryCountThatIsNotOne]
-// for the count a test-narrowed run adds.
 func TestBuildRefusesANegativeTestCount(t *testing.T) {
 	t.Parallel()
 
@@ -544,15 +458,6 @@ func TestBuildRefusesANegativeTestCount(t *testing.T) {
 	}
 }
 
-// TestTheToolchainBlockIsWrittenOnlyWhenSomethingIsKnown covers all four
-// answers a caller can give about the `go` that ran the tests.
-//
-// The block is optional and its two fields are not, which is the shape that
-// makes "half known" the interesting case: a run that located a binary but
-// could not read its version has something worth writing down, and a run that
-// knows neither has nothing. Writing the block for the second would put two
-// "unknown"s into a document as though they were facts; refusing to write it
-// for the first would throw away the path a reader wants.
 func TestTheToolchainBlockIsWrittenOnlyWhenSomethingIsKnown(t *testing.T) {
 	t.Parallel()
 
@@ -605,21 +510,11 @@ func TestTheToolchainBlockIsWrittenOnlyWhenSomethingIsKnown(t *testing.T) {
 	}
 }
 
-// TestAMutantIsToldTheBoundWasReachedByItsOwnRows folds the per-pass facts up
-// onto the mutant.
-//
-// The two are supplied from two directions on purpose: a cached outcome has no
-// rows and states them itself, and an outcome this run measured has rows and
-// says nothing. The fold is the second of those, and it is the one no fixture
-// reaches by accident — every other test in this package sets the mutant's own
-// flag, which short-circuits the fold before it is asked.
 func TestAMutantIsToldTheBoundWasReachedByItsOwnRows(t *testing.T) {
 	t.Parallel()
 
 	opts := fixtureOptions(t)
 	results := slices.Clone(opts.Results)
-	// Measured by this run, so the flags come off the rows and not off the
-	// result: MemoryExceeded and PeakMemory are left at their zero values.
 	results[1].Outcome = mutation.OutcomeKilled
 	results[1].KilledBy = alphaPackage
 	results[1].Attempts = 2
@@ -642,8 +537,6 @@ func TestAMutantIsToldTheBoundWasReachedByItsOwnRows(t *testing.T) {
 	}
 }
 
-// errText renders an error for a message, tolerating nil so that a failing
-// assertion prints "<nil>" rather than panicking on the way to the failure.
 func errText(err error) string {
 	if err == nil {
 		return "<nil>"

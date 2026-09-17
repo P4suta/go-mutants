@@ -14,19 +14,10 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
-// eventFieldCount is how many fields a terse event row holds once it names a
-// test: the action, the package and the test.
-//
-// A row with one fewer is a package-level event, which is a shape this tool has
-// to tell apart from a test's.
 const eventFieldCount = 3
 
-// minimumEventFields is the shortest row events accepts: an action and a
-// package.
 const minimumEventFields = 2
 
-// events builds a `go test -json` stream from terse "action package test"
-// rows, so a test reads as the run it describes.
 func events(t *testing.T, rows ...string) string {
 	t.Helper()
 	var builder strings.Builder
@@ -70,8 +61,6 @@ func TestAuditCountsEveryTerminalVerdict(t *testing.T) {
 	}
 }
 
-// TestAuditSeesAPackageThatOnlySkipped is the whole reason this tool exists: a
-// non-verbose `go test` reports that package as `ok`.
 func TestAuditSeesAPackageThatOnlySkipped(t *testing.T) {
 	t.Parallel()
 	summary, err := audit(strings.NewReader(events(t,
@@ -91,9 +80,6 @@ func TestAuditSeesAPackageThatOnlySkipped(t *testing.T) {
 	}
 }
 
-// TestAuditDoesNotCallAPackageWithNoTestFilesSilent keeps the gate off a case
-// it would otherwise fail on every day: `go test` emits a package-level skip
-// for a package that holds no tests, which is not a suite stepping aside.
 func TestAuditDoesNotCallAPackageWithNoTestFilesSilent(t *testing.T) {
 	t.Parallel()
 	summary, err := audit(strings.NewReader(events(t, "skip example.test/empty")))
@@ -126,8 +112,6 @@ func TestAuditReportsOnlyTheSkipsTheLedgerDoesNotAllow(t *testing.T) {
 	}
 }
 
-// TestAuditChargesASkippedSubtestToItsParent pins the ledger's grain. A ledger
-// of subtest names would turn over every time somebody adds a case.
 func TestAuditChargesASkippedSubtestToItsParent(t *testing.T) {
 	t.Parallel()
 	summary, err := audit(strings.NewReader(events(t,
@@ -149,9 +133,6 @@ func TestAuditChargesASkippedSubtestToItsParent(t *testing.T) {
 	}
 }
 
-// TestAuditRefusesAStreamItCannotRead covers the fail-closed choice: a partial
-// answer is indistinguishable from a complete one, so there is no partial
-// answer.
 func TestAuditRefusesAStreamItCannotRead(t *testing.T) {
 	t.Parallel()
 	if _, err := audit(strings.NewReader("ok  \texample.test/a\t0.01s\n")); err == nil {
@@ -203,10 +184,6 @@ func writeLedger(t *testing.T, contents string) string {
 	return path
 }
 
-// TestAuditRefusesARunThatWasNarrowedBeforeItStarted covers the one hole the
-// pass/fail/skip accounting cannot see. A test excluded by -test.run was never
-// started, so it is not a verdict of any kind and the totals balance over a
-// suite that is missing most of itself.
 func TestAuditRefusesARunThatWasNarrowedBeforeItStarted(t *testing.T) {
 	t.Parallel()
 	stream := `{"Action":"output","Package":"example.test/a","Output":"` +
@@ -228,8 +205,6 @@ func TestAuditRefusesARunThatWasNarrowedBeforeItStarted(t *testing.T) {
 	}
 }
 
-// TestAuditIgnoresOrdinaryPackageOutput keeps the marker check off the ordinary
-// lines a package prints, which would otherwise fail every run.
 func TestAuditIgnoresOrdinaryPackageOutput(t *testing.T) {
 	t.Parallel()
 	stream := `{"Action":"output","Package":"example.test/a","Output":"ok  \texample.test/a\t0.01s\n"}` + "\n"
@@ -242,14 +217,6 @@ func TestAuditIgnoresOrdinaryPackageOutput(t *testing.T) {
 	}
 }
 
-// TestTheNarrowedFilterMarkerIsSpeltTheSameInBothPlaces is a two-element
-// ledger.
-//
-// The package that prints the marker cannot import this command - it is a
-// main package, and a production file here may not import the test harness
-// either - so the string exists twice. A marker spelt twice is a marker that
-// will eventually be spelt two ways, and the failure mode is silent: the
-// printer announces a narrowed run and the reader never recognises it.
 func TestTheNarrowedFilterMarkerIsSpeltTheSameInBothPlaces(t *testing.T) {
 	t.Parallel()
 	const printer = "../../assure/main_test.go"

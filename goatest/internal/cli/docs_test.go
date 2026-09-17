@@ -14,51 +14,20 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
-// The documentation ledger for the command line.
-//
-// Two sets are written down more than once here, and both are things a user
-// greps for.
-//
-// The exit-code table maps every verdict to a number, so pinning it pins the
-// verdict vocabulary as well - which is how the missing COMPLETED was found.
-// report.go declared nine verdicts, docs/report-v1.md listed all nine, and
-// README.md and docs/assurance-contract.md listed eight. A reader of either
-// page could not learn what `goatest report --json` meant by the verdict it
-// had just printed, and README.md contradicted itself: its exit-code paragraph
-// mentioned a "completed operation" its own verdict list did not hold.
-//
-// The command set is written down four times inside this file alone - the
-// constants, the help text, commandHelp, and the dispatch switch - and a fifth
-// time in README.md.
-
 const (
-	// reportDocumentation is the page that holds the exit-code table.
 	reportDocumentation = "../../docs/report-v1.md"
 
-	// readmePath is the page that holds the command surface.
 	readmePath = "../../README.md"
 
-	// exitCodeTableHeading opens the exit-code table, and is how the table is
-	// found. A line number is a fact about today's file; a heading is a fact
-	// about the document.
 	exitCodeTableHeading = "| Code | Meaning |"
 
-	// commandSurfaceHeading opens the README's fenced command listing.
 	commandSurfaceHeading = "The command surface is:"
 
-	// exitCodeTableCells is how many pieces splitting a table row on its pipes
-	// yields: the empty piece before the first pipe, the code, and the meaning.
 	exitCodeTableCells = 3
 )
 
-// backquotedValue matches one `value` in a documentation line.
 var backquotedValue = regexp.MustCompile("`([^`]+)`")
 
-// verdicts is every verdict report.go declares.
-//
-// It is stated here rather than read from internal/report because that package
-// declares them as untyped constants with no list beside them; adding one there
-// and forgetting it here fails this ledger, which is the point.
 var verdicts = []report.Verdict{
 	report.VerdictAssured,
 	report.VerdictChangeAssured,
@@ -71,8 +40,6 @@ var verdicts = []report.Verdict{
 	report.VerdictCompleted,
 }
 
-// TestEveryVerdictHasADocumentedExitCode pins three statements of one fact: the
-// exitCode switch, the table in docs/report-v1.md, and the verdict list above.
 func TestEveryVerdictHasADocumentedExitCode(t *testing.T) {
 	t.Parallel()
 	documented := documentedExitCodes(t)
@@ -94,12 +61,6 @@ func TestEveryVerdictHasADocumentedExitCode(t *testing.T) {
 	}
 }
 
-// TestEveryExitCodeConstantIsDocumented covers the two codes no verdict
-// produces.
-//
-// A signal does not arrive as a verdict, so the loop above cannot reach 130 or
-// 143. They are the codes a user is most likely to meet on a bad day and least
-// likely to find explained, which is reason enough to check them separately.
 func TestEveryExitCodeConstantIsDocumented(t *testing.T) {
 	t.Parallel()
 	codes := documentedExitCodeNumbers(t)
@@ -119,8 +80,6 @@ func TestEveryExitCodeConstantIsDocumented(t *testing.T) {
 	}
 }
 
-// TestTheHelpTextNamesEveryExitCode keeps the one-line summary in the help
-// honest, because it is what a user reads before they find the page.
 func TestTheHelpTextNamesEveryExitCode(t *testing.T) {
 	t.Parallel()
 	for _, code := range []int{
@@ -132,8 +91,6 @@ func TestTheHelpTextNamesEveryExitCode(t *testing.T) {
 	}
 }
 
-// TestEveryCommandIsDispatchedHelpedAndDocumented pins the command set against
-// the three other places this file states it and the one in README.md.
 func TestEveryCommandIsDispatchedHelpedAndDocumented(t *testing.T) {
 	t.Parallel()
 	commands := []Command{
@@ -162,12 +119,6 @@ func TestEveryCommandIsDispatchedHelpedAndDocumented(t *testing.T) {
 	}
 }
 
-// helpNamesCommand reports whether a usage line of the help text names one
-// command.
-//
-// The line is matched rather than the whole text, because several command names
-// also appear in the prose beneath it, and a check that prose satisfies is a
-// check a missing usage line passes.
 func helpNamesCommand(command Command) bool {
 	for _, line := range strings.Split(help, "\n") {
 		fields := strings.Fields(line)
@@ -178,11 +129,8 @@ func helpNamesCommand(command Command) bool {
 	return false
 }
 
-// usageLineFields is the shortest usage line: the binary and a command.
 const usageLineFields = 2
 
-// TestTheExitCodeLedgerSeesAVerdictTheTableDoesNotHold proves the ledger can
-// fail, which an agreement between two lists cannot show on its own.
 func TestTheExitCodeLedgerSeesAVerdictTheTableDoesNotHold(t *testing.T) {
 	t.Parallel()
 	documented := documentedExitCodes(t)
@@ -194,12 +142,6 @@ func TestTheExitCodeLedgerSeesAVerdictTheTableDoesNotHold(t *testing.T) {
 	}
 }
 
-// documentedExitCodeNumbers reads the first column of the exit-code table.
-//
-// It is separate from documentedExitCodes because two rows carry no verdict at
-// all: a signal is not a verdict, so 130 and 143 describe themselves in prose.
-// Reading the table only through its verdicts would have left the two codes a
-// user is most likely to meet on a bad day unchecked.
 func documentedExitCodeNumbers(t *testing.T) map[int]bool {
 	t.Helper()
 	codes := make(map[int]bool)
@@ -209,14 +151,11 @@ func documentedExitCodeNumbers(t *testing.T) map[int]bool {
 	return codes
 }
 
-// exitCodeRow is one row of the exit-code table.
 type exitCodeRow struct {
 	code    int
 	meaning string
 }
 
-// exitCodeRows reads the table, found by its heading rather than its line
-// number.
 func exitCodeRows(t *testing.T) []exitCodeRow {
 	t.Helper()
 	lines := documentationLines(t, reportDocumentation)
@@ -242,14 +181,6 @@ func exitCodeRows(t *testing.T) []exitCodeRow {
 	return rows
 }
 
-// documentedExitCodes reads the exit-code table as a verdict-to-code map.
-//
-// Only the backquoted members of a row are read. Two rows describe a signal
-// rather than a verdict - "interrupted" and "terminated" - and they are prose
-// in the table for the same reason they are absent from the verdict list: a
-// signal does not arrive as a verdict. Reading them as verdicts was the first
-// version of this function, and it reported them as declared nowhere, which
-// was true and useless.
 func documentedExitCodes(t *testing.T) map[string]int {
 	t.Helper()
 	documented := make(map[string]int)
@@ -261,8 +192,6 @@ func documentedExitCodes(t *testing.T) map[string]int {
 	return documented
 }
 
-// documentedCommands reads the first word of each line of the README's fenced
-// command surface.
 func documentedCommands(t *testing.T) []string {
 	t.Helper()
 	lines := documentationLines(t, readmePath)
@@ -294,7 +223,6 @@ func documentedCommands(t *testing.T) []string {
 	return documented
 }
 
-// documentationLines reads one page.
 func documentationLines(t *testing.T, path string) []string {
 	t.Helper()
 	data, err := os.ReadFile(path)

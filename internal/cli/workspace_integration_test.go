@@ -3,17 +3,6 @@
 
 //go:build integration
 
-// What the commands do at the root of a `go.work`, against a real toolchain.
-//
-// A workspace is measured as one run over one catalogue that spans its modules
-// -- see ADR 0012 -- and everything downstream of that is a document with a
-// different shape: `run` publishes a workspace report, `report merge` puts its
-// shards back together, and the history commands treat the workspace as a
-// project of its own rather than as any module inside it.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/cli/...
 package cli
 
 import (
@@ -29,26 +18,11 @@ import (
 	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
-// TestAWorkspaceRunIsPublishedMergedAndExplainedAsOne is the command line's
-// half of ADR 0012, end to end and in one test because the three claims are one
-// claim: a workspace run is a run of the workspace.
-//
-// It publishes a workspace report rather than a run report, because
-// `workspace.module_path` is required of the latter and a workspace has no
-// single answer for it. Its shards merge back into one, module by module.
-// And the history commands find it standing in the workspace root, where there
-// is no `go.mod` to name the project by.
 func TestAWorkspaceRunIsPublishedMergedAndExplainedAsOne(t *testing.T) {
-	// The run files a report, so os.UserCacheDir is redirected before anything
-	// runs -- by [testsupport.CacheDir], because which variable it reads is a
-	// property of the operating system and not of this test.
 	testsupport.CacheDir(t)
 	root := testkit.Copy(t, "workspace")
 	t.Chdir(root)
 
-	// Two shards, each writing its document outside the tree: a file written
-	// inside it between the runs would change the snapshot digest, and the two
-	// would stop being shards of one run.
 	shards := t.TempDir()
 	for _, shard := range []string{"1/2", "2/2"} {
 		var out, errOut bytes.Buffer
@@ -110,9 +84,6 @@ func TestAWorkspaceRunIsPublishedMergedAndExplainedAsOne(t *testing.T) {
 		}
 	}
 
-	// And a whole run, filed in the history, found from the workspace root --
-	// where `moduleAt` has nothing to read, because a workspace root is not a
-	// module.
 	var runOut, runErr bytes.Buffer
 	if code := ExecuteContext(t.Context(),
 		[]string{"run", "--no-tui", "--report", "none"}, &runOut, &runErr); code != 0 {
@@ -128,7 +99,6 @@ func TestAWorkspaceRunIsPublishedMergedAndExplainedAsOne(t *testing.T) {
 	}
 }
 
-// documentTypeOf is what a document says it is.
 func documentTypeOf(t *testing.T, data []byte) string {
 	t.Helper()
 

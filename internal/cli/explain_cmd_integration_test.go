@@ -3,18 +3,6 @@
 
 //go:build integration
 
-// The toolchain-backed half of `explain`: a real run, its real report, its real
-// recording, and — for the one test that is the whole point of the command —
-// the printed reproduction actually run.
-//
-// A synthetic report and a hand-written recording prove the join; only a run
-// proves the join is true. The reproduce block is the claim with the sharpest
-// edge in the tool — paste this and see the mutant caught — and the only way to
-// check a claim like that is to paste it.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/cli/...
 package cli
 
 import (
@@ -34,15 +22,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// explainAfterARun runs killable with a recording and returns the report it
-// wrote.
-//
-// `--keep-temp` is what makes the reproduction runnable at all: the test binary
-// the recording names lives in the run's scratch directory, and a run that
-// removed it would leave a command pointing at a path that is gone. Every
-// directory it keeps is under the TMPDIR [inKillableFixture] redirected into
-// the test's own temporary directory, so the keep is undone by the test's
-// cleanup rather than left on the developer's disk.
 func explainAfterARun(t *testing.T, args ...string) (string, *report.Report) {
 	t.Helper()
 	root := inKillableFixture(t)
@@ -50,7 +29,6 @@ func explainAfterARun(t *testing.T, args ...string) (string, *report.Report) {
 	return root, rep
 }
 
-// explainOutput drives `explain` in process and fails unless it exited 0.
 func explainOutput(t *testing.T, args ...string) string {
 	t.Helper()
 	code, stdout, stderr := execute(t, append([]string{"explain", "--no-color"}, args...)...)
@@ -61,8 +39,6 @@ func explainOutput(t *testing.T, args ...string) string {
 	return stdout
 }
 
-// mutantWith returns the first mutant of the run with a given outcome, and
-// fails the test when the fixture has none.
 func mutantWith(t *testing.T, rep *report.Report, outcome report.Outcome, uncovered bool) report.Mutant {
 	t.Helper()
 	for _, m := range rep.Mutants {
@@ -74,12 +50,6 @@ func mutantWith(t *testing.T, rep *report.Report, outcome report.Outcome, uncove
 	return report.Mutant{}
 }
 
-// reproduceCommand lifts the pasteable line out of an account.
-//
-// It is found by its shape — the one line that changes directory and activates
-// a mutant — rather than by counting lines from the heading, so a section that
-// gains a note above or below it, or the rebuild line a library session's
-// account also carries, does not silently make this return the wrong string.
 func reproduceCommand(t *testing.T, account string) string {
 	t.Helper()
 	for _, line := range strings.Split(account, "\n") {
@@ -92,16 +62,6 @@ func reproduceCommand(t *testing.T, account string) string {
 	return ""
 }
 
-// killingCommand is the child process the account's reproduce line describes,
-// read out of the recording rather than out of the line.
-//
-// This is the structured half of the test and the reason it has two halves at
-// all. What has to be executed is a program and its arguments, which the
-// recording holds as data; what the account prints is one *line*, quoted for a
-// shell. Splitting that line on spaces to get the program back was the bug this
-// test was meant to catch and instead reproduced: a path with a space in it —
-// or a Windows path, which is quoted because of its separators — comes back as
-// two words with a stray quote on the front.
 func killingCommand(t *testing.T, root string, rep *report.Report, id string) (dir string, argv []string) {
 	t.Helper()
 	stream := filepath.Join(traceDirectoryOf(root, rep), trace.FileName)
@@ -110,8 +70,6 @@ func killingCommand(t *testing.T, root string, rep *report.Report, id string) (d
 		t.Fatalf("reading the recording the account read: %v", err)
 	}
 
-	// The last command of the mutant's last pass, which is the one whose output
-	// is the evidence and the one the account prints. See explain's lastExecSeq.
 	var seq int64
 	for _, event := range events {
 		if event.Type == trace.TypeMutantExec && event.Mutant.ID == id && len(event.Mutant.ExecSeqs) > 0 {
@@ -127,25 +85,6 @@ func killingCommand(t *testing.T, root string, rep *report.Report, id string) (d
 	return "", nil
 }
 
-// TestExplainAfterATracedRunOfKillableReproducesTheKillingCommand is the
-// command's central promise, checked by keeping it.
-//
-// It is two claims and they are checked separately, because they are about two
-// different things and conflating them is what made an earlier version of this
-// test wrong on Windows. The *command* is a program, a directory and an
-// argument vector, which the recording holds as data; the *line* is that
-// command rendered for a POSIX shell. Splitting the line on spaces to recover
-// the program was a third thing — a shell parser — written by accident, and it
-// failed on the first path that needed quoting.
-//
-// So: the command comes out of the recording and is run directly, on every
-// platform, and a non-zero exit is the whole assertion — a Go test binary exits
-// non-zero when a test fails, that failure is what "killed" means, and a zero
-// would mean the mutant the report calls killed is not caught by the command
-// the account says caught it. Then the printed line is checked against that
-// same command: on a POSIX machine by running the line itself through `sh`,
-// which is the only proof that a line meant to be pasted can be, and elsewhere
-// by decoding it with the reader that lives beside the quoter.
 func TestExplainAfterATracedRunOfKillableReproducesTheKillingCommand(t *testing.T) {
 	root, rep := explainAfterARun(t, "--keep-temp")
 	killed := mutantWith(t, rep, report.OutcomeKilled, false)
@@ -157,7 +96,6 @@ func TestExplainAfterATracedRunOfKillableReproducesTheKillingCommand(t *testing.
 	dir, argv := killingCommand(t, root, rep, killed.ID)
 	activation := "GO_MUTANTS_ACTIVE=" + killed.ID
 
-	// The command, run as a command.
 	if _, err := os.Stat(argv[0]); err != nil {
 		t.Fatalf("the kept run's test binary is not there: %v", err)
 	}
@@ -172,40 +110,24 @@ func TestExplainAfterATracedRunOfKillableReproducesTheKillingCommand(t *testing.
 		t.Errorf("the reproduction did not fail as a Go test:\n%s", output)
 	}
 
-	// The line, as a rendering of that command.
 	command := reproduceCommand(t, account)
 	want := "cd " + console.QuoteArgv([]string{dir}) + " && " + activation + " " + console.QuoteArgv(argv)
 	if command != want {
 		t.Fatalf("the printed reproduction is not the recorded command\n got: %s\nwant: %s", command, want)
 	}
 
-	// The line, as a line. It is decoded on every platform, because a decoder
-	// that had drifted from the quoter would otherwise only be caught on the
-	// one platform that cannot also run the line — which is the platform whose
-	// failures are hardest to reproduce. Where there is a shell to paste into,
-	// the paste itself is the stronger proof and is made as well.
 	checkPrintedReproduction(t, command, dir, activation, argv)
 	if runtime.GOOS != "windows" {
 		runPrintedReproduction(t, command)
 	}
 }
 
-// checkPrintedReproduction decodes the printed line and compares it with the
-// command it was rendered from.
-//
-// It is what a platform whose shell cannot run the line gets instead of running
-// it, and what every other platform gets as well. The decoder is
-// [console.UnquoteArgv], which lives beside the quoter and is held to it by a
-// round-trip test, so this is a comparison against the quoting rules rather
-// than against a second guess at them.
 func checkPrintedReproduction(t *testing.T, command, dir, activation string, argv []string) {
 	t.Helper()
 	fields, err := console.UnquoteArgv(command)
 	if err != nil {
 		t.Fatalf("the printed reproduction does not decode: %v\n%s", err, command)
 	}
-	// `cd <dir> && <activation> <argv...>`: the operator is a word of its own,
-	// because the line is joined with spaces.
 	if len(fields) < 4 || fields[0] != "cd" || fields[2] != "&&" || fields[3] != activation {
 		t.Fatalf("the printed reproduction is not `cd <dir> && %s <argv...>`: %q", activation, fields)
 	}
@@ -217,11 +139,6 @@ func checkPrintedReproduction(t *testing.T, command, dir, activation string, arg
 	}
 }
 
-// runPrintedReproduction runs the printed line through a POSIX shell, which is
-// the only proof that a line meant to be pasted can be.
-//
-// Nothing is parsed here: the shell does the quoting, the `cd`, the environment
-// assignment and the exec, exactly as the reader who selected the line would.
 func runPrintedReproduction(t *testing.T, command string) {
 	t.Helper()
 	shell, err := exec.LookPath("sh")
@@ -237,13 +154,6 @@ func runPrintedReproduction(t *testing.T, command string) {
 	}
 }
 
-// TestExplainASurvivorAfterARun is the other verdict, and the one somebody
-// actually types the command for.
-//
-// killable's survivor is its uncovered one — nothing in the module calls
-// Untested — so the account has to say which line no binary reaches rather than
-// list packages that cover it, and its reproduce block has to say that this run
-// started no process for it rather than blame a recording that is right there.
 func TestExplainASurvivorAfterARun(t *testing.T) {
 	_, rep := explainAfterARun(t)
 	survivor := mutantWith(t, rep, report.OutcomeSurvived, true)
@@ -259,15 +169,11 @@ func TestExplainASurvivorAfterARun(t *testing.T) {
 			t.Errorf("the survivor's account does not carry %q:\n%s", want, account)
 		}
 	}
-	// The recording really was found, which is what makes the two sentences
-	// above statements about the mutant rather than about a missing file.
 	if strings.Contains(account, "no trace recorded") {
 		t.Errorf("the traced run's recording was not found:\n%s", account)
 	}
 }
 
-// TestExplainAPositionAfterARun is the target that is a place rather than an
-// identity: the question asked from the source instead of from the report.
 func TestExplainAPositionAfterARun(t *testing.T) {
 	_, rep := explainAfterARun(t)
 	killed := mutantWith(t, rep, report.OutcomeKilled, false)
@@ -286,21 +192,11 @@ func TestExplainAPositionAfterARun(t *testing.T) {
 			t.Errorf("the position account does not carry %q:\n%s", want, account)
 		}
 	}
-	// The report was read out of the history rather than named, which is the
-	// default source and the one nobody types a flag for.
 	if !strings.Contains(account, "run "+rep.RunID) {
 		t.Errorf("the account does not say which run it read:\n%s", account)
 	}
 }
 
-// TestExplainAPositionHonoursTheRunsSelection is what makes the outcome column
-// mean what it says.
-//
-// The discovery pass this form runs is a *second* pass over the workspace, and
-// a pass configured differently from the run would catalogue mutants the run
-// never had — reported as "not in this run", which reads as a mutant the run
-// skipped rather than one the reader's own flags excluded. The report states
-// the selection the run resolved, so the pass is configured from it.
 func TestExplainAPositionHonoursTheRunsSelection(t *testing.T) {
 	inKillableFixture(t)
 	rep, _ := runReport(t, "--operator", "comparison")
@@ -328,12 +224,6 @@ func TestExplainAPositionHonoursTheRunsSelection(t *testing.T) {
 	}
 }
 
-// TestExplainAPositionWithNoStoredRun is the question asked before any run:
-// what would go-mutants make of this line, and why is there nothing here.
-//
-// It exits 0 with the outcome column saying there is no report, because that is
-// the true answer — and refusing it for want of a run would refuse the command
-// in the one situation somebody most wants it.
 func TestExplainAPositionWithNoStoredRun(t *testing.T) {
 	inKillableFixture(t)
 
@@ -348,8 +238,6 @@ func TestExplainAPositionWithNoStoredRun(t *testing.T) {
 	}
 }
 
-// explainDocumentOf drives `explain --json` in process, fails unless it exited
-// 0 and wrote a document its own schema accepts, and decodes it.
 func explainDocumentOf(t *testing.T, args ...string) map[string]any {
 	t.Helper()
 	stdout := explainOutput(t, append([]string{"--json"}, args...)...)
@@ -364,7 +252,6 @@ func explainDocumentOf(t *testing.T, args ...string) map[string]any {
 	return document
 }
 
-// reproduceOf lifts one field out of a document's reproduce block.
 func reproduceOf(t *testing.T, document map[string]any, field string) any {
 	t.Helper()
 	reproduce, ok := document["reproduce"].(map[string]any)
@@ -378,19 +265,6 @@ func reproduceOf(t *testing.T, document map[string]any, field string) any {
 	return value
 }
 
-// TestExplainJSONReproducesTheKillingCommand is the same promise as
-// [TestExplainAfterATracedRunOfKillableReproducesTheKillingCommand], made of
-// the document rather than of the prose, and it is the reason the flag exists.
-//
-// A pasteable line is composed here and written down in neither source, so
-// there is nothing to compare it with but the machine: the only check on a
-// claim like "paste this and see the mutant caught" is to paste it. The
-// document is run twice over, and the two halves are the two things it is for.
-// `reproduce.argv` and `reproduce.dir` are the command as *data*, which the
-// prose form makes a reader recover by parsing a quoted line — that is the
-// whole reason a program would want this document — so they are executed
-// directly. `reproduce.command` is the same command rendered for a shell, and
-// it is pasted into one.
 func TestExplainJSONReproducesTheKillingCommand(t *testing.T) {
 	root, rep := explainAfterARun(t, "--keep-temp")
 	killed := mutantWith(t, rep, report.OutcomeKilled, false)
@@ -403,7 +277,6 @@ func TestExplainJSONReproducesTheKillingCommand(t *testing.T) {
 	dir, argv := killingCommand(t, root, rep, killed.ID)
 	activation := "GO_MUTANTS_ACTIVE=" + killed.ID
 
-	// The command as data, which is what a program reads this document for.
 	if got := reproduceOf(t, document, "dir"); got != dir {
 		t.Errorf("reproduce.dir = %v, want the recorded directory %q", got, dir)
 	}
@@ -426,9 +299,6 @@ func TestExplainJSONReproducesTheKillingCommand(t *testing.T) {
 		t.Errorf("running reproduce.argv did not fail as a Go test:\n%s", output)
 	}
 
-	// The same command as a line, pasted. The prose and the document are two
-	// renderings of one gathered value, so this line and the one the account
-	// prints are the same string — which is asserted rather than assumed.
 	command, ok := reproduceOf(t, document, "command").(string)
 	if !ok || command == "" {
 		t.Fatalf("reproduce.command is not a line: %v", reproduceOf(t, document, "command"))
@@ -442,13 +312,6 @@ func TestExplainJSONReproducesTheKillingCommand(t *testing.T) {
 	}
 }
 
-// activationOf checks the document says which variable selects the mutant and
-// which value it takes.
-//
-// It is a field rather than something to read out of the line because that is
-// the difference this document is for: a program that wants to run the mutant
-// under a debugger sets one environment variable, and finding it by scanning a
-// quoted string for an `=` is the parsing this flag exists to spare it.
 func activationOf(t *testing.T, document map[string]any, id string) {
 	t.Helper()
 	activation, ok := reproduceOf(t, document, "activation").(map[string]any)
@@ -463,7 +326,6 @@ func activationOf(t *testing.T, document map[string]any, id string) {
 	}
 }
 
-// stringsOf decodes a document's list of strings.
 func stringsOf(t *testing.T, value any) []string {
 	t.Helper()
 	list, ok := value.([]any)
@@ -481,14 +343,6 @@ func stringsOf(t *testing.T, value any) []string {
 	return out
 }
 
-// TestExplainJSONOfAPositionAfterARun drives the other form through a real
-// discovery pass.
-//
-// The position account is the only half of this command that measures anything
-// — it catalogues the workspace afresh — so the unit tests reach it through the
-// gatherer and this reaches it through the command. What it has to hold is both
-// halves of the answer: the mutants at that line with what became of them, and
-// the sites discovery declined.
 func TestExplainJSONOfAPositionAfterARun(t *testing.T) {
 	_, rep := explainAfterARun(t)
 	killed := mutantWith(t, rep, report.OutcomeKilled, false)
@@ -522,8 +376,6 @@ func TestExplainJSONOfAPositionAfterARun(t *testing.T) {
 	if _, ok := document["skip_sites"].([]any); !ok {
 		t.Errorf("skip_sites = %v, want a list even when it is empty", document["skip_sites"])
 	}
-	// The mutant form's fields are absent from a position account, which is
-	// what makes `subject.kind` worth branching on.
 	for _, absent := range []string{"verdict", "executions", "timeline", "reproduce"} {
 		if _, held := document[absent]; held {
 			t.Errorf("a position account carries %q, which only a mutant's account has", absent)

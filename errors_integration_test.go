@@ -3,13 +3,6 @@
 
 //go:build integration
 
-// The typed errors, proved by provoking each of them against a real toolchain.
-//
-// A verification failure needs a suite that is red on the instrumented tree, a
-// build failure needs a mutant the compiler refuses: both are facts about what
-// a `go` command did, so this file was named for the integration tier from the
-// start and now carries the constraint that puts it there.
-
 package gomutants_test
 
 import (
@@ -23,15 +16,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// TestVerificationFailureIsTyped is the distinction the whole error surface
-// exists for: a verification that exits non-zero is the *user's* suite failing
-// on the instrumented tree, not go-mutants failing. A consumer that could only
-// read the message had to decide between "your tests are red" and "the engine
-// is broken" by matching text.
 func TestVerificationFailureIsTyped(t *testing.T) {
-	// Parallel: this test prepares a workspace of its own over a private copy
-	// of the fixture, and shares nothing with the sessions the rest of the
-	// package prepares once.
 	t.Parallel()
 
 	root := testkit.Copy(t, "failing-baseline")
@@ -59,11 +44,6 @@ func TestVerificationFailureIsTyped(t *testing.T) {
 	if len(verification.Output) == 0 {
 		t.Error("Output is empty, so the failure cannot be shown to the user who caused it")
 	}
-	// And the *whole* of the suite's output, said to be so rather than left to
-	// be inferred. A fixture this small cannot fill the default megabyte, so a
-	// Truncated here would mean the flag is set by something other than the cap
-	// — and a user shown a capture that quietly lost its first half is being
-	// shown the wrong failure.
 	if verification.Truncated {
 		t.Errorf("Truncated = true although the fixture cannot fill the default budget: %+v", verification)
 	}
@@ -85,18 +65,7 @@ func TestVerificationFailureIsTyped(t *testing.T) {
 	}
 }
 
-// TestBuildFailureIsTyped is the other side of that line: a package whose test
-// binary will not compile is infrastructure, and the code identifying it is the
-// engine's own.
-//
-// The broken package sits outside the mutated set on purpose. Discovery
-// type-checks the packages it is asked to mutate, so a file that does not parse
-// inside them is refused there, before anything is built — and what this test is
-// about is the failure that reaches the *build*, which is the one carrying an
-// argv, a package and a GOM75xx code.
 func TestBuildFailureIsTyped(t *testing.T) {
-	// Parallel for the reason [TestVerificationFailureIsTyped] is: a private
-	// copy, a workspace of its own, nothing shared.
 	t.Parallel()
 
 	root := testkit.Copy(t, "simple")
@@ -144,9 +113,6 @@ func TestBuildFailureIsTyped(t *testing.T) {
 	}
 }
 
-// TestPackageNotPreparedIsTyped pins the refusal a consumer meets when it asks
-// for a package this session never built a binary for — a typo, or a package
-// list that has moved on since the session was prepared.
 func TestPackageNotPreparedIsTyped(t *testing.T) {
 	prepared := probeable(t)
 	width := mutantkit.APIByRule(t, prepared.catalog, widthRule)
@@ -168,9 +134,6 @@ func TestPackageNotPreparedIsTyped(t *testing.T) {
 	}
 }
 
-// TestReservedFlagsAndVariablesAreTyped covers the three refusals a caller
-// composing a target request can walk into. Each one names what it refused, so
-// a consumer can say "drop this flag" rather than "the engine said no".
 func TestReservedFlagsAndVariablesAreTyped(t *testing.T) {
 	prepared := probeable(t)
 	width := mutantkit.APIByRule(t, prepared.catalog, widthRule)

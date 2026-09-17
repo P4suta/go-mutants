@@ -12,21 +12,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// Which sites a probe tree can stand in for, and which form it uses.
-//
-// A probe hint licenses *skipping an execution*: the consumer reads "this
-// mutant's site never differed, so no test that ran could have killed it" and
-// does not run it. A hint attached where the probe's execution is not the
-// original's is therefore a mutant reported as unkillable that a test really
-// could have killed -- and there is no diagnostic for that, which is why every
-// condition is asked before the hint goes on rather than after.
-//
-// The forms are asked in order and the order is the whole design: Form B needs
-// no type written out and no temporary, so a bool-valued site takes it; the
-// value form is the same question one step further out; and the reach form
-// records only that a statement ran, which is all a deleted statement can say.
-
-// probeOf runs the form staircase over one anchor and returns the hint.
 func probeOf(t *testing.T, src string, find func(ast.Node) bool) (*guardResolver, Guard, bool) {
 	t.Helper()
 
@@ -47,8 +32,6 @@ func probeOf(t *testing.T, src string, find func(ast.Node) bool) (*guardResolver
 	return g, guard, ok
 }
 
-// TestWhichProbeFormASiteGets is the staircase, one row per form and one per
-// refusal.
 func TestWhichProbeFormASiteGets(t *testing.T) {
 	t.Parallel()
 
@@ -59,41 +42,29 @@ func TestWhichProbeFormASiteGets(t *testing.T) {
 		want ProbeForm
 	}{
 		{
-			// A comparison is exactly `bool`, so the cheapest form applies: the
-			// original and the mutant are both evaluated where they stand and
-			// the call records whether they ever disagreed.
 			name: "a boolean site",
 			src:  "package pkg\n\nfunc probe(a, b int) {\n\tif a < b {\n\t}\n}\n",
 			find: binaryOp(token.LSS),
 			want: ProbeFormBool,
 		},
 		{
-			// Not a bool, so the value form: a temporary of the site's own type
-			// holds the original and the mutant is compared against it.
 			name: "an arithmetic site",
 			src:  "package pkg\n\nfunc probe(a, b int) {\n\tn := a * b\n\t_ = n\n}\n",
 			find: binaryOp(token.MUL),
 			want: ProbeFormValue,
 		},
 		{
-			// A call has effects the mutant would not have, so a second
-			// evaluation of it is not the original's execution.
 			name: "a site whose operand calls",
 			src: "package pkg\n\nfunc f() int { return 0 }\n\n" +
 				"func probe(a int) {\n\tn := a * f()\n\t_ = n\n}\n",
 			find: binaryOp(token.MUL),
 		},
 		{
-			// A float comparison is not an equality: NaN is not equal to
-			// itself, so "did it differ" has no answer for one.
 			name: "a floating site",
 			src:  "package pkg\n\nfunc probe(a, b float64) {\n\tn := a * b\n\t_ = n\n}\n",
 			find: binaryOp(token.MUL),
 		},
 		{
-			// Comparing two interface values panics when the dynamic types are
-			// not comparable, and a probe that panicked would take the probe
-			// run down rather than record a difference.
 			name: "a site of interface type",
 			src: "package pkg\n\nfunc pick(a, b any) any { return a }\n\n" +
 				"func probe(a, b any) {\n\tv := pick(a, b)\n\t_ = v\n}\n",
@@ -132,16 +103,6 @@ func TestWhichProbeFormASiteGets(t *testing.T) {
 	}
 }
 
-// TestOnlyAStatementFormCarriesAReachabilityHint pins
-// [guardResolver.reachProbe], the weakest form and the one the
-// statement-deletion family can have no other of.
-//
-// A deleted statement's mutant differs by the *absence* of an effect, which
-// nothing a probe tree evaluates can see; what such a tree can record is that
-// the statement ran at all. The shape is a call in front of the statement, so
-// the condition is a Form S guard and nothing else -- an expression site has no
-// statement to stand in front of, and Form F has already moved the statement
-// into a closure.
 func TestOnlyAStatementFormCarriesAReachabilityHint(t *testing.T) {
 	t.Parallel()
 
@@ -168,7 +129,6 @@ func TestOnlyAStatementFormCarriesAReachabilityHint(t *testing.T) {
 	}
 }
 
-// mustSpan builds a span for a test, or fails.
 func mustSpan(t *testing.T, start, end uint32) mutation.Span {
 	t.Helper()
 
@@ -179,15 +139,6 @@ func mustSpan(t *testing.T, start, end uint32) mutation.Span {
 	return span
 }
 
-// TestAValueProbeWalksOutwardToSomethingComparable is
-// [guardResolver.valueProbe]'s search, asked where the anchor itself cannot
-// carry one.
-//
-// The walk is the guard's own, and it continues past an expression it cannot
-// use rather than stopping there: the site is the nearest *usable* ancestor,
-// not the nearest one. What ends it is a parent that is not an expression,
-// because the shape it writes is a temporary beside the statement and there is
-// no statement above a statement to put one beside.
 func TestAValueProbeWalksOutwardToSomethingComparable(t *testing.T) {
 	t.Parallel()
 
@@ -212,9 +163,6 @@ func TestAValueProbeWalksOutwardToSomethingComparable(t *testing.T) {
 		t.Errorf("the hint carries the types %v, want [int]", hint.Types)
 	}
 
-	// And a package-level initialiser, whose walk ends at a declaration rather
-	// than at a statement: the ordering rule the form rests on is about the
-	// operands of one statement, and there is none.
 	outside := guardOver(t, "package pkg\n\nvar total = 2 * 2\n")
 	for node := range outside.parent {
 		binary, isBinary := node.(*ast.BinaryExpr)
@@ -227,15 +175,6 @@ func TestAValueProbeWalksOutwardToSomethingComparable(t *testing.T) {
 	}
 }
 
-// TestABooleanProbeIsRefusedWhereASecondEvaluationWouldDiffer is Form B's own
-// conditions, which are stricter than the value form's and stricter for a
-// reason.
-//
-// The bool form evaluates *both* readings where they stand, so the second
-// evaluation is of the whole site rather than of one operand -- and the
-// operands a connective evaluates are not the same on both readings. `x != nil
-// && x.ok` evaluates `x.ok` only when the first half held, and `||` in its
-// place evaluates it when the first half did not.
 func TestABooleanProbeIsRefusedWhereASecondEvaluationWouldDiffer(t *testing.T) {
 	t.Parallel()
 
@@ -292,15 +231,6 @@ func TestABooleanProbeIsRefusedWhereASecondEvaluationWouldDiffer(t *testing.T) {
 	}
 }
 
-// TestWhichReturnsAProbeCanStandInFor is [guardResolver.probeSite], which is
-// the one hint computed for a whole statement rather than for one site.
-//
-// The return form is the strongest evidence there is: it compares the value the
-// function would really have returned, after the conversion the `return` itself
-// performs. What it costs is that the *whole statement* has to be safe --
-// the rewrite declares a temporary per result and evaluates every operand once
-// in source order, which is not the order the compiler uses, so one operand
-// with an effect makes every reading of the statement a different execution.
 func TestWhichReturnsAProbeCanStandInFor(t *testing.T) {
 	t.Parallel()
 
@@ -337,17 +267,11 @@ func TestWhichReturnsAProbeCanStandInFor(t *testing.T) {
 			src:  "package pkg\n\nfunc probe() (n int) {\n\treturn\n}\n",
 		},
 		{
-			// A single call returning the whole tuple. The statement has one
-			// result expression and the signature has two, so there is no
-			// operand-per-result rewrite to make.
 			name: "a return of a call's whole tuple",
 			src: "package pkg\n\nfunc pair() (int, int) { return 0, 0 }\n\n" +
 				"func probe() (int, int) {\n\treturn pair()\n}\n",
 		},
 		{
-			// A type parameter has no source form outside the generic
-			// declaration it belongs to, and the rewrite declares a temporary
-			// of the result's type.
 			name: "a result of a type parameter's type",
 			src:  "package pkg\n\nfunc probe[T any](v T) T {\n\treturn v\n}\n",
 		},
@@ -361,9 +285,6 @@ func TestWhichReturnsAProbeCanStandInFor(t *testing.T) {
 			t.Parallel()
 
 			g := guardOver(t, c.src)
-			// The last return in source order, which is `probe`'s: a fixture
-			// that needs a helper declares it first, and map iteration is not
-			// an order.
 			var stmt *ast.ReturnStmt
 			for node := range g.parent {
 				ret, isReturn := node.(*ast.ReturnStmt)
@@ -396,9 +317,6 @@ func TestWhichReturnsAProbeCanStandInFor(t *testing.T) {
 		})
 	}
 
-	// And the two shapes the statement is refused for before anything is
-	// spelled, which the caller cannot produce and which are the fail-closed
-	// answer to a caller that could.
 	g := guardOver(t, "package pkg\n\nfunc probe(n int) int {\n\treturn n\n}\n")
 	if got := g.probeSite(nil, resultsOfProbe(t, g)); got != nil {
 		t.Errorf("probeSite = %+v for no statement, want none", got)
@@ -415,7 +333,6 @@ func TestWhichReturnsAProbeCanStandInFor(t *testing.T) {
 	}
 }
 
-// resultsOfProbe is the declared result tuple of the fixture's `probe`.
 func resultsOfProbe(t *testing.T, g *guardResolver) *types.Tuple {
 	t.Helper()
 
@@ -438,13 +355,6 @@ func resultsOfProbe(t *testing.T, g *guardResolver) *types.Tuple {
 	return nil
 }
 
-// TestWhichResultOfAProbedReturnCarriesTheHint is
-// [guardResolver.probesResult], the per-result half of the same question.
-//
-// Both conditions leave the *other* results of the statement probed, which is
-// the whole reason they are asked per result: the rewrite declares a temporary
-// per result and writes an `if` per mutant, so dropping one mutant's `if` is a
-// rewrite it already knows how to render.
 func TestWhichResultOfAProbedReturnCarriesTheHint(t *testing.T) {
 	t.Parallel()
 
@@ -459,8 +369,6 @@ func TestWhichResultOfAProbedReturnCarriesTheHint(t *testing.T) {
 			want: true,
 		},
 		{
-			// `-0.0 != 0` is false while the two values are distinguishable, so
-			// "did it differ" has an answer the comparison cannot give.
 			name: "a float",
 			src:  "package pkg\n\nfunc probe(f float64) float64 {\n\treturn f\n}\n",
 		},
@@ -469,8 +377,6 @@ func TestWhichResultOfAProbedReturnCarriesTheHint(t *testing.T) {
 			src:  "package pkg\n\nfunc probe(c complex128) complex128 {\n\treturn c\n}\n",
 		},
 		{
-			// A panic is a divergence between the original and the mutant that
-			// the comparison is never reached to see.
 			name: "a dereference",
 			src:  "package pkg\n\nfunc probe(p *int) int {\n\treturn *p\n}\n",
 		},

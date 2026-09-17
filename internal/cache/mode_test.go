@@ -11,14 +11,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/config"
 )
 
-// TestResolveIsTheWholeModeMatrix states every combination of configured mode
-// and test command, and what each one does.
-//
-// The row that matters is `auto` with a command go-mutants did not write. It
-// turns the cache off entirely rather than degrading to read-only, because a
-// read-only cache over a command that may consult a clock or a network would
-// still be adopting outcomes it cannot justify — it would merely stop
-// accumulating new ones.
 func TestResolveIsTheWholeModeMatrix(t *testing.T) {
 	t.Parallel()
 
@@ -46,8 +38,6 @@ func TestResolveIsTheWholeModeMatrix(t *testing.T) {
 			want: cache.Decision{Read: true, Write: true},
 		},
 		{
-			// The user's promise that their command is reproducible, which is
-			// the whole point of having `on` as well as `auto`.
 			name: "on with a custom command, because the user asked",
 			mode: config.CacheOn, command: custom,
 			want: cache.Decision{Read: true, Write: true},
@@ -87,10 +77,6 @@ func TestResolveIsTheWholeModeMatrix(t *testing.T) {
 	}
 }
 
-// TestTheAutoReasonSaysWhatToDoAboutIt checks the half of the warning that is
-// not padding: a user told only "the cache is off" cannot act, and the remedy —
-// `cache.mode = "on"` for a command they know is reproducible — is one line
-// away.
 func TestTheAutoReasonSaysWhatToDoAboutIt(t *testing.T) {
 	t.Parallel()
 
@@ -105,10 +91,6 @@ func TestTheAutoReasonSaysWhatToDoAboutIt(t *testing.T) {
 	}
 }
 
-// TestReadAndWriteMoveTogether is the invariant the two fields exist to make
-// checkable: nothing this package produces reads without writing or writes
-// without reading, because either would be a cache that never refreshes or one
-// that costs everything and saves nothing.
 func TestReadAndWriteMoveTogether(t *testing.T) {
 	t.Parallel()
 

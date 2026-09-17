@@ -12,19 +12,10 @@ import (
 )
 
 const (
-	// architectureDoc is the page this file holds to the tree.
-	architectureDoc = "docs/architecture.md"
-	// packageLayoutHeading opens the table that names every package.
+	architectureDoc      = "docs/architecture.md"
 	packageLayoutHeading = "## Package layout"
 )
 
-// architectureStatuses is the closed vocabulary the table's third column uses.
-//
-// Closing it is what stops a half-truth being written into a status column. The
-// column has said "`run`, `list`" for a package with eight commands and
-// "2 families" for one that implements eleven, and both read as facts rather
-// than as the stale notes they were. A word that is not one of these four is a
-// sentence somebody is about to have to re-check by hand.
 var architectureStatuses = []string{
 	"implemented",
 	"test-only support",
@@ -32,18 +23,8 @@ var architectureStatuses = []string{
 	"vendored",
 }
 
-// archSkipDirectories are the directories the package scan does not enter.
-//
-// It is a local list rather than importgate_test.go's, which excludes
-// `vendor-assets` -- a package that is a row of this table and has to stay one.
 var archSkipDirectories = []string{".git", "fixtures", "testdata"}
 
-// TestArchitectureDocNamesEveryPackage keeps the layout table equal to the
-// tree, in both directions.
-//
-// A package the table does not name is a package a reader of the architecture
-// does not know exists; a row naming a directory that holds no Go is a row
-// describing something that has moved or gone.
 func TestArchitectureDocNamesEveryPackage(t *testing.T) {
 	t.Parallel()
 
@@ -74,8 +55,6 @@ func TestArchitectureDocNamesEveryPackage(t *testing.T) {
 	}
 }
 
-// TestEveryArchitecturePackageStatusIsOneOfTheFourWords closes the status
-// column's vocabulary, in both directions.
 func TestEveryArchitecturePackageStatusIsOneOfTheFourWords(t *testing.T) {
 	t.Parallel()
 
@@ -104,12 +83,6 @@ func TestEveryArchitecturePackageStatusIsOneOfTheFourWords(t *testing.T) {
 	}
 }
 
-// architectureRows is the layout table, as `{path, responsibility, status}`,
-// with the path taken from the first backticked token of the first cell.
-//
-// The first token rather than the whole cell, because the module root's row
-// names the package as well as the path: “ `.` -- the module root
-// (`gomutants`) “.
 func architectureRows(t *testing.T, root string) [][]string {
 	t.Helper()
 
@@ -142,7 +115,6 @@ func architectureRows(t *testing.T, root string) [][]string {
 	return rows
 }
 
-// firstBackticked is the first `quoted` token of a cell.
 func firstBackticked(cell string) (string, bool) {
 	open := strings.Index(cell, "`")
 	if open < 0 {
@@ -156,8 +128,6 @@ func firstBackticked(cell string) (string, bool) {
 	return rest[:end], true
 }
 
-// goPackages is every directory of this module that holds Go source a build
-// compiles, module-relative and slash-separated, with the root as ".".
 func goPackages(t *testing.T, root string) []string {
 	t.Helper()
 

@@ -10,15 +10,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// TestTheJobLimitFlagsAreTheSystemsOwn is the guard on the one thing
-// [jobLimits] buys its portability with: a second spelling of a constant.
-//
-// The flags live in joblimits.go so that the rule pairing each of them with the
-// value it names can be checked by a `go test` on any machine. That is worth
-// having and it is worth exactly nothing if the numbers drift, because the
-// failure would be a job configured with a flag naming a *different* limit from
-// the value beside it — refused by the kernel at best, and silently unbounded
-// at worst.
 func TestTheJobLimitFlagsAreTheSystemsOwn(t *testing.T) {
 	t.Parallel()
 
@@ -30,27 +21,6 @@ func TestTheJobLimitFlagsAreTheSystemsOwn(t *testing.T) {
 	}
 }
 
-// TestConcurrentSupervisorsEachGetTheirOwnLimits is the regression test for the
-// flake that produced this file.
-//
-// windows-latest reported `GOM7201: could not set kill-on-close on the Windows
-// job object that owns the child process tree: The parameter is incorrect.`
-// once, on 2026-09-06, under the eight concurrent Workspace.Exec calls of the
-// root package's TestConcurrentExecutionsUnderKeepTempRecordAndPreserveEveryScratch,
-// and passed on every other Windows run. The structure handed to
-// SetInformationJobObject was a stack local whose address had been converted to
-// a uintptr one Go frame too early; a goroutine whose stack grew inside the
-// x/sys wrapper had its frames copied and its old stack span returned to the
-// pool, and under concurrency another goroutine was there to write over it
-// before the kernel read it. See joblimits_windows.go.
-//
-// Which is why this test is concurrent and why it grows a stack first: those
-// are the two conditions, and neither of them is arranged by a job object test
-// that creates one supervisor at a time. It cannot fail deterministically —
-// nothing that depends on a stack copy landing inside one call can — so it
-// asserts on what the job actually carries rather than only on the error, and
-// the gate that holds the rule for good is
-// TestEveryPointerHandedToASyscallIsConvertedInsideTheCall.
 func TestConcurrentSupervisorsEachGetTheirOwnLimits(t *testing.T) {
 	t.Parallel()
 
@@ -62,12 +32,7 @@ func TestConcurrentSupervisorsEachGetTheirOwnLimits(t *testing.T) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			// A distinct bound per goroutine, so that a job configured from
-			// another goroutine's structure is a wrong number rather than a
-			// coincidence.
 			bound := int64(limit + i*(1<<20))
-			// A stack deep enough to have been grown at least once, so that the
-			// call below is made on a frame the runtime has already moved.
 			deepen(24, func() {
 				sup, err := newSupervisor(bound)
 				if err != nil {
@@ -105,12 +70,6 @@ func TestConcurrentSupervisorsEachGetTheirOwnLimits(t *testing.T) {
 	group.Wait()
 }
 
-// deepen calls body from depth frames down, with enough of a local in each that
-// the goroutine's stack has to grow to hold them.
-//
-// The growth is the point rather than the depth: a stack that has been copied
-// is a stack whose old span is back in the pool, which is the condition the
-// defect this file's fix is about needed.
 func deepen(depth int, body func()) {
 	if depth <= 0 {
 		body()

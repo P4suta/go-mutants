@@ -16,21 +16,12 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// A failure is one refusal the instrumenter can produce, together with the code
-// it is supposed to carry.
 type failure struct {
 	name string
 	code instrument.Code
 	err  error
 }
 
-// TestInstrumentRefusesWhatItCannotInstrument checks that every way this
-// package can fail fails with the code it documents.
-//
-// The codes are the stable handle a user quotes in a bug report and the handle
-// `doctor` prints, so a refusal carrying the wrong one is worse than no code at
-// all: it sends whoever is reading the diagnostic to the wrong half of the
-// pipeline.
 func TestInstrumentRefusesWhatItCannotInstrument(t *testing.T) {
 	t.Parallel()
 
@@ -45,19 +36,6 @@ func TestInstrumentRefusesWhatItCannotInstrument(t *testing.T) {
 	}
 }
 
-// instrumentationFailures produces one error for every diagnostic code this
-// package can report, so that both the code table and this test are checked
-// against the same list.
-//
-// The refusals divide in two. The hint-shaped ones — a mutant with no hint, a
-// hint naming bytes that are not the node its form needs, a hint naming a
-// statement no form can rewrite — are reachable from a catalogue and a hint
-// index that disagree with the file, which is what a stale run or a drifting
-// tree looks like from here. The last three are internal invariants no input
-// can reach: a rewrite site comes from a syntax tree, so two of them cannot
-// partially overlap, and a file that parsed has a package clause. Those are
-// produced through the test-only hooks for the reason the flattener's
-// postconditions are — a check nothing has ever run is not a check.
 func instrumentationFailures(t *testing.T) []failure {
 	t.Helper()
 
@@ -104,10 +82,7 @@ func instrumentationFailures(t *testing.T) []failure {
 			instrumentHinted(t, lessSource, lessCandidate(t), nil)),
 		fail("a hint whose site is no expression", instrument.CodeSiteNotFound,
 			instrumentHinted(t, lessSource, lessCandidate(t), &discover.Guard{
-				Form: discover.GuardFormC,
-				// The whole `return`: it holds the edit and is a statement
-				// rather than an expression, which is what a hint that has
-				// drifted from its file looks like from here.
+				Form:     discover.GuardFormC,
 				SiteSpan: spanOf(t, lessSource, "return a < b"),
 			})),
 		fail("a hint naming a statement Form S may not wrap", instrument.CodeUnsupportedGuard,
@@ -132,27 +107,17 @@ func instrumentationFailures(t *testing.T) []failure {
 				decl.Specs = append(decl.Specs, decl.Specs[0])
 			})),
 	}
-	// A runtime directory whose parent is a regular file, so that the write
-	// failure this list has to produce does not depend on whether the platform
-	// enforces file modes. A read-only source file is deliberately not the case
-	// used here: instrumenting one is expected to succeed, and
-	// [TestInstrumentReplacesAReadOnlyFile] is where that is asserted.
 	out = append(out, fail("the runtime package cannot be written", instrument.CodeWriteFailed,
 		instrument.WriteRuntime(notADirectory, "gomutants_rt", empty)))
 	return out
 }
 
-// The sources the refusals above are built from. Each is the smallest file that
-// puts the bytes a bad candidate or a bad hint points at somewhere real.
 const (
 	lessSource   = "package sample\n\nfunc Less(a, b int) bool {\n\treturn a < b\n}\n"
 	branchSource = "package sample\n\nfunc F(a, b int) int {\n\tif a < b {\n\t\ta += b\n\t}\n\treturn a\n}\n"
 	ifStatement  = "if a < b {\n\t\ta += b\n\t}"
 )
 
-// lessCandidate is the comparison in [lessSource], and branchCandidate the one
-// in [branchSource]; assignCandidate is the compound assignment inside the
-// branch that one guards.
 func lessCandidate(t *testing.T) mutation.Candidate {
 	t.Helper()
 	return mutation.Candidate{
@@ -183,10 +148,6 @@ func assignCandidate(t *testing.T) mutation.Candidate {
 	}
 }
 
-// instrumentCandidate instruments a snapshot holding src and one catalogued
-// candidate, with the guard hint discovery would have produced for it. It is
-// how a catalogue that does not describe the tree it is pointed at is
-// simulated. Path and SourceDigest default to the snapshot's one file.
 func instrumentCandidate(t *testing.T, src string, candidate mutation.Candidate) error {
 	t.Helper()
 	return instrumentWith(t, src, candidate, func(catalog *mutation.Catalog) instrument.Hints {
@@ -194,9 +155,6 @@ func instrumentCandidate(t *testing.T, src string, candidate mutation.Candidate)
 	})
 }
 
-// instrumentHinted instruments the same one-candidate snapshot with a hint the
-// caller states, which is how a hint that does not describe the tree — or no
-// hint at all, for a nil guard — is simulated.
 func instrumentHinted(t *testing.T, src string, candidate mutation.Candidate, guard *discover.Guard) error {
 	t.Helper()
 	return instrumentWith(t, src, candidate, func(catalog *mutation.Catalog) instrument.Hints {
@@ -210,7 +168,6 @@ func instrumentHinted(t *testing.T, src string, candidate mutation.Candidate, gu
 	})
 }
 
-// instrumentWith is the shared body of the two above.
 func instrumentWith(
 	t *testing.T,
 	src string,
@@ -237,9 +194,6 @@ func instrumentWith(
 	return err
 }
 
-// instrumentCorrupted catalogues one file and then replaces its bytes, which is
-// what a tree drifting after discovery looks like from here. The hints are
-// derived from the bytes that were catalogued, as a run's would have been.
 func instrumentCorrupted(t *testing.T, src, replacement string) error {
 	t.Helper()
 
@@ -259,8 +213,6 @@ func instrumentCorrupted(t *testing.T, src, replacement string) error {
 	return err
 }
 
-// injectInto runs the import injection over a syntax tree the caller has put
-// into a shape no parse produces.
 func injectInto(t *testing.T, src string, mangle func(*ast.File)) error {
 	t.Helper()
 
@@ -273,7 +225,6 @@ func injectInto(t *testing.T, src string, mangle func(*ast.File)) error {
 	return err
 }
 
-// spanOf returns the span of the first occurrence of text in src.
 func spanOf(t *testing.T, src, text string) mutation.Span {
 	t.Helper()
 	i := strings.Index(src, text)
@@ -283,23 +234,12 @@ func spanOf(t *testing.T, src, text string) mutation.Span {
 	return mutation.Span{StartByte: uint32(i), EndByte: uint32(i + len(text))}
 }
 
-// TestAliasAvoidsEveryNameInScope pins the alias rule directly, next to the
-// golden fixtures that pin its effect on real source.
-//
-// The two scopes fail differently, which is why both are here. A name the file
-// itself binds would shadow the import, or be shadowed by it, and the compiler
-// would complain about the generated runtime rather than about the clash. A
-// name the package block binds — in this file or any other file of the package
-// — is not shadowing at all: Go rejects the second declaration, and the file
-// that provoked it is not necessarily the file that names it.
 func TestAliasAvoidsEveryNameInScope(t *testing.T) {
 	t.Parallel()
 
 	for _, c := range []struct {
-		name string
-		src  string
-		// reserved is what the package block binds, which the file being
-		// instrumented has no way of seeing for itself.
+		name     string
+		src      string
 		reserved []string
 		want     string
 	}{{
@@ -352,15 +292,6 @@ func TestAliasAvoidsEveryNameInScope(t *testing.T) {
 	}
 }
 
-// TestPackageBlockNamesSpanTheWholeDirectory pins what the alias has to dodge:
-// the package block, which is one scope spread over every file of a package.
-//
-// The cases that matter here are the two boundaries. A same-package _test.go
-// file is compiled into the test binary beside the instrumented one, so its
-// declarations are in scope and its names count; an external foo_test package
-// shares the directory and nothing else, so its names do not. Getting the
-// second wrong costs a needlessly bumped alias, getting the first wrong costs a
-// test binary that does not build.
 func TestPackageBlockNamesSpanTheWholeDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -381,24 +312,12 @@ func TestPackageBlockNamesSpanTheWholeDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PackageNames: %v", err)
 	}
-	// "method" is absent because a method belongs to its receiver's type rather
-	// than to the package block, and "local" because a function body is a scope
-	// of its own that an import alias cannot collide with from another file.
 	want := []string{"Declared", "F", "K", "Sibling", "T", "inTest"}
 	if !equalStrings(got, want) {
 		t.Errorf("PackageNames = %v, want %v", got, want)
 	}
 }
 
-// TestPackageBlockNamesFallBackToTokens covers the sibling this package cannot
-// parse.
-//
-// Refusing the run over a file nobody asked to instrument would be the wrong
-// trade — source written against a newer Go syntax than the toolchain that
-// built go-mutants parses here and compiles there — so every identifier token
-// is taken instead. That is a superset of the package block: the alias comes
-// out more cautious than it had to be, which is the direction that cannot
-// produce a tree that fails to compile.
 func TestPackageBlockNamesFallBackToTokens(t *testing.T) {
 	t.Parallel()
 
@@ -416,10 +335,6 @@ func TestPackageBlockNamesFallBackToTokens(t *testing.T) {
 	}
 }
 
-// TestPackageBlockNamesReportsAnUnreadableDirectory keeps the scan's one I/O
-// failure attributable. A sibling that cannot be read is a refusal rather than
-// a shrug: instrumenting anyway would pick an alias that may not compile, and
-// the build failure that followed would name a file this pass never touched.
 func TestPackageBlockNamesReportsAnUnreadableDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -433,8 +348,6 @@ func TestPackageBlockNamesReportsAnUnreadableDirectory(t *testing.T) {
 	}
 }
 
-// TestImportInjectionForms pins each of the three shapes an import section can
-// take, as an insertion that holds no line break.
 func TestImportInjectionForms(t *testing.T) {
 	t.Parallel()
 
@@ -506,14 +419,6 @@ func TestImportInjectionForms(t *testing.T) {
 	}
 }
 
-// TestCompletedImportsAreSplicedBesideTheRuntime is the rewriter's half of
-// import completion.
-//
-// Discovery decides that a guard's spelling needs a package and what to call
-// it; this is where the file gains it. Every shape gets the same treatment the
-// runtime import gets -- one insertion holding no line break -- and the one
-// shape that changes is the file with no imports at all, which needs
-// parentheses once there is more than one spec to write.
 func TestCompletedImportsAreSplicedBesideTheRuntime(t *testing.T) {
 	t.Parallel()
 
@@ -573,14 +478,6 @@ func TestCompletedImportsAreSplicedBesideTheRuntime(t *testing.T) {
 	}
 }
 
-// TestACompletionThatCollidesWithTheRuntimeAliasIsRefused is a fail-closed
-// check on two phases that choose names independently.
-//
-// Discovery picks a completion's name against the file's identifiers and the
-// package block; internal/instrument picks the runtime alias against the same
-// two scopes. Neither can see the other's answer, so a collision means the two
-// have come to disagree -- and the last place to notice is before writing a
-// file that declares one name twice.
 func TestACompletionThatCollidesWithTheRuntimeAliasIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -616,9 +513,6 @@ func TestACompletionThatCollidesWithTheRuntimeAliasIsRefused(t *testing.T) {
 	}
 }
 
-// TestImportGoesOnlyToInstrumentedFiles keeps the rewrite honest about which
-// files it touched: a file whose mutants all live elsewhere must not gain an
-// import it does not use, because an unused import does not compile.
 func TestImportGoesOnlyToInstrumentedFiles(t *testing.T) {
 	t.Parallel()
 

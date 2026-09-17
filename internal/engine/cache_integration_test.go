@@ -3,19 +3,6 @@
 
 //go:build integration
 
-// The toolchain-backed half of the outcome cache tests. Everything interesting
-// about a cache is whether the second run really finds what the first really
-// wrote, through the whole pipeline: a real snapshot with a real digest, a real
-// catalogue, real mutant processes, and the report the run publishes.
-//
-// The assertions are on the counts and the outcomes, never on the wall clock. A
-// cache is faster, but "faster" on a shared CI runner is a flake; "the second
-// run executed nothing and reached the same verdicts" is the property, and it
-// is checkable.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/engine/...
 package engine
 
 import (
@@ -30,15 +17,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// cacheOptions is [optionsAt] with the cache on, against a workspace and a
-// cache directory the caller owns.
-//
-// Both travel in rather than being made here, and both are the subject. Every
-// test in this file runs the engine two or three times over *one* tree: a
-// second copy would be a second workspace with a digest of its own, which is
-// exactly what the cache keys on, and a per-run cache root — which is what
-// [optionsAt] gives, and the right answer everywhere else — would make every
-// run a cold one.
 func cacheOptions(t *testing.T, root, cacheRoot string) Options {
 	t.Helper()
 	opts := optionsAt(t, root)
@@ -48,8 +26,6 @@ func cacheOptions(t *testing.T, root, cacheRoot string) Options {
 	return opts
 }
 
-// runCached runs the engine and returns the report, failing the test if the run
-// did not complete.
 func runCached(t *testing.T, opts Options) *report.Report {
 	t.Helper()
 	outcome, _, err := collect(t, t.Context(), opts)
@@ -65,9 +41,6 @@ func runCached(t *testing.T, opts Options) *report.Report {
 	return outcome.Report
 }
 
-// reusableRows is the set of mutants a run measured and whose outcomes a later
-// run may adopt: the ones the cache stores, and not the ones coverage settled
-// without executing.
 func reusableRows(r *report.Report) map[string]report.Outcome {
 	out := make(map[string]report.Outcome, len(r.Mutants))
 	for _, m := range r.Mutants {
@@ -86,7 +59,6 @@ func reusableRows(r *report.Report) map[string]report.Outcome {
 	return out
 }
 
-// cachedRows is the set of mutants a run adopted rather than measured.
 func cachedRows(r *report.Report) map[string]report.Outcome {
 	out := make(map[string]report.Outcome, len(r.Mutants))
 	for _, m := range r.Mutants {
@@ -97,13 +69,6 @@ func cachedRows(r *report.Report) map[string]report.Outcome {
 	return out
 }
 
-// TestTheSecondRunOfAnUnchangedWorkspaceExecutesNothing is the whole feature end
-// to end.
-//
-// Two things are asserted and both matter. The second run's hits are exactly
-// the outcomes the first run stored, which is what makes it fast; and every
-// verdict is identical, which is what makes it trustworthy. A cache that were
-// only fast would be worse than no cache at all.
 func TestTheSecondRunOfAnUnchangedWorkspaceExecutesNothing(t *testing.T) {
 	t.Parallel()
 	root := testkit.Copy(t, "killable")
@@ -132,11 +97,6 @@ func TestTheSecondRunOfAnUnchangedWorkspaceExecutesNothing(t *testing.T) {
 		t.Fatalf("the workspace digest moved between two runs of an unchanged tree: %s then %s",
 			first.Workspace.WorkspaceDigest, second.Workspace.WorkspaceDigest)
 	}
-	// The derived bound is a wall-clock measurement and is allowed to move
-	// between runs; the hits below are what proves that it moving does not empty
-	// the cache. Both runs derive rather than being told, which is the case that
-	// matters: it is the default, and it is the one a key over the effective
-	// timeout would have broken.
 	if second.Test.TimeoutSource != report.TimeoutDerived {
 		t.Fatalf("the fixture stopped deriving its timeout, so this no longer tests the interesting case")
 	}
@@ -158,8 +118,6 @@ func TestTheSecondRunOfAnUnchangedWorkspaceExecutesNothing(t *testing.T) {
 		}
 	}
 
-	// The verdicts are identical, row for row: a cached run and a measured run
-	// are the same measurement.
 	if len(first.Mutants) != len(second.Mutants) {
 		t.Fatalf("the two runs catalogued %d and %d mutants", len(first.Mutants), len(second.Mutants))
 	}
@@ -172,22 +130,12 @@ func TestTheSecondRunOfAnUnchangedWorkspaceExecutesNothing(t *testing.T) {
 	if first.Summary.Killed != second.Summary.Killed || first.Summary.Survived != second.Summary.Survived {
 		t.Errorf("the summaries disagree: %+v against %+v", second.Summary, first.Summary)
 	}
-	// And the second run really did keep the cache warm rather than emptying
-	// it: everything it adopted, it left in place.
 	third := runCached(t, cacheOptions(t, root, cacheRoot))
 	if third.Cache.Hits != second.Cache.Hits {
 		t.Errorf("the third run had %d hits and the second had %d", third.Cache.Hits, second.Cache.Hits)
 	}
 }
 
-// TestAnEditedSourceFileIsAllMisses is the key doing its job through the whole
-// pipeline: the snapshot digest is over every byte of the workspace, so one
-// added comment moves it, and nothing the previous run proved is reachable.
-//
-// A comment is the edit on purpose. It changes no behaviour and no outcome, and
-// a cache that keyed on anything less than the whole tree would be tempted to
-// reuse across it — which is exactly the temptation that produces a wrong
-// answer the first time somebody edits a line the key was not watching.
 func TestAnEditedSourceFileIsAllMisses(t *testing.T) {
 	t.Parallel()
 	root := testkit.Copy(t, "killable")
@@ -201,10 +149,6 @@ func TestAnEditedSourceFileIsAllMisses(t *testing.T) {
 	path := filepath.Join(root, "untested.go")
 	source := testkit.ReadFile(t, path)
 	testkit.WriteFile(t, path, append(source, "\n// One comment, and every key has moved.\n"...))
-	// Aged after every edit, because the go command indexes a package directory
-	// only when every file in it is at least two seconds old: a workspace this
-	// test hands to three runs in a row would otherwise behave differently in
-	// each of them for reasons that have nothing to do with the cache.
 	testkit.AgeTree(t, root)
 
 	second := runCached(t, cacheOptions(t, root, cacheRoot))
@@ -221,9 +165,6 @@ func TestAnEditedSourceFileIsAllMisses(t *testing.T) {
 		t.Errorf("the edited run looked up %d mutants and the first looked up %d",
 			second.Cache.Misses, first.Cache.Misses)
 	}
-	// The old entries are not wrong, only unreachable — which is what makes the
-	// cache need no invalidation pass at all. Coming back to the original
-	// content finds them again.
 	testkit.WriteFile(t, path, source)
 	testkit.AgeTree(t, root)
 	restored := runCached(t, cacheOptions(t, root, cacheRoot))
@@ -233,12 +174,6 @@ func TestAnEditedSourceFileIsAllMisses(t *testing.T) {
 	}
 }
 
-// TestAShardReusesWhatTheWholeRunProved is the property a CI matrix needs.
-//
-// Every shard of one workspace computes the same context — the shard index is
-// not in the key, and must not be, because a mutant's outcome does not depend
-// on which runner measured it — so a shard run after a whole run finds exactly
-// its own share already answered.
 func TestAShardReusesWhatTheWholeRunProved(t *testing.T) {
 	t.Parallel()
 	root := testkit.Copy(t, "killable")
@@ -277,8 +212,6 @@ func TestAShardReusesWhatTheWholeRunProved(t *testing.T) {
 		if shard.Cache.Hits != len(got) {
 			t.Errorf("shard %d reports %d hits and %d cached rows", index, shard.Cache.Hits, len(got))
 		}
-		// Every mutant it owns was already answered, so it measured nothing at
-		// all — which is the whole point of a warm cache in a matrix.
 		if shard.Cache.Misses != 0 {
 			t.Errorf("shard %d of %d looked up %d mutants it did not already have",
 				index, total, shard.Cache.Misses)
@@ -290,9 +223,6 @@ func TestAShardReusesWhatTheWholeRunProved(t *testing.T) {
 	}
 }
 
-// TestTheCacheIsOffForACustomTestCommandUnderAuto is the mode matrix where it
-// meets a real toolchain: `auto` stands down, says so with GOM7901, and the run
-// reaches the same verdicts by measuring everything.
 func TestTheCacheIsOffForACustomTestCommandUnderAuto(t *testing.T) {
 	t.Parallel()
 	root := testkit.Copy(t, "killable")
@@ -318,8 +248,6 @@ func TestTheCacheIsOffForACustomTestCommandUnderAuto(t *testing.T) {
 	if !found {
 		t.Errorf("the run did not say why the cache was off: %+v", rep.Warnings)
 	}
-	// Nothing was written either, so a later `auto` run over the same workspace
-	// still has nothing to adopt.
 	survey, err := cache.Status(cacheRoot)
 	if err != nil {
 		t.Fatalf("surveying the cache: %v", err)

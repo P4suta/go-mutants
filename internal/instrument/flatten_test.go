@@ -12,17 +12,11 @@ import (
 	"github.com/P4suta/go-mutants/internal/instrument"
 )
 
-// flattenCases is the hand-written half of the flattener's evidence: the
-// constructs that are known to be hard rather than the ones a generator
-// happens to reach. Every case asserts three things — the exact output, the
-// one-line postcondition, and structural equality of the parse trees — because
-// the first is the change detector and the last is the correctness property.
 var flattenCases = []struct {
 	name string
 	src  string
 	want string
 }{
-	// --- line folding and separators ---
 	{
 		name: "already one line",
 		src:  "a + b",
@@ -54,10 +48,6 @@ var flattenCases = []struct {
 		want: "a+b*c",
 	},
 	{
-		// The mirror of the case above, and the reason inserted semicolons
-		// cannot simply be dropped: Go ends the statement at the line break,
-		// so this is two statements rather than one sum, and flattening it to
-		// "a+b" would fuse them into a different program.
 		name: "binary operator at a line start splits the statement",
 		src:  "a\n+ b",
 		want: "a;+b",
@@ -83,19 +73,11 @@ var flattenCases = []struct {
 		want: "a/ /* c */b",
 	},
 	{
-		// The space before ".5" is the coarse separator rule at work: "+" and
-		// "." cannot fuse into a Go token, but both are operator bytes and the
-		// rule keeps every such pair apart rather than enumerating the ones
-		// that would actually combine. A spare space costs nothing.
 		name: "float literals do not fuse with periods",
 		src:  "1.0 + .5",
 		want: "1.0+ .5",
 	},
 	{
-		// A numeric literal need not end in a digit, so the byte that meets the
-		// "." says nothing about what it is joining. Written flush, "0x1f.b"
-		// scans as one hexadecimal float missing its exponent rather than as a
-		// selector on an integer.
 		name: "hexadecimal literal keeps a following period apart",
 		src:  "0x1f . b",
 		want: "0x1f .b",
@@ -116,7 +98,6 @@ var flattenCases = []struct {
 		want: "v.(T)",
 	},
 
-	// --- comments ---
 	{
 		name: "line comment mid-expression is dropped",
 		src:  "a + // why not\n\tb",
@@ -148,7 +129,6 @@ var flattenCases = []struct {
 		want: "",
 	},
 
-	// --- string and rune literals ---
 	{
 		name: "raw string with a line break becomes interpreted",
 		src:  "`a\nb`",
@@ -180,10 +160,6 @@ var flattenCases = []struct {
 		want: `"a\n\r\tb"`,
 	},
 	{
-		// A carriage return is the one line break go/scanner leaves sitting
-		// inside an interpreted literal rather than rejecting: only a newline
-		// terminates one. So this is valid, compilable Go whose bytes reach the
-		// output verbatim unless the literal is re-spelled.
 		name: "interpreted string with a raw carriage return is escaped",
 		src:  "\"a\rb\"",
 		want: `"a\rb"`,
@@ -199,9 +175,6 @@ var flattenCases = []struct {
 		want: `f("a\rb",'\r',)`,
 	},
 	{
-		// The literal keeps its own spelling everywhere the carriage return is
-		// already escaped, so the rewrite stays the smallest one that fits the
-		// literal on a line.
 		name: "escaped carriage return is left as written",
 		src:  "\"a\\rb\" + '\\r'",
 		want: `"a\rb"+'\r'`,
@@ -217,7 +190,6 @@ var flattenCases = []struct {
 		want: `'\n'+'×'`,
 	},
 
-	// --- unicode ---
 	{
 		name: "unicode identifiers stay apart",
 		src:  "日本 +\n\t語",
@@ -234,7 +206,6 @@ var flattenCases = []struct {
 		want: `f("héllo→",)`,
 	},
 
-	// --- statements ---
 	{
 		name: "statement list",
 		src:  "a()\nb()",
@@ -261,9 +232,6 @@ var flattenCases = []struct {
 		want: "for i:=0;i<n;i++{s+=i;}",
 	},
 	{
-		// The shape the statement guard will meet most often, and the one
-		// where a stray line break between "}" and "else" would turn one
-		// statement into a syntax error.
 		name: "else-if chain",
 		src:  "if a {\n\tf()\n} else if b {\n\tg()\n} else {\n\th()\n}",
 		want: "if a{f();}else if b{g();}else{h();}",
@@ -327,9 +295,6 @@ func TestFlatten(t *testing.T) {
 	}
 }
 
-// TestFlattenIsIdempotent asserts that flattening settles after one pass.
-// A second pass exercising the same code on already-folded input is a cheap
-// way to catch a separator or semicolon rule that is not stable.
 func TestFlattenIsIdempotent(t *testing.T) {
 	t.Parallel()
 
@@ -352,8 +317,6 @@ func TestFlattenIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestFlattenNeverEmitsALineComment pins the reason line comments are dropped:
-// one surviving "//" would comment out everything the guard puts after it.
 func TestFlattenNeverEmitsALineComment(t *testing.T) {
 	t.Parallel()
 
@@ -388,11 +351,6 @@ func TestFlattenErrors(t *testing.T) {
 		{name: "unterminated interpreted string", src: `"abc`, want: instrument.CodeUntokenizable},
 		{name: "unterminated raw string", src: "`abc", want: instrument.CodeUntokenizable},
 		{
-			// The same unterminated literal, now spanning a line, so that the
-			// text the scanner hands back holds a line break and the literal
-			// rewrite is attempted on it. That rewrite fails — the bytes are
-			// not a literal — and the diagnosis the caller needs is still the
-			// scanner's, not the rewrite's downstream complaint about it.
 			name: "unterminated raw string spanning lines",
 			src:  "`abc\ndef",
 			want: instrument.CodeUntokenizable,
@@ -428,16 +386,6 @@ func TestFlattenErrors(t *testing.T) {
 	}
 }
 
-// TestFlattenSelfChecksFire runs the postconditions Flatten applies to its own
-// output.
-//
-// The package's central claim is that a rendering bug surfaces as a loud error
-// rather than as a mutant that compiles into a different program, and these
-// three checks are the whole of that claim's machinery. No input reaches them —
-// that is what makes them postconditions — so they are driven here through the
-// test-only hooks in export_test.go, with bytes standing in for the output a
-// broken renderer would have produced. An unrun check proves nothing about the
-// day it is needed.
 func TestFlattenSelfChecksFire(t *testing.T) {
 	t.Parallel()
 
@@ -476,8 +424,6 @@ func TestFlattenSelfChecksFire(t *testing.T) {
 			wantDetail string
 		}{
 			{
-				// The failure the check exists for: a separator that was not
-				// written, so two tokens fused into a third.
 				name: "tokens fused",
 				out:  "ab", want: "a b",
 				wantCode: instrument.CodeNotIdentical, wantDetail: "re-tokenizes to 1 tokens, want 2",
@@ -516,11 +462,6 @@ func TestFlattenSelfChecksFire(t *testing.T) {
 	t.Run("literal conversion", func(t *testing.T) {
 		t.Parallel()
 
-		// Bytes the scanner would have rejected as an unterminated literal, so
-		// that strconv.Unquote is handed something it cannot read. Every route
-		// to this branch through Flatten itself is closed by the scan error
-		// being reported first, which is the point of the branch: the failure
-		// is reported rather than a wrong string silently written.
 		if _, err := instrument.FlattenLiteral(token.STRING, "`abc\ndef"); instrument.CodeOf(err) != instrument.CodeRawStringConversion {
 			t.Errorf("FlattenLiteral of an unterminated raw literal = %v, want %s", err, instrument.CodeRawStringConversion)
 		}
@@ -550,17 +491,6 @@ func TestFlattenSelfChecksFire(t *testing.T) {
 	})
 }
 
-// TestFlattenDoesNotRequireParseableInput records that the flattener works at
-// the token level. Discovery hands it byte spans, and a span of a statement is
-// not always something go/parser will accept on its own.
-//
-// These cases carry the separator rules that no parseable fragment can reach.
-// A "." followed by a digit is the clearest: written flush, "a.5" scans as an
-// identifier beside a floating-point literal rather than as the three tokens
-// that went in — and yet no valid Go puts a number after a selector's dot, so
-// the rule can only be exercised by a fragment go/parser would turn down. The
-// separator is still the difference between reproducing the token stream and
-// inventing a new one, which is the flattener's whole contract.
 func TestFlattenDoesNotRequireParseableInput(t *testing.T) {
 	t.Parallel()
 
@@ -586,8 +516,6 @@ func TestFlattenDoesNotRequireParseableInput(t *testing.T) {
 			if string(got) != tc.want {
 				t.Errorf("Flatten(%q) = %q, want %q", tc.src, got, tc.want)
 			}
-			// Flatten already asserts this internally; asserting it here too is
-			// what makes the case evidence rather than a change detector.
 			if err := instrument.VerifyTokensAgainst(got, []byte(tc.src)); err != nil {
 				t.Errorf("Flatten(%q) = %q, which does not re-tokenize to its input: %v", tc.src, got, err)
 			}

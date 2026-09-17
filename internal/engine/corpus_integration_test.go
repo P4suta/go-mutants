@@ -3,25 +3,6 @@
 
 //go:build integration
 
-// The corpus modules that are about the edges of a workspace rather than about
-// the operators: a `go.work`, a build tag, CRLF sources, a package with no
-// tests, a suite that writes into its own directory, and a declaration whose
-// type cannot be named.
-//
-// Every one of them was a paragraph in fixtures/README.md promising a fixture
-// before it was a fixture, and the promise is the reason they belong together:
-// each is a thing the run has to get right that no amount of exercising `simple/`
-// or `families/` would ever reach. They are driven from here rather than from
-// integration_test.go so that the file a reader opens after `git log
-// fixtures/` is the file that says what those modules are for.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/engine/...
-//
-// The comment above is deliberately not a package doc — integration_test.go
-// carries this package's — which is what the blank line below is for.
-
 package engine
 
 import (
@@ -40,20 +21,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// TestRunInsideAGoWorkspaceSeesOnlyTheModuleItWasPointedAt is the scope of a
-// run stated against a tree that offers it more.
-//
-// The fixture is a `go.work` over two modules. The run is pointed at `app/`,
-// and everything it does has to be about `app/` alone: the snapshot holds that
-// module's three files and not the workspace file one directory above it, the
-// catalogue holds that module's six mutants, and one test binary is built.
-//
-// The sibling modules' fate is what makes the absence checkable rather than
-// merely plausible. `lib`'s own test exercises its function and asserts nothing
-// about the answer, so all three of its mutants survive anything but `cross`'s
-// tests — and `cross` is not in this snapshot either. A run that reached across
-// the workspace would still be green and would differ from this one in exactly
-// the assertion below: every mutant killed, and six of them.
 func TestRunInsideAGoWorkspaceSeesOnlyTheModuleItWasPointedAt(t *testing.T) {
 	t.Parallel()
 
@@ -66,9 +33,6 @@ func TestRunInsideAGoWorkspaceSeesOnlyTheModuleItWasPointedAt(t *testing.T) {
 		t.Fatalf("status = %s, want %s", outcome.Status, StatusOK)
 	}
 
-	// go.mod, app.go, app_test.go. The workspace file and the whole of `lib`
-	// are one directory above the root the run was given, so a snapshot that
-	// held four files would be a snapshot of something else.
 	if outcome.SnapshotFiles != 3 {
 		t.Errorf("snapshotted %d files, want 3 (go.mod, app.go, app_test.go)", outcome.SnapshotFiles)
 	}
@@ -85,10 +49,6 @@ func TestRunInsideAGoWorkspaceSeesOnlyTheModuleItWasPointedAt(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("results =\n\t%s\nwant\n\t%s", strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
 	}
-	// Said again as a property rather than as a list, because it is the half
-	// that would notice `lib` arriving: all three of its mutants are survivors,
-	// so a leak across the workspace shows up here as an outcome that is not a
-	// kill even if the six lines above somehow still matched.
 	for _, m := range outcome.Report.Mutants {
 		if m.Outcome != report.OutcomeKilled {
 			t.Errorf("mutant %s in %s settled as %s; every mutant of `app` is killed, so a survivor "+
@@ -100,20 +60,6 @@ func TestRunInsideAGoWorkspaceSeesOnlyTheModuleItWasPointedAt(t *testing.T) {
 	}
 }
 
-// TestRunAtTheWorkspaceRootMeasuresEveryModuleAtOnce is the other direction,
-// and the claim that a workspace is one run rather than three.
-//
-// The three modules are measured together, under one run id, and the document
-// is a workspace report with each module's own run report inside it — because
-// `workspace.module_path` is required of a run report and a workspace has no
-// single answer for it. See ADR 0012.
-//
-// `lib` is what makes the point checkable. Its own test exercises [Differs] and
-// asserts nothing about the answer, so its three mutants are killed here or not
-// at all; `cross` is the module whose tests kill them. Three separate runs
-// would report those three as survivors in a module whose tests are green,
-// which is the wrong answer rather than a missing feature — so "every mutant
-// killed" is the whole of what this run has to say.
 func TestRunAtTheWorkspaceRootMeasuresEveryModuleAtOnce(t *testing.T) {
 	t.Parallel()
 
@@ -140,9 +86,6 @@ func TestRunAtTheWorkspaceRootMeasuresEveryModuleAtOnce(t *testing.T) {
 			"them only by another module's tests", doc.Summary.Killed, doc.Summary.Total)
 	}
 
-	// The modules, in `use` order, each with its own report and its own module
-	// path -- and `lib`'s three mutants killed, which is the cross-module claim
-	// stated as a number.
 	want := map[string]int{
 		"fixture.example/workspace/app":   6,
 		"fixture.example/workspace/cross": 2,
@@ -169,22 +112,6 @@ func TestRunAtTheWorkspaceRootMeasuresEveryModuleAtOnce(t *testing.T) {
 	}
 }
 
-// TestBuildTagsNarrowTheCatalogueThroughGOFLAGS is the environment as an input
-// to the catalogue, and to the key a cached outcome is filed under.
-//
-// GOFLAGS reaches every `go` command a run issues, so `-tags=special` changes
-// which files the module even has — the catalogue is two mutants with the tag
-// and one without. That much is a fact about the go command. The half that is
-// go-mutants' own is the second one: an outcome measured with the tag must not
-// be adopted by a run without it, because the two ran different programs. The
-// three runs below are what separates that claim from "the cache was cold" —
-// the second run proves the store can produce a hit at all, and only then does
-// the third one's zero mean anything.
-//
-// It does not take t.Parallel(): GOFLAGS is a process-wide global and the
-// engine reads the environment it is running in. That is the suite's standing
-// rule — no redirection, no serialisation — and this is one of the few tests
-// whose subject *is* a variable.
 func TestBuildTagsNarrowTheCatalogueThroughGOFLAGS(t *testing.T) {
 	root := testkit.Copy(t, "tagged")
 	cacheRoot := t.TempDir()
@@ -199,18 +126,12 @@ func TestBuildTagsNarrowTheCatalogueThroughGOFLAGS(t *testing.T) {
 		t.Fatal("the first run stored nothing, so a later miss would prove nothing")
 	}
 
-	// The same command in the same environment: this is what a hit looks like,
-	// and it is the control the assertion below needs.
 	warm := runCached(t, cacheOptions(t, root, cacheRoot))
 	if warm.Cache.Hits != len(tagged.Mutants) {
 		t.Fatalf("a repeat of the tagged run adopted %d of %d outcomes, want all of them",
 			warm.Cache.Hits, len(tagged.Mutants))
 	}
 
-	// And now the tag goes away. t.Setenv's cleanup restores whatever the
-	// developer had, which is what makes unsetting it here safe: the variable
-	// has to be *absent* rather than empty, because `GOFLAGS=` and an unset
-	// GOFLAGS are different values to the go command and hash differently.
 	if err := os.Unsetenv("GOFLAGS"); err != nil {
 		t.Fatalf("unsetting GOFLAGS: %v", err)
 	}
@@ -226,10 +147,6 @@ func TestBuildTagsNarrowTheCatalogueThroughGOFLAGS(t *testing.T) {
 	}
 }
 
-// assertTaggedCatalog names every mutant of a `tagged/` run by file and rule.
-//
-// By name rather than by count, because the count alone cannot tell "the tagged
-// file was compiled" from "some other file grew a second candidate".
 func assertTaggedCatalog(t *testing.T, r *report.Report, want []string) {
 	t.Helper()
 	got := make([]string, 0, len(r.Mutants))
@@ -245,20 +162,6 @@ func assertTaggedCatalog(t *testing.T, r *report.Report, want []string) {
 	}
 }
 
-// TestCRLFSourcesAreInstrumentedByteForByteAndKilled runs a whole workspace
-// whose every line ends CRLF.
-//
-// The module is synthesized rather than checked in, and fixtures/README.md says
-// why: `.gitattributes` pins `* -text`, so a CRLF fixture would be CRLF on
-// every platform and would change every mutant identity that covers it.
-//
-// Two claims, and they are different claims. The verdicts have to be the LF
-// tree's verdicts — a rewriter that lost a carriage return would still compile,
-// and would still kill the same mutants, so this alone would not notice — and
-// the instrumented tree the run built has to still be CRLF, which is what a
-// byte rewriter promises and what the first claim rests on. The identities are
-// deliberately not compared: a mutant id is the digest of the file's bytes, and
-// the bytes really are different.
 func TestCRLFSourcesAreInstrumentedByteForByteAndKilled(t *testing.T) {
 	t.Parallel()
 
@@ -269,9 +172,6 @@ func TestCRLFSourcesAreInstrumentedByteForByteAndKilled(t *testing.T) {
 
 	crlfRoot := testkit.NewModule(t).From("simple").CRLF().Root()
 	opts := optionsAt(t, crlfRoot)
-	// The snapshot is kept so that what the run actually built can be read.
-	// It lives under the test's own scratch directory, so keeping it costs a
-	// directory the harness removes with the rest.
 	opts.KeepTemp = KeepTempAlways
 	crlf, _, err := collect(t, t.Context(), opts)
 	if err != nil {
@@ -286,9 +186,6 @@ func TestCRLFSourcesAreInstrumentedByteForByteAndKilled(t *testing.T) {
 			strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
 	}
 
-	// The instrumented tree, as it was when the test binaries were built. Both
-	// halves are asserted: the guards are there, so this is an instrumented file
-	// rather than a pristine one, and every line break in it is still a CRLF.
 	for _, name := range []string{"simple.go", "simple_test.go"} {
 		source := testkit.ReadFile(t, filepath.Join(crlf.SnapshotRoot, name))
 		if name == "simple.go" && !strings.Contains(string(source), "__gm") {
@@ -301,9 +198,6 @@ func TestCRLFSourcesAreInstrumentedByteForByteAndKilled(t *testing.T) {
 	}
 }
 
-// fatesOf renders every mutant of a report as "outcome path:line rule", sorted,
-// so that two runs of the same program in different line endings can be
-// compared without comparing their identities.
 func fatesOf(r *report.Report) []string {
 	out := make([]string, 0, len(r.Mutants))
 	for _, m := range r.Mutants {
@@ -313,14 +207,6 @@ func fatesOf(r *report.Report) []string {
 	return out
 }
 
-// TestAPackageWithoutTestsReportsItsMutantsAsUncoveredSurvivors is the coverage
-// pass answering for a package no binary reaches.
-//
-// The fixture is a package with tests beside one without. The two mutants in
-// the tested package are killed; the two in the orphan are survivors that were
-// never started, carry no attempts and no duration, and are marked uncovered —
-// which is the difference between "nothing killed this" and "nothing ran this",
-// and the only honest thing a report can say about the second.
 func TestAPackageWithoutTestsReportsItsMutantsAsUncoveredSurvivors(t *testing.T) {
 	t.Parallel()
 
@@ -373,15 +259,6 @@ func TestAPackageWithoutTestsReportsItsMutantsAsUncoveredSurvivors(t *testing.T)
 	}
 }
 
-// TestScopingTheTestCommandToTheUntestedPackageIsRefused is the one shape the
-// pattern check cannot catch.
-//
-// `./orphan/...` names a package that really is there, so the resolution before
-// the baseline is satisfied — and then not one of the packages it named has a
-// test file, so no test binary is built. Nothing downstream would notice: the
-// coverage pass skips a run with no binaries, the scheduler walks an empty
-// list, every mutant comes back survived, and the run publishes a score of zero
-// as though it had looked. It is refused by name instead.
 func TestScopingTheTestCommandToTheUntestedPackageIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -401,15 +278,6 @@ func TestScopingTheTestCommandToTheUntestedPackageIsRefused(t *testing.T) {
 	}
 }
 
-// TestATestThatWritesIntoItsOwnDirectoryStopsTheRunAtTheDriftGate is the gate
-// that keeps a score from being a mixture of two programs.
-//
-// The fixture's suite passes and writes a file into the package directory it
-// runs in, which is an entirely ordinary thing for a test to do and fatal here:
-// every mutant is measured against the tree the baseline was measured against,
-// so the second mutant would be measuring something the first never saw. The
-// run stops, and the message names both the file and the cause — the second is
-// what turns "1 file changed" into something a reader can act on.
 func TestATestThatWritesIntoItsOwnDirectoryStopsTheRunAtTheDriftGate(t *testing.T) {
 	t.Parallel()
 
@@ -437,32 +305,6 @@ func TestATestThatWritesIntoItsOwnDirectoryStopsTheRunAtTheDriftGate(t *testing.
 	}
 }
 
-// TestAnUnnameableDeclarationIsSkippedWithItsReasonAndTheRunStaysGreen is a
-// refusal that is not a failure, and the completion that is not a refusal.
-//
-// The refusal is an edit whose every enclosing expression has the type
-// `hidden.tally`, which is unexported: there is no source form of that type
-// outside its own package, and no import supplies one — which is the difference
-// from the `split` package below, where the type is exported and the name is
-// all that was missing. The site is recorded with the reserved reason and the
-// pass carries on: every other candidate in the module is catalogued, executed
-// and killed, and the run completes.
-//
-// The coordinates are asserted through internal/discover rather than through
-// the report, and the split is the one the two views were designed around: the
-// document carries the aggregate — how much of a file was passed over, and why
-// — because forty coordinates per file is a document nobody would read, and the
-// listing carries the sites for the person who asked which. This is the one
-// fixture whose whole subject is a single site, so both are checked.
-//
-// The module's `split` package is the same question with the other answer, and
-// it is here rather than in a fixture of its own because it is the same
-// subject: a type the file being rewritten cannot spell. What separates the two
-// is *reach*. `*hidden.counter` is unexported, so no import makes it writable
-// and the refusal stands; `reachable.Extent` is exported and the package is one
-// a sibling file already imports, so the rewrite is given that import and the
-// mutant exists. The kill on split/unsayable.go is what says the instrumented
-// tree compiled with an import this phase added.
 func TestAnUnnameableDeclarationIsSkippedWithItsReasonAndTheRunStaysGreen(t *testing.T) {
 	t.Parallel()
 
@@ -492,17 +334,9 @@ func TestAnUnnameableDeclarationIsSkippedWithItsReasonAndTheRunStaysGreen(t *tes
 		"killed split/sayable.go:19 return-zero-numeric",
 		"killed split/sayable.go:23 add-to-sub",
 		"killed split/sayable.go:23 return-zero-numeric",
-		// The line the module's second half is for. The tag of this `switch`
-		// has a type only the file beside it has a name for, so the guard is
-		// written with an import the rewrite adds — and this row is the proof
-		// that what came out compiled, ran, and was caught.
 		"killed split/unsayable.go:21 add-to-sub",
 		"killed split/unsayable.go:23 return-zero-numeric",
 		"killed split/unsayable.go:25 return-zero-numeric",
-		// The addition the fixture's Counted used to have refused. Its
-		// declaration is still one no form may rewrite; the initialiser
-		// expression around the edit is an `int`, and a closure returning an
-		// `int` stands where it stood.
 		"killed unnameable.go:25 add-to-sub",
 		"killed unnameable.go:26 return-zero-numeric",
 		"killed unnameable.go:46 return-zero-numeric",
@@ -513,28 +347,19 @@ func TestAnUnnameableDeclarationIsSkippedWithItsReasonAndTheRunStaysGreen(t *tes
 		t.Errorf("results =\n\t%s\nwant\n\t%s", strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
 	}
 
-	// And the site itself, with the coordinates the report does not carry.
-	// The discovery pass is run again over a snapshot of the same tree rather
-	// than reaching into the one the run took, which is already gone.
 	sites := mutantkit.Discover(t, mutantkit.Toolchain(t), mutantkit.SnapshotOf(t, root)).SkipSites
 	wantSites := []discover.SkipSite{{
 		Path:   "unnameable.go",
 		Reason: discover.SkipUnnameableDeclType,
 		Line:   44,
 		Column: 23,
-		// The rule is part of the site because one coordinate can carry
-		// several refusals, and here it says which edit the fixture is about:
-		// the addition between two values of the unexported numeric type, in a
-		// `switch` tag, which is the one shape where the edit's own expression
-		// and every expression around it is something this file cannot name.
-		Rule: "add-to-sub",
+		Rule:   "add-to-sub",
 	}}
 	if !slices.Equal(sites, wantSites) {
 		t.Errorf("skip sites = %+v, want %+v", sites, wantSites)
 	}
 }
 
-// discoveredOf returns the one Discovered event of a run.
 func discoveredOf(t *testing.T, events []Event) Discovered {
 	t.Helper()
 	for _, e := range events {
@@ -546,25 +371,6 @@ func discoveredOf(t *testing.T, events []Event) Discovered {
 	return Discovered{}
 }
 
-// TestIsolateGivesEveryWorkerATreeAndPutsItBackBetweenMutants is the escape
-// hatch from the gate above, and the one test that can tell a working
-// restoration from a missing one.
-//
-// The fixture's suite writes into the package directory it runs in, which is
-// what stops an ordinary run at the drift gate. With `--isolate` every worker
-// has its own copy of the instrumented tree, so the write lands in a directory
-// only that worker can see — and the copy is put back after every mutant, so
-// the next one finds the tree as the run left it.
-//
-// The proof is a *survivor*, not a count. The fixture's suite asserts, at the
-// top, that no earlier mutant's witness is there, and Nudge's mutants survive a
-// passing binary. Drop the restore and the second mutant onwards fail that
-// assertion, so they are reported as killed — a difference no number of drifted
-// files would show, because with a copy per worker the shared tree does not
-// drift at all.
-//
-// One worker on purpose: the shape this is about is two mutants in a row on the
-// same tree, and several workers would let two mutants be the first on theirs.
 func TestIsolateGivesEveryWorkerATreeAndPutsItBackBetweenMutants(t *testing.T) {
 	t.Parallel()
 
@@ -580,10 +386,6 @@ func TestIsolateGivesEveryWorkerATreeAndPutsItBackBetweenMutants(t *testing.T) {
 		t.Fatalf("status = %s, want %s", outcome.Status, StatusOK)
 	}
 
-	// Every mutant of Nudge survives, and that is the whole assertion. The
-	// function is called and never checked, so nothing in a passing binary can
-	// kill one; a kill here means the binary stopped passing, and the only way
-	// it does that is the witness check at the top of the suite.
 	survivors, kills := 0, 0
 	for _, m := range outcome.Report.Mutants {
 		switch m.Outcome {
@@ -604,9 +406,6 @@ func TestIsolateGivesEveryWorkerATreeAndPutsItBackBetweenMutants(t *testing.T) {
 			strings.Join(results(events), "\n\t"))
 	}
 
-	// And the run reported putting the copy back, which is the mechanism
-	// rather than its consequence. It is a note rather than a warning because
-	// for this fixture drifting after every mutant is the ordinary case.
 	restored, copies := 0, 0
 	for _, event := range sink.Events() {
 		switch {
@@ -626,13 +425,6 @@ func TestIsolateGivesEveryWorkerATreeAndPutsItBackBetweenMutants(t *testing.T) {
 	}
 }
 
-// TestIsolateIsOffByDefault is the other half: the gate above still stops a
-// run that did not ask for a copy per worker.
-//
-// It is stated here rather than left to the gate's own test because a default
-// that quietly flipped would make that test pass for the wrong reason — the
-// run would complete, and a reader would have to notice that the refusal it
-// was about had stopped happening.
 func TestIsolateIsOffByDefault(t *testing.T) {
 	t.Parallel()
 

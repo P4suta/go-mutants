@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// readFile reads a file a gate is about, and fails rather than returning an
-// error nobody up the call reads differently.
 func readFile(t testing.TB, path string) string {
 	t.Helper()
 	text, err := os.ReadFile(path)
@@ -21,7 +19,6 @@ func readFile(t testing.TB, path string) string {
 	return string(text)
 }
 
-// writeFile writes a sample a counterpart test feeds its reader.
 func writeFile(t testing.TB, path, text string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {

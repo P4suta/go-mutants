@@ -21,24 +21,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// loadMode is what discovery needs from the loader and nothing more.
-//
-// NeedSyntax and NeedTypesInfo are the two that cost real time, and both are
-// unavoidable: candidates are byte spans taken from a parsed file, and telling
-// the universe's `true` from a local variable called `true`, or a type
-// argument from a map index, is a question only the type checker can answer.
-//
-// NeedDeps is deliberately absent, and its absence is worth more than any bit
-// present here. Asking for it makes go/packages parse and type-check the whole
-// transitive dependency closure, the standard library included, from source;
-// without it the loader type-checks the root packages against the compiler's
-// export data instead. Discovery only ever walks root packages — nothing here
-// reads pkg.Imports or any field of a dependency — so the two produce the same
-// [types.Info] for the files that matter, and differ only in what they charge
-// for it: one file per dependency's export data against every file in the
-// closure. Even the fixture module, whose only import is "embed", loads in
-// roughly half the time; a tree with a real dependency graph is where that
-// becomes minutes and a large heap, on the critical path of every run.
 const loadMode = packages.NeedName |
 	packages.NeedFiles |
 	packages.NeedCompiledGoFiles |
@@ -47,22 +29,13 @@ const loadMode = packages.NeedName |
 	packages.NeedTypesInfo |
 	packages.NeedModule
 
-// errorSample is how many package errors a [CodePackageErrors] message quotes.
-// A tree that does not compile usually does not compile in one place, and the
-// first few errors are the ones worth acting on; the rest are noise the user
-// will see again from `go build` anyway.
 const errorSample = 3
 
-// A loadResult is the loader's output in a deterministic order.
 type loadResult struct {
-	// fset is the file set every position in every syntax tree refers to.
-	fset *token.FileSet
-	// packages are the root packages, sorted by package path and then by ID so
-	// that a package and its test variants always appear in the same order.
+	fset     *token.FileSet
 	packages []*packages.Package
 }
 
-// load runs the package loader over the whole snapshot.
 func load(
 	ctx context.Context,
 	root string,
@@ -81,29 +54,7 @@ func load(
 		Dir:     root,
 		Env:     environmentFrom(baseEnv, toolchain, workspace),
 		Fset:    fset,
-		// Tests is off, and its absence is the difference between loading what
-		// discovery walks and loading three times as much of it.
-		//
-		// Asking for the test variants asks the go command for four packages
-		// where there is one: the package itself, the package again with its
-		// in-package test files compiled in, the external test package, and the
-		// generated test main. The second of those re-parses and re-type-checks
-		// every non-test file of the package -- the very files this phase walks,
-		// and the walk already has them from the first. On this repository the
-		// difference is 129 packages type-checked against 39, and 768 files
-		// parsed against 229, for a catalogue that is identical either way.
-		//
-		// Identical because nothing here reads a test variant. A `_test.go` file
-		// is structural: built, run, never mutated, never even recorded as a
-		// skip. The import index a completion is drawn from leaves test files
-		// out by name, because an import only a test file carries is not one the
-		// instrumented build has. What remains of the test variants is their
-		// errors, and refusing the tree for those is refusing it for a file
-		// whose type information discovery never reads -- while the phase whose
-		// business that is, the baseline, builds and runs the test command
-		// before this one starts. See [gate] for where the precondition that is
-		// left stands.
-		Tests: false,
+		Tests:   false,
 	}
 	loaded, err := packages.Load(cfg, patterns...)
 	if err != nil {
@@ -121,17 +72,12 @@ func load(
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, &Error{Code: CodeLoadFailed, Message: "discovery was cancelled", Err: ctxErr}
 	}
-	// cmp.Or rather than a comparison in front of each key: "are these paths
-	// the same" and "is the comparison of them zero" are one question asked
-	// twice, and the second spelling is the one that also produces the answer.
 	slices.SortFunc(loaded, func(x, y *packages.Package) int {
 		return cmp.Or(strings.Compare(x.PkgPath, y.PkgPath), strings.Compare(x.ID, y.ID))
 	})
 	return &loadResult{fset: fset, packages: loaded}, nil
 }
 
-// toolchainHint names the toolchain that was located, when one was, so that a
-// failed load can be compared against it at a glance.
 func toolchainHint(toolchain gocmd.Toolchain) string {
 	if toolchain.GoBin == "" {
 		return ""
@@ -139,33 +85,6 @@ func toolchainHint(toolchain gocmd.Toolchain) string {
 	return " (the located toolchain is " + toolchain.GoBin + ")"
 }
 
-// environment is the child environment for the loader: this process's, with
-// workspace mode switched off and the located toolchain's directory in front
-// of PATH.
-//
-// GOWORK=off is what turns [Discover]'s refusal of a snapshot-root `go.work`
-// into a guarantee. That refusal only sees a workspace file sitting at the root
-// itself, while the go command also searches every parent directory and obeys
-// $GOWORK — so a snapshot one level below somebody's workspace would otherwise
-// resolve its dependencies through a file the snapshot does not contain, and
-// every digest, cache key, and identity this phase mints assumes the snapshot
-// is the whole truth. Pinning it also means one snapshot discovers the same way
-// whatever environment the run was started from.
-//
-// A workspace run inverts one half of that and no more. [Options.Workspace]
-// *removes* GOWORK instead of pinning it, because a module of a workspace
-// resolves its siblings through the workspace file and does not load without
-// it; the go command then finds that file by walking up from the directory it
-// is running in, which is inside the snapshot, so the file it finds is the
-// snapshot's own. The sentence above holds word for word; what stops being true
-// is only "there is no such file". The caller's own $GOWORK is still removed
-// either way, so it decides nothing.
-//
-// Prepending the toolchain directory matters even though it does not decide
-// which `go` binary runs — os/exec resolved that from this process's PATH
-// before the environment was ever consulted. What it decides is what that
-// binary sees: a `go` that finds a different `go` ahead of it on PATH can hand
-// work to it, and the toolchain line in a go.mod is resolved the same way.
 func environment(toolchain gocmd.Toolchain) []string {
 	return environmentFrom(nil, toolchain, false)
 }
@@ -201,12 +120,6 @@ func environmentFrom(base []string, toolchain gocmd.Toolchain, workspace bool) [
 	return append(env, "PATH="+dir)
 }
 
-// setEnv sets one variable in a "KEY=VALUE" environment.
-//
-// Every entry naming the variable is replaced rather than a second one
-// appended: os/exec resolves a duplicate by keeping the last, so appending
-// would work, and an environment whose meaning depends on knowing that rule is
-// one a maintainer reads wrong.
 func setEnv(env []string, name, value string) []string {
 	entry := name + "=" + value
 	out := make([]string, 0, len(env)+1)
@@ -227,9 +140,6 @@ func setEnv(env []string, name, value string) []string {
 	return out
 }
 
-// unsetEnv removes every entry naming a variable, which is not the same as
-// setting it to the empty string: an empty value is a value, and the go command
-// reads an empty GOWORK as "no workspace" rather than as "decide for yourself".
 func unsetEnv(env []string, name string) []string {
 	out := make([]string, 0, len(env))
 	for _, existing := range env {
@@ -241,23 +151,8 @@ func unsetEnv(env []string, name string) []string {
 	return out
 }
 
-// sameEnvKey compares two environment variable names the way the operating
-// system this process is running on does.
 func sameEnvKey(a, b string) bool { return sameEnvKeyOn(runtime.GOOS, a, b) }
 
-// sameEnvKeyOn is that comparison as a function of the platform name:
-// case-insensitively on Windows, where a variable answers to any spelling of
-// its name — PATH is written "Path" as often as "PATH" — and exactly everywhere
-// else.
-//
-// The platform arrives as a value rather than as the build this file was
-// compiled into, which is internal/gocmd's sameEnvKeyOn pattern and exists for
-// its reason. Written as a `runtime.GOOS` branch inside one function, the
-// Windows half is a line only a Windows runner ever executes, so the claim it
-// makes is one only a Windows runner can check — and the claim matters here,
-// because the key that fails to match is the one that puts the located
-// toolchain on a child's PATH. As a parameter it is decided by a value handed
-// in, and both halves are asserted on every platform the suite runs on.
 func sameEnvKeyOn(goos, a, b string) bool {
 	if goos == "windows" {
 		return strings.EqualFold(a, b)
@@ -265,12 +160,6 @@ func sameEnvKeyOn(goos, a, b string) bool {
 	return a == b
 }
 
-// mainModule returns the module rooted at the snapshot root.
-//
-// Insisting that the main module's directory *is* the snapshot root is not
-// pedantry: every identity go-mutants mints is module-relative, and the
-// snapshot manifest is rooted at the snapshot. If the two disagreed, a
-// candidate's path would name a file the snapshot does not contain.
 func mainModule(loaded *loadResult, root string) (*packages.Module, error) {
 	for _, pkg := range loaded.packages {
 		module := pkg.Module
@@ -292,12 +181,6 @@ func mainModule(loaded *loadResult, root string) (*packages.Module, error) {
 	}
 }
 
-// gate refuses a tree that does not compile.
-//
-// cgo packages are exempt, and only they: they are excluded from mutation
-// wholesale, so whether their C preprocessing step succeeded is not a question
-// discovery has to have an answer to. Anything importing one is not exempt,
-// because that failure is a real gap in the type information discovery reads.
 func gate(loaded *loadResult, exempt cgoExemption) error {
 	var (
 		total  int
@@ -325,11 +208,6 @@ func gate(loaded *loadResult, exempt cgoExemption) error {
 	return &Error{Code: CodePackageErrors, Message: message}
 }
 
-// formatPackageError renders one loader error as "package: pos: message", with
-// whichever of the three parts the loader actually filled in.
-//
-// The result is always a single line; see [collapseLines] for why that is this
-// function's responsibility rather than the caller's.
 func formatPackageError(pkg *packages.Package, e packages.Error) string {
 	var b strings.Builder
 	if path := packagePath(pkg); path != "" {
@@ -344,21 +222,6 @@ func formatPackageError(pkg *packages.Package, e packages.Error) string {
 	return b.String()
 }
 
-// collapseLines folds a loader message onto one line.
-//
-// [packages.Error.Msg] is whatever the loader was handed, and for a `go list`
-// failure that is the command's whole standard error: a `# import/path` banner
-// followed by one line per compiler diagnostic. Every diagnostic go-mutants
-// prints is one "error GOM####: ..." line, so a message carrying newlines would
-// put lines into the report that no `grep '^error '` and no CI log parser can
-// attribute to anything — the code sits on the first line only. Collapsing here
-// keeps that promise at the source, where the multi-line text is produced,
-// instead of leaving every renderer downstream to discover it.
-//
-// The parts are joined with "; ", which is the separator [gate] already puts
-// between one package error and the next, so a folded message reads the same way
-// as the list it is embedded in. Empty lines are dropped rather than becoming
-// empty parts.
 func collapseLines(s string) string {
 	s = strings.TrimSpace(s)
 	if !strings.ContainsAny(s, "\n\r") {
@@ -373,8 +236,6 @@ func collapseLines(s string) string {
 	return strings.Join(parts, "; ")
 }
 
-// plural renders a count with its noun, pluralised the only way English needs
-// here.
 func plural(n int, noun string) string {
 	if n == 1 {
 		return "1 " + noun
@@ -382,22 +243,11 @@ func plural(n int, noun string) string {
 	return strconv.Itoa(n) + " " + noun + "s"
 }
 
-// A fileRef is one module source file: where it is on disk, and what it is
-// called in an identity.
 type fileRef struct {
 	abs string
 	rel string
 }
 
-// moduleFiles returns every Go source file a package owns that discovery could
-// mutate: under the module root, not a test file, deduplicated and sorted.
-//
-// Both the package's Go files and the files excluded by build constraints are
-// listed, because which of the two a cgo file lands in is decided by
-// CGO_ENABLED rather than by anything about the file. That matters for exactly
-// one caller, [findCgoPackages], and it is the reason a cgo package can be
-// recognised — and skipped, with its files named — on a machine with no C
-// compiler at all.
 func moduleFiles(pkg *packages.Package, root string) []fileRef {
 	var refs []fileRef
 	seen := make(map[string]bool)
@@ -418,34 +268,13 @@ func moduleFiles(pkg *packages.Package, root string) []fileRef {
 	return refs
 }
 
-// A cgoExemption is the set of packages that import "C", by loader ID.
-//
-// The ID is the whole key because the exemption and the two things that ask it
-// — the compile gate and the file walk — read the same list of packages, the
-// one the loader returned. [load] does not ask for test variants, so there is
-// no second spelling of a package to recognise and no name to match by suffix:
-// a path ending in `_test` or `.test` here is a package somebody wrote under
-// that name, and its build errors are its own rather than the cgo package's
-// next door.
 type cgoExemption map[string]bool
 
-// covers reports whether a package is excluded from mutation, and therefore
-// exempt from the load gate.
 func (e cgoExemption) covers(pkg *packages.Package) bool { return e[pkg.ID] }
 
-// findCgoPackages finds the packages that import "C".
-//
-// The question is asked of the source rather than of the loader's package
-// graph on purpose. With cgo enabled the import is rewritten away before the
-// loader ever produces syntax, and with cgo disabled the file is not part of
-// the package at all — in both cases the only place the truth survives intact
-// is the file on disk.
 func findCgoPackages(loaded *loadResult, root string) cgoExemption {
 	exemption := make(cgoExemption)
 	fset := token.NewFileSet()
-	// Two packages of one module can name the same file — a build constraint
-	// puts it in one package's IgnoredFiles and another's GoFiles — so the
-	// answer is remembered per file rather than recomputed per package.
 	answers := make(map[string]bool)
 	for _, pkg := range loaded.packages {
 		for _, ref := range moduleFiles(pkg, root) {
@@ -464,12 +293,6 @@ func findCgoPackages(loaded *loadResult, root string) cgoExemption {
 	return exemption
 }
 
-// importsC reports whether one file imports "C".
-//
-// A file that does not parse is reported as not importing it: the gate is
-// about to fail on the parse error anyway, and guessing that an unparsable
-// file is cgo would exempt it from exactly the check that would have explained
-// the problem.
 func importsC(fset *token.FileSet, path string) bool {
 	file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
 	if err != nil || file == nil {
@@ -483,19 +306,10 @@ func importsC(fset *token.FileSet, path string) bool {
 	return false
 }
 
-// isTestFile reports whether a path names a Go test file, which is built and
-// run but never mutated.
 func isTestFile(path string) bool {
 	return strings.HasSuffix(filepath.Base(path), "_test.go")
 }
 
-// samePath reports whether two paths name the same directory.
-//
-// Cleaning is not enough on its own: a temporary directory is behind a symlink
-// on macOS and behind a short name on Windows, and the go command may report
-// either spelling. Resolving both is the only comparison that survives that,
-// and it falls back to the cleaned comparison when resolution fails, which is
-// what happens for a path that no longer exists.
 func samePath(a, b string) bool {
 	cleanA, cleanB := filepath.Clean(a), filepath.Clean(b)
 	if pathsEqual(cleanA, cleanB) {
@@ -509,17 +323,8 @@ func samePath(a, b string) bool {
 	return pathsEqual(resolvedA, resolvedB)
 }
 
-// pathsEqual compares two paths the way the file system this process is running
-// on does.
 func pathsEqual(a, b string) bool { return pathsEqualOn(runtime.GOOS, a, b) }
 
-// pathsEqualOn is that comparison as a function of the platform name:
-// case-insensitive on Windows and exact everywhere else.
-//
-// The platform is a value for the reason [sameEnvKeyOn] takes one, and the
-// consequence of getting it wrong is larger here: two paths that compare
-// unequal are a package the main-module check refuses to recognise as the
-// snapshot root, which stops the run.
 func pathsEqualOn(goos, a, b string) bool {
 	if goos == "windows" {
 		return strings.EqualFold(a, b)
@@ -527,9 +332,6 @@ func pathsEqualOn(goos, a, b string) bool {
 	return a == b
 }
 
-// relativePath converts an absolute file path into the '/'-normalized
-// module-relative form identities use, reporting false for anything outside
-// the module root.
 func relativePath(root, file string) (string, bool) {
 	rel, err := filepath.Rel(root, file)
 	if err != nil {

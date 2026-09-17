@@ -76,8 +76,6 @@ func TestDecide(t *testing.T) {
 			wantCode: ExitInfrastructure,
 		},
 		{
-			// The documented non-rule: an unreproduced timeout says
-			// something about scheduling noise, not about the tests.
 			name:     "inconclusive alone never fails the run",
 			tally:    Tally{Killed: 3, Inconclusive: 5},
 			policy:   DefaultPolicy(),
@@ -122,9 +120,6 @@ func TestDecide(t *testing.T) {
 			wantCode: ExitOK,
 		},
 		{
-			// The other documented non-rule: with no denominator there is
-			// no percentage to be below a floor. require_mutants is the
-			// gate for an empty run, which is why it defaults to true.
 			name:        "a floor cannot be missed when nothing was measured",
 			tally:       Tally{},
 			policy:      Policy{MinimumScore: 80},
@@ -145,9 +140,6 @@ func TestDecide(t *testing.T) {
 			wantCode: ExitOK,
 		},
 		{
-			// Mutants that exist but were deferred to another shard are
-			// still mutants; require_mutants is about discovery finding
-			// nothing at all.
 			name:     "require_mutants with everything deferred",
 			tally:    Tally{NotRun: 40},
 			policy:   DefaultPolicy(),
@@ -176,9 +168,6 @@ func TestDecide(t *testing.T) {
 			wantCode: ExitPolicyFailure,
 		},
 		{
-			// A run that cannot be trusted is not scored: the policy gates
-			// are not consulted, so the exit code says "fix the harness",
-			// not "write more tests".
 			name:        "tier two suppresses the policy gates",
 			tally:       Tally{Killed: 1, UnexpectedSurvivors: 9, Errored: 1},
 			policy:      Policy{Strict: true, MinimumScore: 99, RequireMutants: true},
@@ -225,8 +214,6 @@ func TestDecide(t *testing.T) {
 	}
 }
 
-// TestEveryFailureReasonIsReachable makes sure the table above exercises the
-// whole reason set: a reason nobody can produce is dead documentation.
 func TestEveryFailureReasonIsReachable(t *testing.T) {
 	t.Parallel()
 
@@ -320,8 +307,6 @@ func TestFailureDetailsAreDeterministic(t *testing.T) {
 			if got := v.Failures[0].Detail; got != tc.want {
 				t.Fatalf("Detail = %q, want %q", got, tc.want)
 			}
-			// The same inputs must render the same bytes every time; the
-			// detail ends up in a report that gets diffed across runs.
 			again := Decide(tc.tally, tc.policy, tc.signals)
 			if diff := cmp.Diff(v.Failures, again.Failures); diff != "" {
 				t.Fatalf("details are not stable (-first +second):\n%s", diff)
@@ -417,8 +402,6 @@ func TestExitCodes(t *testing.T) {
 			t.Errorf("%d.String() = %q, want %q", int(code), got, name)
 		}
 	}
-	// The signal codes are documented here but are never a verdict: Decide
-	// only ever speaks about a run that finished.
 	codes := map[ExitCode]bool{}
 	for _, v := range []Verdict{
 		Decide(Tally{Killed: 1}, DefaultPolicy(), Signals{}),
@@ -434,12 +417,6 @@ func TestExitCodes(t *testing.T) {
 	}
 }
 
-// TestVerdictOKNeedsBothHalves pins the conjunction in OK(). A verdict is OK
-// when the code says so *and* nothing was recorded against it, and both halves
-// are load-bearing because a verdict does not only ever come from Decide: the
-// report layer assembles one from a document, and a merged or partial run can
-// carry a code and a failure list that have to agree before anything calls the
-// run a pass.
 func TestVerdictOKNeedsBothHalves(t *testing.T) {
 	t.Parallel()
 
@@ -466,10 +443,6 @@ func TestVerdictOKNeedsBothHalves(t *testing.T) {
 	}
 }
 
-// TestVerdictHasAnswersAboutTheReasonItWasAsked is the other half of Has: a
-// verdict that carries one failure must say no to every other reason in the
-// vocabulary. TestVerdictAccessors asks a clean verdict, where an answer of
-// "yes to everything" is indistinguishable from an empty failure list.
 func TestVerdictHasAnswersAboutTheReasonItWasAsked(t *testing.T) {
 	t.Parallel()
 

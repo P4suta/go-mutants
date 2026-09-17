@@ -1,19 +1,6 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// The unit tier of the toolchain wrapper: every way `go` can misbehave, driven
-// by a scripted stand-in rather than by a real toolchain.
-//
-// A probe that hangs, one that answers garbage, one that exits non-zero, a
-// listing that fails — those are the failures this package exists to report, and
-// none of them can be installed. They used to be tested by compiling a small
-// program per case with a real `go build`, which cost a toolchain and about a
-// second and a half of the unit tier; the scripted stand-in
-// internal/testkit/mutantkit hands out answers them from a table instead.
-//
-// What is left needing a real toolchain — that the probe agrees with the `go`
-// this machine actually has — is in toolchain_integration_test.go.
-
 package gocmd_test
 
 import (
@@ -36,63 +23,21 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// TestMain turns this binary into the scripted `go` when it is started as one.
-// Every fake-driven test below runs this very binary as its toolchain, so
-// without the dispatch each of them would run the whole package again.
 func TestMain(m *testing.M) {
 	os.Exit(mutantkit.Main(m))
 }
 
-// probeTimeout bounds every scripted probe here.
-//
-// Two seconds rather than [gocmd.DefaultProbeTimeout]'s thirty, and the
-// difference is not impatience: the hanging probe below asserts that it came
-// back long before its own budget expired, and a budget equal to the default
-// would make that assertion true of a probe that had waited out the whole
-// thirty. The fake answers from a table, so anything approaching two seconds is
-// a fake that did not start rather than one that was slow.
 const probeTimeout = 2 * time.Second
 
-// hangTimeout is what the hanging probe is given.
-//
-// It is a deadline this test pays in full every run, so it is as short as the
-// claim allows. Two hundred milliseconds is far longer than the fake takes to
-// start and far shorter than [gocmd.DefaultProbeTimeout]; a machine so loaded
-// that the child has not started yet still produces the same verdict, because a
-// probe whose context expired before its process began is a probe that did not
-// answer either.
 const hangTimeout = 200 * time.Millisecond
 
-// hangSleep is how long the scripted probe sleeps for the hanging case, and it
-// is bounded at both ends rather than simply being large.
-//
-// The lower bound is the assertion the hanging test makes: a probe still
-// running at five times its deadline has already failed that test, so anything
-// past that adds nothing to the claim. The upper bound is
-// [gocmd.DefaultProbeTimeout], and that one was learned from the mutation gate.
-// A sleep longer than the default turns the mutant that widens the deadline —
-// negating `timeout <= 0`, so that a configured 200ms becomes the 30-second
-// default — into a mutant nothing can catch but the per-mutant timeout, waited
-// out twice, where a sleep shorter than the default makes it a test failure in
-// three seconds: the probe comes back with a parse error instead of the
-// deadline this test is about.
 const hangSleep = 3 * time.Second
 
-// fakeEnv is the environment a scripted toolchain runs with: the harness's
-// hermetic policy plus the two variables that make the child answer as `go`.
 func fakeEnv(t *testing.T, f *mutantkit.Fake) []string {
 	t.Helper()
 	return f.Env(testkit.Compose(t, testkit.Scratch(t)))
 }
 
-// TestLocateReportsAProbeThatExitsNonZero is the error a fresh machine hits
-// second: something is at the configured path and it is not a Go toolchain.
-//
-// What it printed is the whole diagnosis, so the error keeps it — and keeps the
-// command, because "`/opt/go/bin/go version` exited 3" is only actionable if the
-// reader can run it themselves. The recording keeps both as well, and the error
-// points at the event, which is what turns a one-line failure into the whole
-// command's preserved output.
 func TestLocateReportsAProbeThatExitsNonZero(t *testing.T) {
 	t.Parallel()
 
@@ -145,25 +90,11 @@ func TestLocateReportsAProbeThatExitsNonZero(t *testing.T) {
 		t.Errorf("RetainedOutput() = %q, want it to hold what the stand-in printed, %q",
 			failure.RetainedOutput(), garbage)
 	}
-	// The message a user reads has not changed.
 	if want := "exited with status 3"; !strings.Contains(err.Error(), want) {
 		t.Errorf("Error() = %q, want it to contain %q", err, want)
 	}
 }
 
-// TestLocateReportsAProbeThatHangs is the failure that has no other way to be
-// written: a `go` that never answers.
-//
-// It is the worst kind of hang to debug — a run that stops before it has started
-// — and the reason [gocmd.DefaultProbeTimeout] exists at all. There is no way to
-// install a toolchain that behaves this way, so before the scripted stand-in
-// this branch of [gocmd.LocateContext] had no test of any kind.
-//
-// The assertion is on the verdict rather than on the clock: the fake sleeps far
-// longer than the deadline it is given — fifteen times it, and three times the
-// bound asserted below — so a call that returned inside that bound can only
-// have killed it. See [hangSleep] for why "far longer" stops well short of
-// forever.
 func TestLocateReportsAProbeThatHangs(t *testing.T) {
 	t.Parallel()
 
@@ -186,24 +117,11 @@ func TestLocateReportsAProbeThatHangs(t *testing.T) {
 		t.Errorf("Error() = %q, want it to say %q: a hang is not an exit status and must not read as one",
 			err, want)
 	}
-	// Bounded away from the sleep rather than close to the deadline, and the
-	// difference is what a loaded machine can be held to. Five times the
-	// deadline -- one second -- read as "this deadline ended it", and on a
-	// windows runner the probe took 1.25 s and ended by that deadline anyway:
-	// the clock was measuring the runner, not the timeout.
-	//
-	// Half the sleep is what the clock can actually say. A probe that reached
-	// its own deadline is nowhere near it; a probe that ignored the deadline
-	// and returned when the fake stopped sleeping is past it by a wide margin.
-	// The strong claim -- that it was *this* deadline and not some other -- is
-	// the error message's, checked above, which says the timeout in words.
 	if elapsed, bound := time.Since(started), hangSleep/2; elapsed > bound {
 		t.Errorf("the probe took %s, want it ended by its own %s deadline rather than by the "+
 			"%s sleep (bounded at %s, which is half the sleep)",
 			elapsed, hangTimeout, hangSleep, bound)
 	}
-	// The command is attached to a timeout as much as to a failure: it is the
-	// one a reader has to run by hand to see the hang for themselves.
 	var failure *gocmd.Error
 	if !errors.As(err, &failure) || failure.Command() == nil {
 		t.Fatalf("err = %v, want a *gocmd.Error naming the probe that hung", err)
@@ -213,27 +131,11 @@ func TestLocateReportsAProbeThatHangs(t *testing.T) {
 	}
 }
 
-// TestLocateReportsAProbeThatCannotBeStarted is the third way the probe fails,
-// and the one that is not about the toolchain answering badly: it never became
-// a process at all.
-//
-// The stand-in here is not the scripted `go` but a file that is executable and
-// is not a program, which is a shape a PATH really does hold — a text file
-// somebody chmod'd, an archive extracted for the wrong platform. [exec.LookPath]
-// accepts it, because the executable bit is all it can check, and the failure
-// arrives from the operating system at Start.
-//
-// What the error has to carry is therefore the same as for the other two: the
-// code, the command a reader can run by hand, and the operating system's own
-// cause underneath, because "could not run `/opt/go/bin/go version`" without
-// "exec format error" under it names the symptom and hides the diagnosis.
 func TestLocateReportsAProbeThatCannotBeStarted(t *testing.T) {
 	t.Parallel()
 
 	name := "not-a-program"
 	if runtime.GOOS == "windows" {
-		// LookPath resolves by extension there, so the stand-in needs one it
-		// recognises before the operating system can refuse to start it.
 		name += ".exe"
 	}
 	path := filepath.Join(t.TempDir(), name)
@@ -255,9 +157,6 @@ func TestLocateReportsAProbeThatCannotBeStarted(t *testing.T) {
 	if want := "could not run `" + path + " version`"; !strings.Contains(err.Error(), want) {
 		t.Errorf("Error() = %q, want it to say %q", err, want)
 	}
-	// The process layer's own verdict has to survive being wrapped: a start
-	// failure is go-mutants failing to do its job, and a caller that has to
-	// tell that apart from a toolchain answering badly reads it from here.
 	if code := runner.CodeOf(err); code != runner.CodeProcessStartFailed {
 		t.Errorf("runner.CodeOf(err) = %q (err %v), want %q", code, err, runner.CodeProcessStartFailed)
 	}
@@ -270,17 +169,6 @@ func TestLocateReportsAProbeThatCannotBeStarted(t *testing.T) {
 	}
 }
 
-// TestLocateBoundsTheProbeWithTheDeadlineItWasGiven is the other half of
-// [gocmd.DefaultProbeTimeout]: not that a hang is caught, but that the number
-// caught it with is the one the caller asked for.
-//
-// The two rows are the whole of [gocmd.Options.Timeout]'s contract, and the
-// zero row is the one that cannot be seen from the outside. A probe given no
-// deadline and a probe given the default behave identically against a toolchain
-// that answers — the difference only shows against one that does not, which is
-// half a minute of waiting to assert. The recording is where it shows for
-// nothing: internal/runner writes the deadline it was handed into the exec
-// event, so what the option resolved to is a fact the trace already holds.
 func TestLocateBoundsTheProbeWithTheDeadlineItWasGiven(t *testing.T) {
 	t.Parallel()
 
@@ -322,16 +210,6 @@ func TestLocateBoundsTheProbeWithTheDeadlineItWasGiven(t *testing.T) {
 	}
 }
 
-// TestLocateQuotesTheConfiguredPathWithoutEscapingIt is why this package has
-// two renderers for a string instead of one.
-//
-// What another program printed is escaped, because the point there is to show
-// exactly which bytes came back. A path is not: the reader's next move is to
-// paste it back into the configuration file it came from or into a shell, and a
-// Windows path rendered with doubled backslashes is wrong for both. The
-// distinction is invisible on a message whose path holds nothing to escape, so
-// this one holds backslashes on every platform — separators on Windows, and an
-// ordinary, legal character in a POSIX filename everywhere else.
 func TestLocateQuotesTheConfiguredPathWithoutEscapingIt(t *testing.T) {
 	t.Parallel()
 
@@ -350,26 +228,12 @@ func TestLocateQuotesTheConfiguredPathWithoutEscapingIt(t *testing.T) {
 		t.Fatalf("the path %q holds nothing to escape, so this test cannot tell the two renderings "+
 			"apart and would pass on either", missing)
 	}
-	// The lookup failure underneath renders the very same path with %q, and the
-	// rendered error carries both — so this assertion is on which of the two
-	// this package chose rather than on the path merely appearing somewhere.
 	if !strings.Contains(err.Error(), quoted) {
 		t.Errorf("Error() = %q, want it to name the configured path as %s, unescaped", err, quoted)
 	}
 }
 
-// TestAbsoluteReportsAWorkingDirectoryThatIsGone pins the one way anchoring a
-// relative go executable can fail: the working directory cannot be named. The
-// failure is staged rather than arranged, because arranging it is a
-// per-platform trick — Linux answers getcwd with ENOENT for an unlinked
-// directory, macOS answers from the path it was given, Windows refuses the
-// unlink — and the branch is the same on all three.
-//
-// It is driven through the unexported function because [gocmd.Locate] cannot be
-// steered here from the outside: a relative explicit path reaches this code
-// only after exec.LookPath has resolved it.
 func TestAbsoluteReportsAWorkingDirectoryThatIsGone(t *testing.T) {
-	// No t.Parallel: the seam is process-wide.
 	gone := errors.New("getwd: no such file or directory")
 	gocmd.FailAbsolutePath(t, gone)
 
@@ -391,10 +255,6 @@ func TestAbsoluteReportsAWorkingDirectoryThatIsGone(t *testing.T) {
 	}
 }
 
-// TestToolchainStringNamesThePathAndTheVersion pins the one rendering every log
-// line and diagnostic in this repository quotes a toolchain with. Both halves
-// have to be in it: the version alone does not say which of two installations
-// answered, and the path alone does not say what it is.
 func TestToolchainStringNamesThePathAndTheVersion(t *testing.T) {
 	t.Parallel()
 
@@ -412,13 +272,6 @@ func TestToolchainStringNamesThePathAndTheVersion(t *testing.T) {
 	}
 }
 
-// TestLocateRejectsGarbageVersionOutput is why locating probes rather than
-// stats. Something on PATH called `go` that exits zero and answers with anything
-// else must be rejected here, not halfway through building test binaries.
-//
-// It is kept separate from a failed probe because the remedy differs: this one
-// is either not the Go toolchain at all or a format change worth a bug report,
-// and the message therefore quotes what was printed.
 func TestLocateRejectsGarbageVersionOutput(t *testing.T) {
 	t.Parallel()
 
@@ -464,9 +317,6 @@ func TestLocateRejectsGarbageVersionOutput(t *testing.T) {
 			if !strings.Contains(err.Error(), test.says) {
 				t.Errorf("Error() = %q, want it to say %q", err, test.says)
 			}
-			// An unreadable version line is a probe that failed too, however
-			// successfully the process exited: the reader needs the same
-			// command and the same bytes to see why.
 			var failure *gocmd.Error
 			if !errors.As(err, &failure) || failure.Command() == nil {
 				t.Fatalf("err = %v, want a *gocmd.Error naming the probe", err)
@@ -479,16 +329,6 @@ func TestLocateRejectsGarbageVersionOutput(t *testing.T) {
 	}
 }
 
-// TestListFailureCarriesTheToolchainOutput is the other half of what this
-// package hands out: a [gocmd.Toolchain.Command] fragment that a phase fills in
-// and runs, and whose failure has to arrive with the toolchain's own words.
-//
-// The version probe is the one command this package issues itself, so its own
-// error keeps the invocation and the output. Every other `go` command — the
-// listing here, a `go test -c`, a `go build` — is issued by the phase that needs
-// it, and what makes those diagnosable is that the pairing survives the process
-// boundary: the exit status, the bytes the go command wrote on *stderr*, and the
-// argv the phase composed, all reachable from one result.
 func TestListFailureCarriesTheToolchainOutput(t *testing.T) {
 	t.Parallel()
 
@@ -533,8 +373,6 @@ func TestListFailureCarriesTheToolchainOutput(t *testing.T) {
 		t.Errorf("Dir = %q, want the directory the phase chose, %q", invocation.Dir, dir)
 	}
 
-	// And the same command as the toolchain saw it, which is the assertion no
-	// injected runner can make: these are the arguments a real process received.
 	calls := f.Calls()
 	if len(calls) != 2 {
 		t.Fatalf("the toolchain was called %d times, want the probe and the listing: %+v", len(calls), calls)
@@ -547,32 +385,9 @@ func TestListFailureCarriesTheToolchainOutput(t *testing.T) {
 	}
 }
 
-// TestLocateAbsolutisesARelativeExplicitPath is why [gocmd.Toolchain.GoBin] is
-// a resolved path rather than the configured one.
-//
-// exec.LookPath hands a relative input straight back — `tools/go` resolves to
-// `tools/go` — and os/exec resolves a relative argv[0] against Cmd.Dir. Every
-// phase after locating sets Dir to a directory inside the snapshot, so a
-// relative GoBin would be looked for inside the tree under test: absent there,
-// or silently some other binary.
-//
-// The assertion is therefore not only that the path looks absolute but that the
-// located toolchain still runs when the command is issued from somewhere else
-// entirely, which is exactly what used to fail.
 func TestLocateAbsolutisesARelativeExplicitPath(t *testing.T) {
-	// No t.Parallel: t.Chdir is what gives a relative path a meaning, and the
-	// two are mutually exclusive.
-	//
-	// The workspace is the harness's scratch rather than t.TempDir, because the
-	// stand-in installed below is a copy of the running test binary on Windows
-	// and this test starts it twice. The operating system can hold a copy for a
-	// moment after its process exits, and the harness's scratch — under the
-	// keep policy CI runs with — is removed with retries; Go's own t.TempDir
-	// cleanup has none.
 	workspace := testkit.Scratch(t)
 	f := mutantkit.FakeGo(t)
-	// A version line no released toolchain will ever print, so that a result
-	// accidentally produced by the real `go` could not be mistaken for this one.
 	const release = "1.99.0"
 	want := "go version go" + release + " " + runtime.GOOS + "/" + runtime.GOARCH
 	f.Version(release)
@@ -596,8 +411,6 @@ func TestLocateAbsolutisesARelativeExplicitPath(t *testing.T) {
 		t.Fatalf("Version.Raw = %q, want %q: something other than the stand-in answered", tc.Version.Raw, want)
 	}
 
-	// The failure this guards against: the same toolchain, invoked from
-	// anywhere but the directory it was located in.
 	elsewhere := t.TempDir()
 	spec := tc.Command("version")
 	spec.Dir = elsewhere
@@ -615,11 +428,7 @@ func TestLocateAbsolutisesARelativeExplicitPath(t *testing.T) {
 	}
 }
 
-// TestLocateWithoutAToolchainOnPath is the error every fresh machine hits
-// first. It has to name a code, and it has to say what to do — an exec failure
-// repeated once per package is what this replaces.
 func TestLocateWithoutAToolchainOnPath(t *testing.T) {
-	// No t.Parallel: t.Setenv is how PATH is emptied.
 	t.Setenv("PATH", "")
 
 	tc, err := gocmd.Locate(gocmd.Options{})
@@ -641,8 +450,6 @@ func TestLocateWithoutAToolchainOnPath(t *testing.T) {
 	}
 }
 
-// TestLocateWithAMissingExplicitPath covers the other way to fail to find a
-// toolchain: one was configured and it is not there.
 func TestLocateWithAMissingExplicitPath(t *testing.T) {
 	t.Parallel()
 
@@ -659,13 +466,6 @@ func TestLocateWithAMissingExplicitPath(t *testing.T) {
 	}
 }
 
-// TestLocateIsCancellable pins that a probe respects the caller's context, so
-// a Ctrl-C during start-up does not have to wait out the probe timeout.
-//
-// The stand-in is named explicitly rather than looked up on PATH, because
-// [gocmd.LocateContext] resolves the executable before it consults the context:
-// on a machine with no `go` the failure would otherwise be the lookup's rather
-// than the cancellation's, and the test would pass for the wrong reason.
 func TestLocateIsCancellable(t *testing.T) {
 	t.Parallel()
 
@@ -686,13 +486,6 @@ func TestLocateIsCancellable(t *testing.T) {
 	if code := gocmd.CodeOf(err); code != gocmd.CodeVersionProbeFailed {
 		t.Fatalf("CodeOf(err) = %q (err %v), want %q", code, err, gocmd.CodeVersionProbeFailed)
 	}
-	// The code is the same for every way the probe can fail, so the code alone
-	// does not say this one was a cancellation. internal/runner reports a
-	// cancelled child as ExitCode -1 with a nil Err and TimedOut false -- which
-	// is indistinguishable from an ordinary non-zero exit unless the context is
-	// asked, and asking it is the line under test. Without this assertion the
-	// probe could stop asking and answer "exited with status -1" instead, and
-	// a user Ctrl-C'ing during start-up would be told their toolchain is broken.
 	if !strings.Contains(err.Error(), "was cancelled") {
 		t.Errorf("the failure does not say the probe was cancelled: %v", err)
 	}
@@ -701,9 +494,6 @@ func TestLocateIsCancellable(t *testing.T) {
 	}
 }
 
-// TestCommandIsAFragment pins what Command does and, just as importantly, what
-// it does not: it names the toolchain and passes the arguments through, and it
-// leaves every execution decision to the caller.
 func TestCommandIsAFragment(t *testing.T) {
 	t.Parallel()
 
@@ -724,16 +514,10 @@ func TestCommandIsAFragment(t *testing.T) {
 	if spec.Dir != "" || spec.Env != nil || spec.Timeout != 0 || spec.OutputLimit != 0 {
 		t.Errorf("Command filled in %+v; everything but Argv belongs to the caller", spec)
 	}
-	// The recording fields are the caller's too, and for the same reason: this
-	// package cannot know whether the command it is describing will be a
-	// version probe, a compile, or a coverage pass.
 	if spec.Trace != nil || spec.Kind != "" || spec.Subject != "" {
 		t.Errorf("Command labelled the spec %+v; the label belongs to the phase that issues the command", spec)
 	}
 
-	// The caller's slice must not be reachable through the spec: a phase that
-	// reuses an argument buffer would otherwise rewrite a command it already
-	// handed over.
 	args[0] = "mutated"
 	if spec.Argv[1] != "test" {
 		t.Errorf("Argv[1] = %q, want %q: Command aliased the caller's slice", spec.Argv[1], "test")
@@ -744,8 +528,6 @@ func TestCommandIsAFragment(t *testing.T) {
 	}
 }
 
-// TestErrorCodesAreDistinct guards against two failures sharing a code, and
-// against this package straying out of its allocated block.
 func TestErrorCodesAreDistinct(t *testing.T) {
 	t.Parallel()
 
@@ -764,8 +546,6 @@ func TestErrorCodesAreDistinct(t *testing.T) {
 		seen[code] = name
 	}
 
-	// The block is shared with internal/runner, so the two packages must not
-	// have chosen the same numbers.
 	for _, code := range []string{
 		runner.CodeSupervisionUnavailable,
 		runner.CodeProcessStartFailed,
@@ -778,7 +558,6 @@ func TestErrorCodesAreDistinct(t *testing.T) {
 	}
 }
 
-// TestErrorRendering pins the user-facing shape: code first, cause reachable.
 func TestErrorRendering(t *testing.T) {
 	t.Parallel()
 
@@ -800,7 +579,6 @@ func TestErrorRendering(t *testing.T) {
 	}
 }
 
-// execEvents is every exec event a recording kept, in order.
 func execEvents(sink *trace.MemorySink) []trace.Event {
 	var found []trace.Event
 	for _, event := range sink.Events() {

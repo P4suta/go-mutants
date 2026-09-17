@@ -5,13 +5,6 @@ package discover
 
 import "testing"
 
-// probeHintFor scans a function returning result type typ whose body is
-// `return <expr>` and reports whether the return-value candidate for that
-// statement carries a probe hint. The hint is present only when every operand
-// of the returned expression is both effect-free and panic-free, so the answer
-// pins the effect and panic analyses in effects.go through the one output they
-// gate. The result type selects which return-value rule fires (numeric, string,
-// bool, or a nillable type), so the caller pairs typ with an expr of that type.
 func probeHintFor(t *testing.T, typ, expr, rule string) bool {
 	t.Helper()
 	src := `package pkg
@@ -30,20 +23,9 @@ func F(a, b int, sl []int, x int32, bs []byte, e error, q Q, pq *R, p *int, s st
 	if !ok {
 		t.Fatalf("no %s candidate for %q", rule, expr)
 	}
-	// `Guard.Return` when this was written; `Guard.Probe` now, with the form
-	// named on the site rather than by the field. The construct under test is a
-	// return statement, so the form is asserted rather than assumed -- a probe
-	// hint of some other shape would answer this question yes while measuring
-	// something else.
 	return g.Probe != nil && g.Probe.Form == ProbeFormReturn
 }
 
-// TestAProbeHintNeedsEffectFreeAndPanicFreeOperands pins effectFree and
-// panicFree through the return probe hint they gate. Every row is a distinct
-// branch of the two analyses: an operator combination and an inert builtin and
-// a conversion are safe, while an index, a dereference, and a call are not — so
-// a mutation that widens either analysis lights up exactly one row that should
-// be absent.
 func TestAProbeHintNeedsEffectFreeAndPanicFreeOperands(t *testing.T) {
 	t.Parallel()
 
@@ -74,12 +56,6 @@ func TestAProbeHintNeedsEffectFreeAndPanicFreeOperands(t *testing.T) {
 	}
 }
 
-// TestAProbeHintReadsIntoCompositesAndSelectors pins compositeParts and
-// panicFreeSelector: a composite literal is probe-safe exactly when every part
-// is, and a selector is probe-safe exactly when it dereferences no pointer. A
-// slice or map whose element or key may panic is refused, and a field read
-// through a pointer is refused, while their value-only counterparts are
-// accepted.
 func TestAProbeHintReadsIntoCompositesAndSelectors(t *testing.T) {
 	t.Parallel()
 
@@ -106,11 +82,6 @@ func TestAProbeHintReadsIntoCompositesAndSelectors(t *testing.T) {
 	}
 }
 
-// TestAProbeHintRefusesAComparisonThatMayPanic pins comparesWithoutPanic
-// through the probe hint: comparing two integers cannot panic and is
-// probe-safe, but a comparison that reaches interface dynamic types — an error
-// against nil, a slice against nil — is refused because the runtime comparison
-// can panic on an incomparable dynamic type.
 func TestAProbeHintRefusesAComparisonThatMayPanic(t *testing.T) {
 	t.Parallel()
 
@@ -125,10 +96,6 @@ func TestAProbeHintRefusesAComparisonThatMayPanic(t *testing.T) {
 	}
 }
 
-// TestABoolLiteralMapKeyIsAFormCSite pins the map arm of the KeyValueExpr case
-// in wrappablePosition: a boolean literal used as a map key is an ordinary
-// value that may be parenthesised, so it is a Form C site and carries a
-// true-to-false candidate.
 func TestABoolLiteralMapKeyIsAFormCSite(t *testing.T) {
 	t.Parallel()
 

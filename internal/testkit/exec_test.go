@@ -16,23 +16,11 @@ import (
 	"time"
 )
 
-// execHelperEnv both switches the helper child on and names the status it
-// should exit with. It does not begin with GO_MUTANTS_, because the environment
-// policy strips that whole prefix from every child it composes.
 const execHelperEnv = "TESTKIT_EXEC_HELPER"
 
-// TestExecHelperProcess is not a test. It is the child every test in this file
-// starts: the test binary re-executed with one test selected, which is the only
-// portable way to get a process that prints known bytes and exits with a chosen
-// status without compiling a program first.
-//
-// It skips when it was not asked for, rather than returning silently. A bare
-// return is a pass, and a pass is a claim about work this process did not do.
 func TestExecHelperProcess(t *testing.T) {
 	SkipUnlessHelper(t, execHelperEnv)
 	status := os.Getenv(execHelperEnv)
-	// The writes are unchecked deliberately: the parent reads what arrived, and
-	// a helper that reported a write failure to nobody would only hide it.
 	_, _ = fmt.Fprintf(os.Stdout, "argv=%q\n", os.Args[1:])
 	if cwd, err := os.Getwd(); err == nil {
 		_, _ = fmt.Fprintf(os.Stdout, "cwd=%s\n", cwd)
@@ -52,21 +40,10 @@ func TestExecHelperProcess(t *testing.T) {
 	os.Exit(code)
 }
 
-// helperArgv is the command that re-executes this test binary as the helper.
 func helperArgv(extra ...string) []string {
 	return append([]string{os.Args[0], "-test.run=^TestExecHelperProcess$", "--"}, extra...)
 }
 
-// TestExecCapturesExitCodeAndOutput states what a caller gets back: the status
-// as data rather than as a failure, and both streams in the order the child
-// wrote them.
-//
-// A child that ran and failed is not an error — every caller of a mutation
-// runner needs a non-zero status to be a fact about the test rather than
-// something that ends the run — so [Result.Err] is reserved for a failure to
-// start or supervise the process. That is the same separation internal/runner
-// makes, and a helper that conflated them would make a test asserting on exit 1
-// impossible to write.
 func TestExecCapturesExitCodeAndOutput(t *testing.T) {
 	t.Parallel()
 
@@ -101,15 +78,6 @@ func TestExecCapturesExitCodeAndOutput(t *testing.T) {
 	}
 }
 
-// TestExecRunsFromACleanup is why the deadline is not derived from the test's
-// own context.
-//
-// t.Context() is cancelled *before* a test's cleanups run — that is what it is
-// for — so a child started from a cleanup with a context derived from it would
-// be killed before it had run an instruction. Cleanups are exactly where the
-// harness's most important children live: a snapshot removed, a repository torn
-// down, a temporary tree swept. So [Exec] detaches from the cancellation and
-// keeps only the deadline.
 func TestExecRunsFromACleanup(t *testing.T) {
 	t.Parallel()
 
@@ -129,10 +97,6 @@ func TestExecRunsFromACleanup(t *testing.T) {
 	})
 }
 
-// TestExecContextReportsATimeoutRatherThanAFailure drives the branch every
-// caller's failure message depends on and nothing had ever reached: at the
-// default sixty seconds a test of it would have taken a minute, so the deadline
-// is the caller's to choose.
 func TestExecContextReportsATimeout(t *testing.T) {
 	t.Parallel()
 
@@ -160,10 +124,6 @@ func TestExecContextReportsATimeout(t *testing.T) {
 	}
 }
 
-// TestExecContextReportsAnAbandonedChild keeps the two ways a child can be cut
-// short apart. A deadline is this package deciding the child had long enough; a
-// cancellation is the caller walking away, and the remedy — and the message — is
-// different.
 func TestExecContextReportsAnAbandonedChild(t *testing.T) {
 	t.Parallel()
 
@@ -185,8 +145,6 @@ func TestExecContextReportsAnAbandonedChild(t *testing.T) {
 	}
 }
 
-// TestRequireExitReportsAnAbandonedChild states the third message, so a
-// cancelled run does not read as a test that failed.
 func TestRequireExitReportsAnAbandonedChild(t *testing.T) {
 	t.Parallel()
 
@@ -198,13 +156,6 @@ func TestRequireExitReportsAnAbandonedChild(t *testing.T) {
 	}
 }
 
-// TestExecSeparatesStdoutFromTheCombinedOutput is what lets a caller parse a
-// child's answer.
-//
-// `git rev-parse HEAD` writes a hash to stdout and every hint, advice and
-// progress line to stderr, and a caller that got the two concatenated would
-// parse the hints as part of the hash. The combined stream is still what a
-// failure quotes, because the explanation is usually on stderr.
 func TestExecSeparatesStdoutFromTheCombinedOutput(t *testing.T) {
 	t.Parallel()
 
@@ -223,10 +174,6 @@ func TestExecSeparatesStdoutFromTheCombinedOutput(t *testing.T) {
 	}
 }
 
-// TestResultCommandQuotesEveryArgument keeps the reproduction line in a failure
-// message paste-able: a fixture directory with a space in its name, or an
-// argument with a `$` in it, is one argument, and a line that ran them together
-// would be a different command from the one that failed.
 func TestResultCommandQuotesEveryArgument(t *testing.T) {
 	t.Parallel()
 
@@ -241,13 +188,6 @@ func TestResultCommandQuotesEveryArgument(t *testing.T) {
 	}
 }
 
-// TestExecNeverUsesAShell pins the promise internal/runner makes about the same
-// thing one layer down: an argument vector is a vector, and a path with a space,
-// a `$` or a `;` in it is a path with a space, a `$` and a `;` in it.
-//
-// A test corpus with a directory called `two words` is a fixture this project
-// wants to be able to add, and a harness that expanded its arguments would turn
-// that fixture into two arguments and a mystery.
 func TestExecNeverUsesAShell(t *testing.T) {
 	t.Parallel()
 
@@ -261,8 +201,6 @@ func TestExecNeverUsesAShell(t *testing.T) {
 	}
 }
 
-// TestExecReportsACommandThatCouldNotStart keeps a typo in an argv from looking
-// like a test that failed.
 func TestExecReportsACommandThatCouldNotStart(t *testing.T) {
 	t.Parallel()
 
@@ -275,14 +213,6 @@ func TestExecReportsACommandThatCouldNotStart(t *testing.T) {
 	}
 }
 
-// TestRequireExitQuotesTheChildOutputOnMismatch is the assertion helper's whole
-// reason for existing.
-//
-// A `go test -c` that failed, a suite that went red under a mutant, a `git` that
-// refused a commit — every one of them explains itself on stdout, and a helper
-// that reported only the status turns a two-second diagnosis into a re-run with
-// the command copied out by hand. In CI there is no re-run: the log is all there
-// is.
 func TestRequireExitQuotesTheChildOutputOnMismatch(t *testing.T) {
 	t.Parallel()
 
@@ -302,9 +232,6 @@ func TestRequireExitQuotesTheChildOutputOnMismatch(t *testing.T) {
 	}
 }
 
-// TestRequireExitReportsATimeoutRatherThanAnExitStatus keeps the two apart in
-// the message, because they have different causes and different remedies: a
-// status is the child's opinion, and a timeout means nobody has one.
 func TestRequireExitReportsATimeoutRatherThanAnExitStatus(t *testing.T) {
 	t.Parallel()
 
@@ -326,8 +253,6 @@ func TestRequireExitReportsATimeoutRatherThanAnExitStatus(t *testing.T) {
 	}
 }
 
-// TestRequireExitReportsAChildThatCouldNotBeStarted separates the third case:
-// the harness itself failed, and no assertion about the child means anything.
 func TestRequireExitReportsAChildThatCouldNotBeStarted(t *testing.T) {
 	t.Parallel()
 
@@ -344,9 +269,6 @@ func TestRequireExitReportsAChildThatCouldNotBeStarted(t *testing.T) {
 	}
 }
 
-// TestRequireExitSaysNothingWhenTheStatusMatches keeps the helpers quiet on the
-// happy path: a passing test that logged its child's output would bury the one
-// that did not.
 func TestRequireExitSaysNothingWhenTheStatusMatches(t *testing.T) {
 	t.Parallel()
 
@@ -360,9 +282,6 @@ func TestRequireExitSaysNothingWhenTheStatusMatches(t *testing.T) {
 	}
 }
 
-// TestRequireOutputNamesEveryMissingNeedle reports with Errorf rather than
-// Fatalf on purpose: a step that expected four lines and got two should say
-// which two are missing in one run.
 func TestRequireOutputNamesEveryMissingNeedle(t *testing.T) {
 	t.Parallel()
 
@@ -382,9 +301,6 @@ func TestRequireOutputNamesEveryMissingNeedle(t *testing.T) {
 	}
 }
 
-// TestRequireNoOutputNamesTheNeedleThatAppeared is the other direction, and it
-// is the one an absence-based assertion needs: "the run printed no warning" is a
-// claim, and a claim needs the text that broke it.
 func TestRequireNoOutputNamesTheNeedleThatAppeared(t *testing.T) {
 	t.Parallel()
 
@@ -399,8 +315,6 @@ func TestRequireNoOutputNamesTheNeedleThatAppeared(t *testing.T) {
 	}
 }
 
-// TestExecRefusesAnEmptyArgv keeps a caller that built its argv from a slice
-// that turned out to be empty from waiting sixty seconds for nothing.
 func TestExecRefusesAnEmptyArgv(t *testing.T) {
 	t.Parallel()
 
@@ -409,23 +323,6 @@ func TestExecRefusesAnEmptyArgv(t *testing.T) {
 	rec.first(t, "Exec with no argv")
 }
 
-// recorder is a [testing.TB] that records what a helper reported instead of
-// failing the test.
-//
-// It is how an assertion helper's *message* gets tested, which is the only part
-// of it that matters: every one of these helpers exists because the message it
-// prints is what somebody reads in CI. The embedded TB supplies the interface's
-// unexported methods and nothing else — every method a helper here calls is
-// overridden below, and a helper that started calling another one would panic on
-// a nil embedded value rather than quietly pass.
-//
-// A recorder made by [expectFatal] also *stops* at the first Fatalf, which a
-// plain one cannot. That difference is not cosmetic: a helper's Fatalf never
-// returns under a real testing.T, so everything after it is written on the
-// assumption that it is unreachable — and a fake that let it run carried
-// TestComposeRefusesAScratchItCannotUse straight on into the directory creation
-// it had just refused, writing `relative/scratch/home` into this package's own
-// source directory.
 type recorder struct {
 	testing.TB
 	stop   bool
@@ -435,12 +332,6 @@ type recorder struct {
 	skips  []string
 }
 
-// expectFatal runs a call that is expected to end the test, and returns what it
-// reported.
-//
-// The call runs on a goroutine of its own so that the recorder can end it with
-// runtime.Goexit, which is how testing.T's own FailNow stops a test: unwinding
-// that goroutine leaves the real test running to make its assertions.
 func expectFatal(t testing.TB, call func(testing.TB)) *recorder {
 	t.Helper()
 	rec := &recorder{TB: t, stop: true}
@@ -453,7 +344,6 @@ func expectFatal(t testing.TB, call func(testing.TB)) *recorder {
 	return rec
 }
 
-// first returns the first fatal report, failing the test when there was none.
 func (r *recorder) first(t testing.TB, what string) string {
 	t.Helper()
 	if len(r.fatals) == 0 {
@@ -483,6 +373,4 @@ func (r *recorder) Skipf(format string, args ...any) {
 	r.skips = append(r.skips, fmt.Sprintf(format, args...))
 }
 
-// Context is what [Exec] derives its timeout from; the recorder's is never
-// cancelled, because a recorder outlives no test.
 func (r *recorder) Context() context.Context { return context.Background() }

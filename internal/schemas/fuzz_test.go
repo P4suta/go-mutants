@@ -10,15 +10,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/schemas"
 )
 
-// FuzzValidate is the promise this package makes to the two commands that read
-// somebody else's file.
-//
-// Nothing on the writing path validates -- a schema violation in a document
-// go-mutants wrote is a bug for a test to catch -- so every call to Validate in
-// a shipped binary is a call on bytes a user supplied: `report validate FILE`,
-// `report merge`, and `trace validate`. A validator that panicked on a
-// malformed file would turn "this document is not one of ours" into a crash,
-// which is the one answer a validator may not give.
 func FuzzValidate(f *testing.F) {
 	for _, documentType := range schemas.DocumentTypes() {
 		f.Add(documentType, `{}`)
@@ -51,8 +42,6 @@ func FuzzValidate(f *testing.F) {
 		if refusal.Error() == "" {
 			t.Fatalf("Validate(%q, %q) refused with an empty message", documentType, document)
 		}
-		// Purity: the same bytes get the same answer. A validator that cached
-		// a compiled schema and mutated it while walking would not.
 		if second := schemas.Validate(documentType, []byte(document)); (second == nil) != (err == nil) {
 			t.Fatalf("Validate(%q, %q) answered differently the second time: %v then %v",
 				documentType, document, err, second)

@@ -24,34 +24,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// `explain` is the join nothing else made.
-//
-// Every fact it prints was already written down. The report says a mutant
-// survived, which packages cover it, how many passes it took, and what the
-// tests were; the recording says which binaries ran, with which arguments, in
-// which directory, for how long, and where their output was preserved. Nobody
-// had joined the two *per mutant*, so answering "why did this one survive, and
-// how do I see it for myself" meant opening two documents and matching a
-// sixty-four character identity across them by eye.
-//
-// Nothing here measures anything, and nothing here guesses. A section whose
-// document is missing says so — "no recording, so …" — rather than composing a
-// plausible command out of the report alone: a reproduction that does not
-// reproduce is worse than no reproduction, because somebody will paste it and
-// believe what comes back.
-//
-// The output is prose by default and a document under `--json`, and the two are
-// one value read twice. That is what makes the second safe: `--json` used to be
-// refused on the argument that the report and the recording *are* the
-// machine-readable form and a third encoding would be a third thing to keep in
-// step with them — which was right about the danger and wrong about the facts.
-// Five things this command prints are in neither document: the command to
-// paste, the command to rebuild the binary with, this mutant's share of each
-// stage, the tail of what its last pass printed, and the judgements about
-// whether the first of those can be trusted. A reader who wants the lossless
-// claim is pointed at the report by the document's own `source` block, which is
-// what a derived document owes its consumer.
-
 const explainLong = `Say why one mutant got its verdict, and how to reproduce it.
 
 It reads the run report and, when the run recorded one, the trace beside it,
@@ -90,7 +62,6 @@ argument vector are all there, and PowerShell spells the first two differently.
 the recording, which are the machine-readable forms; a v2 with something to say
 that neither document carries may add one.`
 
-// explainOptions holds the flag destinations for one `explain`.
 type explainOptions struct {
 	report  string
 	run     string
@@ -99,18 +70,14 @@ type explainOptions struct {
 	noColor bool
 }
 
-// newExplainCommand builds the `explain` command.
 func newExplainCommand() *cobra.Command {
 	o := &explainOptions{}
 	cmd := &cobra.Command{
 		Use:   "explain TARGET [flags]",
 		Short: "Say why one mutant got its verdict, and how to reproduce it",
 		Long:  explainLong,
-		// Positional arguments are accepted here and judged in execute, so that
-		// the refusal can say what a target is instead of cobra reporting
-		// "accepts 1 arg(s), received 0".
-		Args: cobra.ArbitraryArgs,
-		RunE: o.execute,
+		Args:  cobra.ArbitraryArgs,
+		RunE:  o.execute,
 	}
 	flags := cmd.Flags()
 	flags.StringVar(&o.report, "report", "",
@@ -127,7 +94,6 @@ func newExplainCommand() *cobra.Command {
 	return cmd
 }
 
-// execute is `explain`'s body.
 func (o *explainOptions) execute(cmd *cobra.Command, args []string) error {
 	if len(args) != 1 {
 		return usagef("explain takes exactly one target, as in `go-mutants explain bf513c0d` or " +
@@ -137,10 +103,6 @@ func (o *explainOptions) execute(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// The target is read before the document, because which target it is
-	// decides whether there has to be one. A mutant is a row of a report and
-	// cannot be explained without it; a position is a question about the
-	// workspace, and a fresh checkout with no run recorded still has an answer.
 	where, isPosition := parsePosition(args[0])
 	document, source, err := o.readReport(o.listingsTo(cmd), isPosition)
 	if err != nil {
@@ -154,12 +116,6 @@ func (o *explainOptions) execute(cmd *cobra.Command, args []string) error {
 	return o.explainMutant(cmd, document, source, args[0], color)
 }
 
-// listingsTo is where a "which did you mean" listing goes.
-//
-// Standard output, unless a document was asked for. A `--json` stream is a
-// document or nothing: a listing printed into it would leave a consumer with
-// bytes that parse as neither, so under `--json` the matches go to standard
-// error, immediately above the refusal that sent the reader looking for them.
 func (o *explainOptions) listingsTo(cmd *cobra.Command) io.Writer {
 	if o.json {
 		return cmd.ErrOrStderr()
@@ -167,12 +123,6 @@ func (o *explainOptions) listingsTo(cmd *cobra.Command) io.Writer {
 	return cmd.OutOrStdout()
 }
 
-// checkFlags refuses the one command line that has no reading.
-//
-// It is a worded refusal rather than cobra's flag-group message, for the reason
-// `--explain` with `--json` is one: neither flag is wrong on its own, so the
-// remedy is to drop one rather than to fix a value, and the reason is worth a
-// sentence.
 func (o *explainOptions) checkFlags() error {
 	if o.report != "" && o.run != "" {
 		return &Error{
@@ -186,12 +136,6 @@ func (o *explainOptions) checkFlags() error {
 	return nil
 }
 
-// readReport resolves the document to explain, and the name to print it under.
-//
-// Three sources and one rule: what the user named wins, and with nothing named
-// it is the run `report latest` would print. A module with no runs recorded is
-// refused with the code and the words that command uses, because it is the same
-// absence — this command's whole output is about one run, and there is none.
 func (o *explainOptions) readReport(out io.Writer, optional bool) (*report.Report, string, error) {
 	switch {
 	case o.report != "":
@@ -202,19 +146,12 @@ func (o *explainOptions) readReport(out io.Writer, optional bool) (*report.Repor
 	default:
 		document, source, err := storedRun(out, "")
 		if err != nil && optional && absentHistory(err) {
-			// A position query does not need a run: the discovery pass answers
-			// what is there, and the outcome column has an honest answer for a
-			// mutant no document mentions. Only the two absences are tolerated
-			// — no module, no run — because a store that cannot be read is a
-			// problem worth reporting whatever was asked for.
 			return nil, "", nil
 		}
 		return document, source, err
 	}
 }
 
-// absentHistory reports whether a failure is one of the two ways there is
-// simply nothing recorded here yet.
 func absentHistory(err error) bool {
 	var coded *Error
 	if !errors.As(err, &coded) {
@@ -223,15 +160,6 @@ func absentHistory(err error) bool {
 	return coded.Code == CodeNoStoredRun || coded.Code == CodeNotAModuleRoot
 }
 
-// storedRun reads one run out of this module's history, or the newest when
-// nothing was named.
-//
-// A named run is resolved as a *prefix*, the way the mutant target is, and for
-// the same reason: a run id is a stamp and four hex characters, nobody retypes
-// one, and `20260907T120000Z-a1b2` pasted with its last character missing
-// should not be a different question. The three answers are the target's three
-// as well — one, none, several — and an ambiguous prefix lists what it matched
-// on the way out.
 func storedRun(out io.Writer, prefix string) (*report.Report, string, error) {
 	found, err := readHistory()
 	if err != nil {
@@ -276,8 +204,6 @@ func storedRun(out io.Writer, prefix string) (*report.Report, string, error) {
 	return document, stored.Path, err
 }
 
-// writeRunMatches lists every run a `--run` prefix named, in the columns
-// `report list` uses so that the two listings can be read as one.
 func writeRunMatches(w io.Writer, matches []report.StoredRun) error {
 	var b strings.Builder
 	b.WriteString("matched " + countNoun(len(matches), "recorded run") + "\n")
@@ -288,13 +214,6 @@ func writeRunMatches(w io.Writer, matches []report.StoredRun) error {
 	return emit(w, b.String())
 }
 
-// parseReport reads one document and decodes it.
-//
-// It is deliberately not [readReport], which validates against the published
-// schema first. That check is what `report merge` and `report validate` are
-// for: they produce or certify documents. This command only reads one, and a
-// document an older release wrote — or one a consumer trimmed on its way into a
-// bug report — is still worth explaining as far as it goes.
 func parseReport(path string) (*report.Report, error) {
 	data, err := readFile(path)
 	if err != nil {
@@ -304,12 +223,6 @@ func parseReport(path string) (*report.Report, error) {
 	if err != nil {
 		return nil, notAReport(path, "read", err)
 	}
-	// A workspace run publishes one document holding one run report per module,
-	// and what this command explains is a mutant or a place -- both of which
-	// belong to exactly one of those modules. Merging the modules' reports is
-	// how the rest of the command goes on asking one document a question: their
-	// mutants, rejections and skips are disjoint by construction, because a
-	// mutant belongs to one module and a module's paths are its own.
 	if documentType == report.WorkspaceDocumentType {
 		workspace, parseErr := report.ParseWorkspace(data)
 		if parseErr != nil {
@@ -324,19 +237,6 @@ func parseReport(path string) (*report.Report, error) {
 	return document, nil
 }
 
-// flattenWorkspace is a workspace run as one document to explain.
-//
-// The run's own facts -- its id, its status, its clock, the tree it measured --
-// are the same in every module's report, so the first is taken whole and the
-// rest are folded into it: the mutants, the rejections, the skips and the
-// ledger rows of every module, each of which belongs to one module and cannot
-// collide with another's. What it is *not* is a run report anybody publishes:
-// `workspace.module_path` names the first module and would be a lie about the
-// rest, so this value never leaves the command.
-//
-// The paths are lifted to the workspace root on the way, which is the one thing
-// a reader has to be able to act on: `app.go` names two files in a workspace
-// and `app/app.go` names one.
 func flattenWorkspace(workspace *report.WorkspaceReport) *report.Report {
 	if len(workspace.Modules) == 0 {
 		return &report.Report{
@@ -370,14 +270,11 @@ func flattenWorkspace(workspace *report.WorkspaceReport) *report.Report {
 	return &flat
 }
 
-// A position is a `path[:line]` target: which file, and which line of it when
-// the user named one.
 type position struct {
 	path string
 	line int
 }
 
-// String renders the position as it was named.
 func (p position) String() string {
 	if p.line == 0 {
 		return p.path
@@ -385,21 +282,6 @@ func (p position) String() string {
 	return p.path + ":" + strconv.Itoa(p.line)
 }
 
-// parsePosition decides whether a target names a place in the source rather
-// than a mutant, and takes it apart when it does.
-//
-// The rule has to separate a path from a hex prefix, and the two really can
-// look alike: `abcd` is a legal prefix and a legal file name. What settles it is
-// that a path here means a path *in the workspace*, so it either carries a
-// separator or ends in `.go` — and neither is something a mutant id can
-// contain. A bare `clamp` is therefore a malformed prefix rather than a file,
-// which is the answer that leaves the user something to fix.
-//
-// The path is cleaned, so `./clamp.go` and `internal/./x/../clamp.go` are the
-// spellings a shell's tab completion produces rather than paths nothing
-// matches. Cleaning happens *after* the reading above, because `./abcd` is a
-// path and `abcd` is a prefix, and a clean that ran first would turn one into
-// the other.
 func parsePosition(target string) (position, bool) {
 	raw, line := stripCoordinates(target)
 	slashed := filepath.ToSlash(raw)
@@ -409,19 +291,6 @@ func parsePosition(target string) (position, bool) {
 	return position{path: path.Clean(slashed), line: line}, true
 }
 
-// stripCoordinates lifts a trailing `:line` or `:line:col` off a target and
-// returns the path and the line.
-//
-// Twice at most, from the right, and only over digits — which is what lets the
-// spelling `explain` itself prints be pasted back in. `clamp.go:41:7` is the
-// identity block's own `position` row, and a reader who selects it is asking
-// about line 41; the column is dropped because a mutant is matched by the lines
-// its span touches and no finer.
-//
-// Right to left and bounded is also what keeps a Windows path whole:
-// `C:\src\clamp.go` ends in no digits, so the drive letter's colon is never
-// read as a coordinate's, and `C:\src\clamp.go:41` gives up after the one it
-// really carries.
 func stripCoordinates(target string) (string, int) {
 	rest, line := target, 0
 	for range 2 {
@@ -431,8 +300,6 @@ func stripCoordinates(target string) (string, int) {
 		}
 		head, tail := rest[:cut], rest[cut+1:]
 		number, err := strconv.Atoi(tail)
-		// The round trip refuses "007" and "+7", which are not coordinates
-		// anything prints and are more likely to be part of a file name.
 		if err != nil || number < 1 || strconv.Itoa(number) != tail {
 			break
 		}
@@ -441,19 +308,6 @@ func stripCoordinates(target string) (string, int) {
 	return rest, line
 }
 
-// inWorkspace resolves the position against the workspace root and refuses one
-// that names nothing there.
-//
-// An absolute path is what an editor's "copy path" gives, so it is accepted and
-// relativised rather than refused — but only when it really is inside the
-// workspace, since a mutant's path is module-relative and there is nothing to
-// compare an outside file against.
-//
-// A path that names no file is a refusal rather than an empty account, and that
-// is the whole point of the check. Two empty sections and exit 0 read as "there
-// is nothing here", which is the one answer that is never true of a file that
-// does not exist — and it is checked before the discovery pass, so a typo costs
-// a message rather than a copy of the workspace.
 func (p position) inWorkspace(root string) (position, error) {
 	local := p.path
 	if filepath.IsAbs(filepath.FromSlash(local)) {
@@ -477,7 +331,6 @@ func (p position) inWorkspace(root string) (position, error) {
 	return p, nil
 }
 
-// notInWorkspace is the refusal for a path this workspace has no file at.
 func (p position) notInWorkspace(why string) error {
 	return &Error{
 		Code:    CodeUsage,
@@ -486,41 +339,19 @@ func (p position) notInWorkspace(why string) error {
 	}
 }
 
-// holdsSite reports whether a suppressed site is at this position.
-//
-// A whole-file reason — generated, cgo, excluded — carries line 0, because the
-// file was never opened and there is no site in it to name. It answers for
-// every line of that file rather than for none: somebody asking about line six
-// of a generated file is asking exactly the question that reason answers, and
-// comparing 0 to 6 hid the one thing there was to say.
 func (p position) holdsSite(path string, line int) bool {
 	return path == p.path && (line == 0 || p.line == 0 || p.line == line)
 }
 
-// holdsSpan reports whether a mutant is at this position.
-//
-// The interval is the one `--changed` uses, and for the same reason: a mutant
-// covers the lines its original bytes touch, so a multi-line condition mutated
-// at its first line is a mutant *on* the third line too — which is exactly what
-// somebody asking about the third line wants to know. See [coverage.EndLine].
 func (p position) holdsSpan(path string, start, end int) bool {
 	return path == p.path && (p.line == 0 || (p.line >= start && p.line <= end))
 }
 
-// A subject is the mutant being explained: one this run measured, or one
-// validation refused.
-//
-// The two are different rows of one document and are found by one lookup,
-// because a prefix copied out of `run --explain` names a rejection and a prefix
-// copied out of a listing names a mutant — and a resolver that knew only about
-// the second would answer "no such mutant" for a mutant the same file names
-// three lines further down.
 type subject struct {
 	mutant   *report.Mutant
 	rejected *report.Rejected
 }
 
-// id is the full activation identity.
 func (s subject) id() string {
 	if s.mutant != nil {
 		return s.mutant.ID
@@ -528,7 +359,6 @@ func (s subject) id() string {
 	return s.rejected.ID
 }
 
-// displayID is the short form the console and the listing print.
 func (s subject) displayID() string {
 	if s.mutant != nil {
 		return s.mutant.DisplayID
@@ -536,7 +366,6 @@ func (s subject) displayID() string {
 	return s.rejected.DisplayID
 }
 
-// location is `path:line:col`.
 func (s subject) location() string {
 	if s.mutant != nil {
 		return s.mutant.Path + ":" + strconv.Itoa(s.mutant.Line) + ":" + strconv.Itoa(s.mutant.Column)
@@ -544,8 +373,6 @@ func (s subject) location() string {
 	return s.rejected.Path + ":" + strconv.Itoa(s.rejected.Line) + ":" + strconv.Itoa(s.rejected.Column)
 }
 
-// rule is `family/rule`, or the rule alone for a rejection, which is all a
-// rejection row carries.
 func (s subject) rule() string {
 	if s.mutant != nil {
 		return s.mutant.Family + "/" + s.mutant.Rule
@@ -553,8 +380,6 @@ func (s subject) rule() string {
 	return s.rejected.Rule
 }
 
-// outcome is the verdict as the document spells it, and "rejected" for a mutant
-// that has none because it never existed.
 func (s subject) outcome() string {
 	if s.mutant != nil {
 		return s.mutant.Outcome.String()
@@ -562,8 +387,6 @@ func (s subject) outcome() string {
 	return "rejected"
 }
 
-// subjectsOf returns every mutant and rejection in the document, in document
-// order, so that one walk answers both.
 func subjectsOf(r *report.Report) []subject {
 	all := make([]subject, 0, len(r.Mutants)+len(r.Rejected))
 	for i := range r.Mutants {
@@ -575,18 +398,6 @@ func subjectsOf(r *report.Report) []subject {
 	return all
 }
 
-// resolveSubject finds the one mutant a prefix names, and returns the matches
-// when there is not exactly one.
-//
-// The shape is checked with `run --mutant`'s own rule and for its own reason: a
-// value in the wrong alphabet, or shorter than internal/mutation's minimum,
-// could never name a mutant, and saying so is a better answer than an empty
-// match list. What it matches is then a question about this document, and the
-// two ways that can fail — nothing, or several — are the two `run --mutant` has,
-// under the same code.
-//
-// The comparison is against the full identity alone, because a display id is a
-// prefix of it: one comparison answers both spellings the target accepts.
 func resolveSubject(r *report.Report, prefix string) (subject, []subject, error) {
 	if err := checkMutantPrefix(prefix); err != nil {
 		return subject{}, nil, err
@@ -616,18 +427,11 @@ func resolveSubject(r *report.Report, prefix string) (subject, []subject, error)
 	}
 }
 
-// explainMutant is the command's main path: one mutant, from both documents.
 func (o *explainOptions) explainMutant(
 	cmd *cobra.Command, r *report.Report, source, prefix string, color bool,
 ) error {
 	found, matches, err := resolveSubject(r, prefix)
 	if err != nil {
-		// The matches are written to standard output before the refusal is
-		// returned, because they are the answer to "which did you mean" and the
-		// refusal is only the reason there has to be one. They are a listing
-		// rather than part of the message for the reason a listing is never
-		// folded into an error: one mutant per line is what a reader scans and
-		// what a `grep` finds.
 		if len(matches) > 0 {
 			if writeErr := writeMatches(o.listingsTo(cmd), color, matches); writeErr != nil {
 				return writeErr
@@ -640,9 +444,6 @@ func (o *explainOptions) explainMutant(
 	if err != nil {
 		return err
 	}
-	// Gathered once, rendered as whichever form was asked for. The prose and
-	// the document are two readings of one value, which is what keeps the
-	// second from becoming a third thing to hold in step with the first.
 	document := gatherAccount(r, source, found, rec)
 	if o.json {
 		return writeExplainJSON(cmd.OutOrStdout(), document)
@@ -652,7 +453,6 @@ func (o *explainOptions) explainMutant(
 	return e.out.Flush()
 }
 
-// writeMatches lists every mutant a prefix named.
 func writeMatches(w io.Writer, color bool, matches []subject) error {
 	e := newExplainer(w, color)
 	e.printf("%s\n", e.paint(styleExplainHeader, "matched "+countNoun(len(matches), "mutant")))
@@ -662,14 +462,6 @@ func writeMatches(w io.Writer, color bool, matches []subject) error {
 	return e.out.Flush()
 }
 
-// explainAt is the command's other path: a place in the source rather than an
-// identity.
-//
-// It runs a discovery pass over the workspace the command was typed in, which
-// is what `list` does and for the same reason: the coordinates of a site
-// discovery passed over exist only inside a pass, and a report carries the
-// count per file rather than the positions. The report is still read, so that
-// every mutant printed carries what became of it.
 func (o *explainOptions) explainAt(
 	cmd *cobra.Command, r *report.Report, source string, where position, color bool,
 ) error {
@@ -689,9 +481,6 @@ func (o *explainOptions) explainAt(
 	if err != nil {
 		return err
 	}
-	// Ctrl-C has to reach the pipeline rather than the process, exactly as in
-	// `list`: a discovery pass copies the whole workspace, and the copy is only
-	// removed by the deferred cleanup inside discoverCatalog.
 	ctx, watch, stop := watchSignals(cmd.Context())
 	defer stop()
 	found, err := discoverCatalog(ctx, root, cfg, cmd.ErrOrStderr())
@@ -714,28 +503,6 @@ func (o *explainOptions) explainAt(
 	return explainPosition(out, color, document)
 }
 
-// selectionOverlay rebuilds the run's own selection as a configuration layer,
-// so that the discovery pass this form makes catalogues what the run
-// catalogued.
-//
-// Without it the pass reads the workspace's `.go-mutants.toml` and the built-in
-// defaults, which is a different question: a run narrowed with `--operator
-// comparison` would have every other operator's mutants listed underneath it,
-// each reported as "not in this run" — a phrase that reads as a mutant the run
-// skipped rather than one the reader's own flags excluded.
-//
-// The values are the ones the run *resolved*, which is what `selection` in the
-// report carries — file, flags and defaults already merged — so they are set as
-// explicit layers over the file rather than merged with it again. An empty list
-// is left unset: a document an older build wrote, or one whose run configured
-// nothing, has nothing to say here, and an explicit empty would be a claim it
-// never made.
-//
-// A profile this build does not know is passed over rather than refused. It can
-// only come from a document a later release wrote, and answering "what is at
-// this line" with a listing from the default tier is better than refusing to
-// answer at all — which is why the pass is configured from the report and never
-// gated on it.
 func selectionOverlay(r *report.Report) config.Overlay {
 	if r == nil {
 		return config.Overlay{}
@@ -751,13 +518,6 @@ func selectionOverlay(r *report.Report) config.Overlay {
 	return overlay
 }
 
-// outcomesOf indexes what the report says became of every mutant and rejection
-// it carries, by full identity.
-//
-// One map for the whole listing rather than a walk per row: a file with two
-// hundred candidates in it would otherwise re-scan the document two hundred
-// times to fill one column. A nil map is a report that is not there — which is
-// a different statement from an empty one, and the outcome column says so.
 func outcomesOf(r *report.Report) map[string]string {
 	if r == nil {
 		return nil
@@ -769,12 +529,6 @@ func outcomesOf(r *report.Report) map[string]string {
 	return outcomes
 }
 
-// sourceHeader is the two lines an account opens with: which run is being
-// explained, and which document says so.
-//
-// A position query may have neither, and then it opens with nothing rather than
-// with two lines about a run that does not exist. Everything under it is a
-// statement about the workspace, which is there either way.
 func sourceHeader(source *accountReport) string {
 	if source == nil {
 		return ""
@@ -782,13 +536,6 @@ func sourceHeader(source *accountReport) string {
 	return "run " + source.RunID + "  " + source.Status + "\nreport " + source.Path + "\n"
 }
 
-// explainPosition writes the account of one place in the source: every mutant
-// there, and every candidate discovery declined.
-//
-// The document it renders is the one `--json` encodes, so the two forms of the
-// command's answer cannot come apart: a mutant the listing shows and the
-// document omits would be a missing line here rather than a second reading of
-// the workspace.
 func explainPosition(w io.Writer, color bool, doc explainPositionDocument) error {
 	e := newExplainer(w, color)
 	e.printf("position %s\n", positionOf(doc.Subject))
@@ -815,7 +562,6 @@ func explainPosition(w io.Writer, color bool, doc explainPositionDocument) error
 	return e.out.Flush()
 }
 
-// positionOf spells the place a position account is about, as it was named.
 func positionOf(subject accountPosition) string {
 	if subject.Line == nil {
 		return subject.Path
@@ -823,22 +569,8 @@ func positionOf(subject accountPosition) string {
 	return subject.Path + ":" + strconv.Itoa(*subject.Line)
 }
 
-// oneLine flattens an edit onto the row it belongs to.
-//
-// A mutant's original bytes may span lines — the interval [position.holdsSpan]
-// matches on is exactly that case — and a row that broke in the middle would
-// put half an edit under the outcome column of the row above it.
 func oneLine(text string) string { return strings.Join(strings.Fields(text), " ") }
 
-// outcomeIn is what the report says became of a mutant, or that it says
-// nothing.
-//
-// A discovery pass and a report can legitimately disagree about which mutants
-// exist — the workspace has been edited since the run, or a later build
-// catalogues differently — and an identity absent from the document is that,
-// said plainly, rather than a blank column a reader would take for an outcome.
-// No report at all is the third case, and it is a different sentence: every row
-// is unknown rather than this one.
 func outcomeIn(source *accountReport, outcome *string) string {
 	if source == nil {
 		return "no report"
@@ -849,60 +581,26 @@ func outcomeIn(source *accountReport, outcome *string) string {
 	return *outcome
 }
 
-// A recording is the trace one account read, or nothing.
-//
-// The zero value is a run that recorded nothing where this command could find
-// it, which is not a failure: it is the ordinary case, since `--trace` is
-// opt-in. Every method below answers for the zero value, so the renderer asks
-// its questions unconditionally and each section says what it can.
 type recording struct {
-	// stream is the file that was read, and directory the run directory holding
-	// it — which is what a preserved output path is relative to.
 	stream    string
 	directory string
 	events    []trace.Event
-	// kind is the recorder's owner: [trace.StartKindRun] for a CLI run,
-	// [trace.StartKindWorkspace] for a library session, whose reproduction needs
-	// the overlay manifest a run's own snapshot does not.
-	kind string
-	// runID is the run the recording says it is of, and is empty for a library
-	// session, which has none. See [recording.describes].
-	runID string
+	kind      string
+	runID     string
 }
 
-// present reports whether there is a recording to read.
 func (rec *recording) present() bool { return rec != nil && len(rec.events) > 0 }
 
-// describes reports whether this recording is of the run the report describes.
-//
-// It is asked of the stream's own `run-start` rather than of the directory the
-// stream was found in, because a directory name is what `--trace DIR` hands
-// over and a run id is content-derived: two runs really can be filed under one
-// id, and a colleague's bug report is a directory somebody chose the name of.
-// A recording with no run id at all — a library session's — cannot answer, and
-// is not accused of being somebody else's.
 func (rec *recording) describes(runID string) bool {
 	return !rec.present() || rec.runID == "" || rec.runID == runID
 }
 
-// openRecording finds the recording of a run, or reports that there is none.
-//
-// Three places, in one order. `--trace` is a directory somebody named — a
-// colleague's bug report, a CI artefact — and one that holds no recording is a
-// refusal rather than a silence, because the user asked for that one. The other
-// two are where a run of this workspace files them: beside the report under
-// `trace/`, and, for a run that failed without being traced, in the diagnostics
-// bundle, whose `trace.jsonl` is the ring the run kept in memory.
 func (o *explainOptions) openRecording(runID string) (*recording, error) {
 	if o.trace != "" {
 		return readRecordingAt(o.trace, true)
 	}
 	dir, cfg, err := workspaceConfig()
 	if err != nil {
-		// A workspace whose configuration cannot be read is a workspace with no
-		// recording to find, and never a reason to refuse to explain a document
-		// that was named outright. The report is the claim; the recording is
-		// the account beside it.
 		return &recording{}, nil
 	}
 	roots := make([]string, 0, 2)
@@ -922,12 +620,6 @@ func (o *explainOptions) openRecording(runID string) (*recording, error) {
 	return &recording{}, nil
 }
 
-// readRecordingAt reads one recording, whether the run directory or the stream
-// inside it was named.
-//
-// named says the path came from the command line, which is the only difference
-// it makes: a directory somebody typed and there is nothing in is a mistake
-// worth reporting, and one this command went looking in is an absence.
 func readRecordingAt(path string, named bool) (*recording, error) {
 	stream := streamPath(path)
 	if _, err := os.Stat(stream); err != nil {
@@ -952,7 +644,6 @@ func readRecordingAt(path string, named bool) (*recording, error) {
 	return rec, nil
 }
 
-// attempts returns the recorded passes at one mutant, in attempt order.
 func (rec *recording) attempts(id string) []*trace.MutantRecord {
 	if !rec.present() {
 		return nil
@@ -966,7 +657,6 @@ func (rec *recording) attempts(id string) []*trace.MutantRecord {
 	return found
 }
 
-// execEvent returns the command recorded at one sequence number.
 func (rec *recording) execEvent(seq int64) (trace.Event, bool) {
 	if !rec.present() {
 		return trace.Event{}, false
@@ -979,7 +669,6 @@ func (rec *recording) execEvent(seq int64) (trace.Event, bool) {
 	return trace.Event{}, false
 }
 
-// snapshotDir is the frozen tree a session compiled and ran in, or "".
 func (rec *recording) snapshotDir() string {
 	if !rec.present() {
 		return ""
@@ -993,14 +682,6 @@ func (rec *recording) snapshotDir() string {
 	return ""
 }
 
-// keptTemporaries reports whether the run left its temporary directories on
-// disk, which is what decides whether the reproduction can be pasted at all.
-//
-// It is read off the recording rather than assumed, because the recording knows:
-// a run that was asked to keep them records an `artifact` for each, and one that
-// was not records none. The three kinds are the three things a reproduction
-// needs to still exist — the run's scratch, which holds the test binaries, the
-// snapshot it ran in, and a library session's own per-call scratch.
 func (rec *recording) keptTemporaries() bool {
 	for _, kind := range []string{
 		trace.ArtifactKeptScratch, trace.ArtifactKeptSnapshot, trace.ArtifactKeptExecScratch,
@@ -1012,7 +693,6 @@ func (rec *recording) keptTemporaries() bool {
 	return false
 }
 
-// artifact returns the path of the first artifact of a kind, or "".
 func (rec *recording) artifact(kind string) string {
 	if !rec.present() {
 		return ""
@@ -1025,14 +705,6 @@ func (rec *recording) artifact(kind string) string {
 	return ""
 }
 
-// seqsOf is every sequence number one mutant took part in: its own attempts,
-// the commands underneath them, and — for a mutant validation refused — the
-// step that refused it and the compile that step read.
-//
-// The second half is why a rejection gets a timeline at all. It was never
-// executed, so it has no passes; what it does have is the bisection that found
-// it, which is often where a slow run's minutes went, and the `validate` events
-// carrying its id are its share of that search.
 func (rec *recording) seqsOf(id string) []int64 {
 	if !rec.present() {
 		return nil
@@ -1053,32 +725,16 @@ func (rec *recording) seqsOf(id string) []int64 {
 	return seqs
 }
 
-// A stageSpan is one step of the run, from the event that opened it to the one
-// that closed it — or to the end of the recording, when nothing closed it.
 type stageSpan struct {
 	phase      string
 	name       string
 	result     string
 	durationMS int64
 	start, end int64
-	// closed says the recording holds the `stage` event that finished this
-	// step. A recording can stop in the middle of one — a ring that wrapped, a
-	// bundle written from a run that died, a Ctrl-C — and a step nothing closed
-	// has no duration and no result rather than a zero of each.
-	closed bool
-	// shareMS is how much of the step was this mutant's own: the durations of
-	// its recorded passes that fall inside the span.
-	shareMS int64
+	closed     bool
+	shareMS    int64
 }
 
-// stagesOver returns the stages that were open at any of the given sequence
-// numbers, in the order they opened.
-//
-// "Open at" is the whole of the definition, and it is what makes the section an
-// answer to "why was this slow": a mutant's passes happened inside stages, and
-// a stage that was running while one of them was recorded is a step the mutant
-// took part in. A stage that opened and closed before the mutant was touched is
-// somebody else's time.
 func (rec *recording) stagesOver(id string, seqs []int64) []stageSpan {
 	if !rec.present() || len(seqs) == 0 {
 		return nil
@@ -1095,10 +751,6 @@ func (rec *recording) stagesOver(id string, seqs []int64) []stageSpan {
 			})
 			continue
 		}
-		// The innermost open stage of that name is the one this closes: a stage
-		// name is unique only within its phase and a run passes through a phase
-		// once, so matching the most recent is the only rule that cannot pair
-		// two unrelated steps.
 		for i := len(open) - 1; i >= 0; i-- {
 			if open[i].phase != event.Stage.Phase || open[i].name != event.Stage.Name {
 				continue
@@ -1115,10 +767,6 @@ func (rec *recording) stagesOver(id string, seqs []int64) []stageSpan {
 			break
 		}
 	}
-	// A stage nothing closed still holds everything recorded after it started,
-	// which is exactly the case a reader most needs it in: a recording that
-	// stops mid-stage is a run that was interrupted or died, and the step it
-	// died in is the answer. Its end is the end of the recording.
 	spans = append(spans, open...)
 
 	var over []stageSpan
@@ -1133,14 +781,6 @@ func (rec *recording) stagesOver(id string, seqs []int64) []stageSpan {
 	return over
 }
 
-// shareOf is how much of one step went on this mutant: the durations of its own
-// recorded passes inside the span.
-//
-// It is the number the section is read for. Every mutant of a run takes part in
-// the same `mutate/execute` stage, so the stage's own duration is the same
-// figure on every account and says nothing about the mutant beside it; the
-// share is what distinguishes the mutant that took eleven seconds from the four
-// hundred that took three milliseconds each.
 func (rec *recording) shareOf(id string, span stageSpan) int64 {
 	var total int64
 	for _, event := range rec.events {
@@ -1154,11 +794,6 @@ func (rec *recording) shareOf(id string, span stageSpan) int64 {
 	return total
 }
 
-// account writes the whole account of one mutant.
-//
-// It is a transcription of the gathered document and nothing else: every fact
-// below was decided in [gatherAccount], which is also what `--json` encodes, so
-// a sentence here and a field there cannot disagree about what happened.
 func (e *explainer) account(doc explainDocument) {
 	e.printf("%s", sourceHeader(doc.Source.Report))
 	if doc.Source.Trace == nil {
@@ -1166,10 +801,6 @@ func (e *explainer) account(doc explainDocument) {
 	} else {
 		e.printf("trace %s\n", doc.Source.Trace.Stream)
 	}
-	// Loudly, and before anything derived from the recording. A run id is
-	// content-derived, so two runs can be filed under one; whatever is
-	// underneath came out of that recording and is that run's, however
-	// convincingly it lines up with this report.
 	for _, warning := range doc.Source.Warnings {
 		e.printf("warning: %s\n", warning)
 	}
@@ -1177,10 +808,6 @@ func (e *explainer) account(doc explainDocument) {
 	e.identity(doc.Subject)
 	e.verdict(doc.Verdict)
 	if doc.Subject.Rejected {
-		// A mutant that does not compile has no coverage and no executions:
-		// nothing measured it, because there was nothing to measure. It does
-		// have a timeline — the bisection that refused it — which is often
-		// where a slow run's minutes went.
 		e.timeline(doc)
 		e.reproduction(doc.Reproduce)
 		return
@@ -1191,29 +818,18 @@ func (e *explainer) account(doc explainDocument) {
 	e.reproduction(doc.Reproduce)
 }
 
-// noRecording is the one line a run with no recording is reported under, and
-// the sentence every trace-derived section below shortens.
 func noRecording(runID string) string {
 	return "no trace recorded for run " + runID + "; re-run with --trace"
 }
 
-// section writes a block heading.
 func (e *explainer) section(title string) {
 	e.printf("\n%s\n", e.paint(styleExplainHeader, title))
 }
 
-// field writes one labelled row of the identity block.
 func (e *explainer) field(label, value string) {
 	e.printf("  %-10s  %s\n", label, value)
 }
 
-// identity is what the mutant is, in the order somebody reads it: the id they
-// typed a prefix of, the one activation takes, then where it is and what it
-// changes.
-//
-// The last two rows are absent for a mutant validation refused. It was never
-// built, so the document holds what discovery proposed and nothing about an
-// edit that never existed.
 func (e *explainer) identity(subject accountSubject) {
 	e.section("mutant")
 	e.field("display id", subject.DisplayID)
@@ -1228,8 +844,6 @@ func (e *explainer) identity(subject accountSubject) {
 	}
 }
 
-// verdict is the outcome in one sentence, and the compiler's own words when
-// there is no outcome because there was no mutant.
 func (e *explainer) verdict(v accountVerdict) {
 	e.section("outcome")
 	e.printf("  %s\n", v.Summary)
@@ -1244,14 +858,6 @@ func (e *explainer) verdict(v accountVerdict) {
 	}
 }
 
-// verdictSentence is one mutant's verdict, with the fact that raises the first
-// question about it.
-//
-// The two outcomes that name a binary name it differently, which is
-// internal/console's own distinction kept here word for word: a kill was
-// *detected* by a test, and a timeout was detected by nothing — the binary is
-// the one the mutant hung, and "killed by" would send a reader looking for an
-// assertion that does not exist.
 func verdictSentence(m report.Mutant, memoryBound int64) string {
 	killedBy := ""
 	if m.KilledBy != nil {
@@ -1266,11 +872,6 @@ func verdictSentence(m report.Mutant, memoryBound int64) string {
 		return "killed" + memoryClause(m, memoryBound) + " after " + countNoun(m.Attempts, "attempt")
 	case report.OutcomeTimedOut:
 		if m.Diverged {
-			// "Hung" is what a stopwatch can say. A divergence knows more: a
-			// loop of this binary went past what the original program does
-			// under the same tests, which is a fact about the mutant rather
-			// than a guess about the machine, and the loop and both counts are
-			// in the retained output this account prints underneath.
 			if killedBy != "" {
 				return "did not return: a loop in " + killedBy +
 					" ran past what the original does, after " + countNoun(m.Attempts, "attempt")
@@ -1299,25 +900,7 @@ func verdictSentence(m report.Mutant, memoryBound int64) string {
 	}
 }
 
-// memoryClause is what a kill by the memory bound adds to its verdict, and
-// nothing at all for every other kill.
-//
-// It is the one place `explain` has to say something the outcome does not. A
-// mutant the bound stopped is reported as `killed` and names the suite that was
-// running — and that suite's tests all pass, so a reader who goes and looks
-// finds nothing. Both numbers are printed because either alone is unactionable:
-// the peak says what the mutant did, the bound says what it was measured
-// against, and only the pair says whether to fix the mutant or the budget.
-//
-// The bound is the run's, from `test.memory_bytes`; a document written before
-// that field existed carries none, and the clause then names the peak alone
-// rather than inventing a number to compare it with.
 func memoryClause(m report.Mutant, memoryBound int64) string {
-	// The mutant's own fields rather than its rows, because a *cached* mutant
-	// has none: this run started no process for it, and reading the rows would
-	// make a warm run's account of a memory kill silently thinner than a cold
-	// run's. The document carries the same two facts at both levels for exactly
-	// this reader.
 	if !m.MemoryExceeded {
 		return ""
 	}
@@ -1331,16 +914,11 @@ func memoryClause(m report.Mutant, memoryBound int64) string {
 	return " (memory bound reached)"
 }
 
-// coverage is which test binaries reach the mutant, or the three other things
-// that can be true. Which of the four it is was decided in [gatherCoverage],
-// where the mode is read rather than the length of a list.
 func (e *explainer) coverage(c accountCoverage) {
 	e.section("coverage")
 	e.printf("  %s\n", c.Summary)
 }
 
-// testRefStrings renders test references as `<package> <name>`, the form the
-// covering line names a narrowed run's tests by.
 func testRefStrings(refs []report.TestRef) []string {
 	out := make([]string, 0, len(refs))
 	for _, ref := range refs {
@@ -1349,13 +927,6 @@ func testRefStrings(refs []report.TestRef) []string {
 	return out
 }
 
-// executions is every pass this run made over the test binaries, and — when
-// there is a recording — the commands underneath each of them.
-//
-// The rows come from the report rather than from the recording, because the
-// report is the durable claim and the recording is opt-in: a mutant's passes
-// are described the same way whether or not anybody asked for a trace, and what
-// a trace adds is the argument vectors rather than the passes.
 func (e *explainer) executions(doc explainDocument) {
 	e.section("executions")
 	if len(doc.Executions) == 0 {
@@ -1379,14 +950,6 @@ func (e *explainer) executions(doc explainDocument) {
 	}
 }
 
-// peakClause is what a pass cost the machine, and nothing where the platform
-// could not say.
-//
-// It sits beside the duration because the two are the same kind of fact — what
-// one pass spent — and it is printed for every pass rather than only the
-// bounded ones: "which of my mutants cost the machine most" is a question about
-// a run in which nothing went wrong, and a run that recorded only what it
-// bounded could not answer it.
 func peakClause(peak *int64) string {
 	if peak == nil {
 		return ""
@@ -1394,14 +957,6 @@ func peakClause(peak *int64) string {
 	return "  peak " + console.FormatBytes(*peak)
 }
 
-// notExecuted says why a mutant has no rows under its attempt count. There are
-// exactly three ways for that to be true, and which one it is decides what to
-// do about it.
-//
-// All three are read back out of the account rather than out of the report,
-// which is what makes this sentence one a reader of the document could have
-// reached themselves: `verdict.cached`, `coverage.uncovered` and
-// `verdict.outcome` are the three facts, and they are all in it.
 func notExecuted(doc explainDocument) string {
 	switch {
 	case doc.Verdict.Cached:
@@ -1415,8 +970,6 @@ func notExecuted(doc explainDocument) string {
 	}
 }
 
-// attribution is the tail of an execution row: the binary the pass named, in
-// the words its outcome earns. See [verdictSentence].
 func attribution(outcome string, killedBy *string, diverged bool) string {
 	if killedBy == nil {
 		return ""
@@ -1430,7 +983,6 @@ func attribution(outcome string, killedBy *string, diverged bool) string {
 	return "  killed by " + *killedBy
 }
 
-// pass finds the recorded attempt with a given number.
 func pass(recorded []*trace.MutantRecord, attempt int) *trace.MutantRecord {
 	for _, record := range recorded {
 		if record.Attempt == attempt {
@@ -1440,17 +992,6 @@ func pass(recorded []*trace.MutantRecord, attempt int) *trace.MutantRecord {
 	return nil
 }
 
-// commands writes the child processes one recorded pass started.
-//
-// The line itself is [console.TraceLine], which is the line `run -vv` prints
-// for the same event: a user comparing what scrolled past during the run with
-// what this says about it afterwards is comparing one rendering with itself.
-// What is added under it is what a `-vv` line has no room for — where the
-// command ran, and where its output was kept.
-//
-// A rendering is not a fact, which is why the document carries the event's
-// fields and this carries the event: the encoder has nothing to keep in step
-// with `-vv`, and this has everything.
 func (e *explainer) commands(commands []accountCommand) {
 	for _, command := range commands {
 		if !command.Recorded {
@@ -1466,16 +1007,8 @@ func (e *explainer) commands(commands []accountCommand) {
 	}
 }
 
-// outputTailLines is how much of a preserved output is quoted.
-//
-// Ten lines is where a Go test failure's own report ends — the `--- FAIL`
-// banner, the assertion under it, and the `FAIL` line — and the file is named on
-// the line above, so a reader who needs more has the path to open. Quoting a
-// megabyte into a terminal would bury the five sections around it.
 const outputTailLines = 10
 
-// preservedOutput names the file a command's output was kept in and quotes the
-// end of it.
 func (e *explainer) preservedOutput(command accountCommand) {
 	if command.OutputPath == "" {
 		return
@@ -1490,7 +1023,6 @@ func (e *explainer) preservedOutput(command accountCommand) {
 	}
 }
 
-// tailLines returns the last n lines of a text, without its trailing newline.
 func tailLines(text string, n int) []string {
 	trimmed := strings.TrimRight(text, "\n")
 	if trimmed == "" {
@@ -1506,8 +1038,6 @@ func tailLines(text string, n int) []string {
 	return lines
 }
 
-// timeline is the stages the mutant took part in, which is where a slow run's
-// minutes went.
 func (e *explainer) timeline(doc explainDocument) {
 	e.section("timeline")
 	if doc.Source.Trace == nil {
@@ -1536,11 +1066,6 @@ func (e *explainer) timeline(doc explainDocument) {
 	}
 }
 
-// share is the mutant's own part of a step, written beside the step's total.
-//
-// It is omitted when it is nothing, which is the honest answer for a stage the
-// mutant merely sat inside — a validation bisection, say — rather than a zero
-// that reads as a measurement.
 func share(ms int64) string {
 	if ms <= 0 {
 		return ""
@@ -1548,8 +1073,6 @@ func share(ms int64) string {
 	return "  (this mutant: " + console.FormatDuration(milliseconds(ms)) + ")"
 }
 
-// qualifiedStage writes "phase/name", or the name alone when the recording
-// carried no phase — internal/console's own spelling of the pair.
 func qualifiedStage(phase, name string) string {
 	if phase == "" {
 		return name
@@ -1557,11 +1080,6 @@ func qualifiedStage(phase, name string) string {
 	return phase + "/" + name
 }
 
-// reproduction is the command to paste, or the reason there is none.
-//
-// Everything it prints was composed in [gatherReproduction], which is where the
-// argument on what may appear in the line lives: what the child really
-// received, and neither TMPDIR nor GOFLAGS.
 func (e *explainer) reproduction(reproduce accountReproduction) {
 	e.section("reproduce")
 	if reproduce.Available {
@@ -1583,12 +1101,6 @@ func (e *explainer) reproduction(reproduce accountReproduction) {
 	}
 }
 
-// temporariesNote says whether the binary and the directory the line above
-// names are still there.
-//
-// The recording knows, so this stops being a hedge the reader has to resolve by
-// running the command and watching `cd` fail: a run keeps its temporaries only
-// when it was asked to, and records an `artifact` for each one it kept.
 func temporariesNote(rec *recording) string {
 	if rec.keptTemporaries() {
 		return "the run kept its temporaries: the binary and directory above are still there"
@@ -1597,9 +1109,6 @@ func temporariesNote(rec *recording) string {
 		"exist; re-run with `--trace --keep-temp` to get a command that can be pasted"
 }
 
-// testCommandOf prefers the argv that was really started to the one that was
-// configured. The two differ in exactly one string — the located toolchain in
-// place of a bare `go` — and that string is the answer to "which go ran this?".
 func testCommandOf(r *report.Report) []string {
 	if len(r.Test.ResolvedCommand) > 0 {
 		return r.Test.ResolvedCommand
@@ -1607,13 +1116,6 @@ func testCommandOf(r *report.Report) []string {
 	return r.Test.Command
 }
 
-// lastExecSeq is the command that decided a mutant's verdict: the last one of
-// its last recorded pass.
-//
-// The last rather than the first, because a pass stops where it stopped — a
-// mutant killed by the second of three binaries was measured against two — so
-// the last command of the deciding pass is the one whose output is the
-// evidence, and therefore the one worth pasting.
 func lastExecSeq(recorded []*trace.MutantRecord) int64 {
 	for i := len(recorded) - 1; i >= 0; i-- {
 		if seqs := recorded[i].ExecSeqs; len(seqs) > 0 {
@@ -1623,6 +1125,4 @@ func lastExecSeq(recorded []*trace.MutantRecord) int64 {
 	return 0
 }
 
-// milliseconds turns the unit both documents record durations in back into a
-// duration, which is what internal/console's formatters take.
 func milliseconds(ms int64) time.Duration { return time.Duration(ms) * time.Millisecond }

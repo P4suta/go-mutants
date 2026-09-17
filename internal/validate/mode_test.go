@@ -16,19 +16,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// This phase serves two trees now, and the only difference between them is
-// which one it asks the instrumenter for. Everything else — one build, the
-// pristine gate, per-file isolation, rejections in catalogue order — is the
-// same work over different bytes, which is the whole reason the mode is a field
-// rather than a second phase.
-//
-// The two tests below are about the field and nothing else, so the compiler is
-// a stub that always agrees: what they assert is which bytes ended up in the
-// snapshot. Whether the probe form compiles is a question for a compiler, and
-// [TestValidateProbeTreeRejectsOnlyTheSiteThatCannotCompile] asks a real one.
-
-// modeSource is the file both tests validate: one `return` with two results and
-// one return-value candidate in it.
 const modeSource = `// SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -42,11 +29,6 @@ func Measure(count int, err error) (int, error) {
 }
 `
 
-// TestValidateDefaultsToTheMutantMode pins the zero value.
-//
-// Every caller written before there was a probe tree passes no mode at all, and
-// has to keep getting the tree it always got: guards, an activation array, and
-// a snapshot one build can serve every mutant from.
 func TestValidateDefaultsToTheMutantMode(t *testing.T) {
 	t.Parallel()
 
@@ -59,15 +41,6 @@ func TestValidateDefaultsToTheMutantMode(t *testing.T) {
 	}
 }
 
-// TestValidateThreadsTheProbeModeIntoTheRewrite is the other half: the mode
-// reaches both instrumentation calls this phase makes, the whole-tree one and
-// the per-file one the search rewrites through.
-//
-// Only the second is visible here, and deliberately so. The search leaves each
-// file holding the subset it accepted, so what is on disk when the phase
-// returns was written by [validator.instrumentFile] — and a mode that reached
-// the first call and not the second would produce a probe tree that quietly
-// turned back into a mutant tree the moment anything was bisected.
 func TestValidateThreadsTheProbeModeIntoTheRewrite(t *testing.T) {
 	t.Parallel()
 
@@ -80,19 +53,8 @@ func TestValidateThreadsTheProbeModeIntoTheRewrite(t *testing.T) {
 	}
 }
 
-// ModeUnset is the zero [instrument.Mode], named so that a test asking for the
-// default says so rather than spelling a constant that means something else.
 const ModeUnset instrument.Mode = 0
 
-// validateModeFixture runs the whole phase over [modeSource] in one mode, with
-// a compiler that always agrees, and returns the bytes the snapshot was left
-// holding.
-//
-// The build is stubbed rather than run because these tests are about which
-// rewrite the phase asked for, and a real toolchain would answer a different
-// question far more slowly. The rewrite itself is the real one: the search's
-// last act is to write each file's accepted subset, so the file on disk is what
-// [validator.instrumentFile] produced.
 func validateModeFixture(t *testing.T, mode instrument.Mode) []byte {
 	t.Helper()
 
@@ -132,9 +94,6 @@ func validateModeFixture(t *testing.T, mode instrument.Mode) []byte {
 	return out
 }
 
-// modeCatalog is [modeSource]'s one candidate and the hint discovery would have
-// computed for it: a Form S statement site, and the probe hint naming both
-// results of the statement it sits in.
 func modeCatalog(t *testing.T, rel string) (*mutation.Catalog, instrument.Hints) {
 	t.Helper()
 
@@ -173,9 +132,6 @@ func modeCatalog(t *testing.T, rel string) (*mutation.Catalog, instrument.Hints)
 		Form:     discover.GuardFormS,
 		SiteSpan: statement,
 		Probe: &discover.ProbeSite{
-			// The form is stated rather than left zero: the rewriter branches
-			// on it before reading anything else, so a hand-built hint that
-			// omitted it would be one no renderer claims.
 			Form:  discover.ProbeFormReturn,
 			Span:  statement,
 			Types: []string{"int", "error"},

@@ -9,28 +9,12 @@ import (
 	"testing"
 )
 
-// What Form D has to decide before it can hoist a declaration out of the way.
-//
-// Form D rewrites `x := f(a + b)` as `var x T; if __gm.M[3] { x = f(a - b) }
-// else { x = f(a + b) }`, which means writing the declared type out and
-// deleting the tokens that made the statement a declaration. Three things can
-// stop it, and each of them is a whole class of ordinary Go: a type this file
-// cannot spell, an initialiser that mentions a name the same statement
-// declares, and a deletion that would take a line break with it.
-//
-// A wrong answer here is not a wrong verdict, it is a generated tree that does
-// not compile -- a run-ending internal error over gofmt-clean source. So each
-// refusal is stated, and so is each acceptance: refusing too much turns a
-// mutable site into an `unnameable-decl-type` skip nobody can act on.
-
-// declFixture is a probe fixture built around one statement inside a function.
 func declFixture(t *testing.T, decls, stmt string) *guardResolver {
 	t.Helper()
 
 	return guardOver(t, "package pkg\n\nfunc sum(xs ...int) int { return 0 }\n\n"+decls+"\n\nfunc probe(n int) {\n"+stmt+"\n}\n")
 }
 
-// firstOfKind finds the first statement of the fixture the predicate accepts.
 func firstOfKind(t *testing.T, g *guardResolver, want func(ast.Stmt) bool) ast.Stmt {
 	t.Helper()
 
@@ -50,24 +34,14 @@ func firstOfKind(t *testing.T, g *guardResolver, want func(ast.Stmt) bool) ast.S
 	return found
 }
 
-// TestWhichDeclarationsFormDCanHoist is [guardResolver.statementGuard]'s
-// division, one shape at a time.
-//
-// The division is exactly "does this statement declare anything". Form S buries
-// its site in a block, so a statement that declares a name would take that name
-// out of scope for everything after it; Form D exists to hoist those
-// declarations back out. A compound assignment declares nothing and is Form S;
-// `x := 1` and `var x = 1` declare and are Form D.
 func TestWhichDeclarationsFormDCanHoist(t *testing.T) {
 	t.Parallel()
 
 	for _, c := range []struct {
-		name  string
-		decls string
-		stmt  string
-		// form is the guard form the statement gets, or empty for a refusal.
-		form GuardForm
-		// declared is how many names a Form D site has to hoist.
+		name     string
+		decls    string
+		stmt     string
+		form     GuardForm
 		declared int
 	}{
 		{name: "a compound assignment", stmt: "\tn += 1", form: GuardFormS},
@@ -80,24 +54,15 @@ func TestWhichDeclarationsFormDCanHoist(t *testing.T) {
 			stmt: "\tx, y := n+1, n+2\n\t_, _ = x, y", form: GuardFormD, declared: 2,
 		},
 		{
-			// The blank is not a name anything can be hoisted for, and a Form D
-			// site that tried would emit `var _ int`, which is not legal Go.
 			name: "a short declaration with a blank",
 			stmt: "\t_, y := n+1, n+2\n\t_ = y", form: GuardFormD, declared: 1,
 		},
 		{
-			// A `:=` that re-declares a name declared earlier in the same block
-			// assigns to it rather than declaring it, so there is nothing to
-			// hoist for that half.
 			name: "a short declaration that redeclares",
 			stmt: "\tfirst := n + 1\n\tfirst, second := n+2, n+3\n\t_, _ = first, second",
 			form: GuardFormD, declared: 1,
 		},
 		{
-			// The scope of a name declared here begins at the *end* of the
-			// specification, so `total` in the initialiser is the outer one --
-			// and Form D's hoisted `var total int` would come *before* the
-			// initialiser and shadow it. A different program.
 			name:  "an initialiser that mentions the name being declared",
 			decls: "var total = 1",
 			stmt:  "\ttotal := total + n\n\t_ = total",
@@ -145,14 +110,6 @@ func TestWhichDeclarationsFormDCanHoist(t *testing.T) {
 	}
 }
 
-// TestADeclarationOfATypeThisFileCannotSpellIsRefused is the other half of Form
-// D, and the one the reserved skip reason was named for.
-//
-// Form D writes the declared type out, so a value whose type has no source form
-// in this file has no Form D site -- and the search falls through to Form E,
-// which writes the *initialiser's* type instead. That is why the refusal is
-// worth so much less than it used to be: the declaration is unspellable and the
-// expression inside it usually is not.
 func TestADeclarationOfATypeThisFileCannotSpellIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -163,8 +120,6 @@ func TestADeclarationOfATypeThisFileCannotSpellIsRefused(t *testing.T) {
 		assign, isAssign := s.(*ast.AssignStmt)
 		return isAssign && assign.Tok == token.DEFINE
 	})
-	// This package's own unexported type is perfectly spellable here, which is
-	// the control: the refusal is about the *file*, not about export.
 	guard, ok := g.statementGuard(stmt)
 	if !ok {
 		t.Fatal("statementGuard refused a declaration of this package's own type")
@@ -177,16 +132,6 @@ func TestADeclarationOfATypeThisFileCannotSpellIsRefused(t *testing.T) {
 	}
 }
 
-// TestAVarSpecWhoseCutWouldSwallowALineBreak pins
-// [guardResolver.cutIsLineFree], which is the one refusal about *bytes* rather
-// than about types or scopes.
-//
-// Form D deletes the tokens that make a statement a declaration, in place, and
-// every remaining byte has to stay on the line the user put it on. Two of those
-// deletions are as long as the source says they are: a spec with no initialiser
-// goes whole, and a spec that spells its type out loses the type. A line break
-// inside either cannot be padded back -- writing newlines into the replacement
-// puts them where the tokens were, and the scanner inserts a semicolon.
 func TestAVarSpecWhoseCutWouldSwallowALineBreak(t *testing.T) {
 	t.Parallel()
 
@@ -210,9 +155,6 @@ func TestAVarSpecWhoseCutWouldSwallowALineBreak(t *testing.T) {
 			stmt: "\tvar f func(\n\t\tv int,\n\t) int = nil\n\t_ = f",
 		},
 		{
-			// The whole spec spans lines and the type does not, which is the
-			// pair that separates the two cuts: what goes is the *type*, so
-			// the initialiser's own line breaks stay where the user put them.
 			name: "a spec whose initialiser is spread over lines",
 			stmt: "\tvar x int = sum(\n\t\t1,\n\t\t2,\n\t)\n\t_ = x",
 			want: true,
@@ -237,9 +179,6 @@ func TestAVarSpecWhoseCutWouldSwallowALineBreak(t *testing.T) {
 		})
 	}
 
-	// And two positions that are not positions, which is the fail-closed
-	// direction: a cut whose extent is unknown is one this rewrite may not
-	// make.
 	g := declFixture(t, "", "\tvar x = n + 1\n\t_ = x")
 	if g.sameLine(token.NoPos, token.NoPos) {
 		t.Error("sameLine answered about two positions that are not in the file")
@@ -249,17 +188,6 @@ func TestAVarSpecWhoseCutWouldSwallowALineBreak(t *testing.T) {
 	}
 }
 
-// TestADeclarationWhoseInitialiserNamesItself pins
-// [guardResolver.rebindsOwnInitialiser], and the reason it is asked about the
-// whole left-hand side at once.
-//
-// Go's rule is that the scope of a name declared by a short variable
-// declaration begins at the *end* of the specification, so `total := total * 2`
-// reads the outer `total` and declares a new one. Form D hoists the declaration
-// in front of the initialiser, which would make the inner name shadow the outer
-// one there -- a different program. One name of several is enough to spoil the
-// statement, which is why the question is about the statement rather than about
-// each name.
 func TestADeclarationWhoseInitialiserNamesItself(t *testing.T) {
 	t.Parallel()
 
@@ -317,9 +245,6 @@ func TestADeclarationWhoseInitialiserNamesItself(t *testing.T) {
 	}
 }
 
-// TestADeclaredNameIsTypedFromTheCheckersOwnRecord pins
-// [guardResolver.declTypeOf], whose refusals are the two ways there is nothing
-// to hoist.
 func TestADeclaredNameIsTypedFromTheCheckersOwnRecord(t *testing.T) {
 	t.Parallel()
 
@@ -347,9 +272,6 @@ func TestADeclaredNameIsTypedFromTheCheckersOwnRecord(t *testing.T) {
 		t.Errorf("declaring an int needs the imports %v", needs)
 	}
 
-	// An identifier the checker defined nothing for: a name that redeclares
-	// something already in scope is an assignment target rather than a
-	// declaration, and there is nothing for Form D to hoist.
 	if _, _, ok := g.declTypeOf(ast.NewIdent("stranger")); ok {
 		t.Error("declTypeOf answered for an identifier the checker did not define")
 	}
@@ -359,13 +281,6 @@ func TestADeclaredNameIsTypedFromTheCheckersOwnRecord(t *testing.T) {
 	}
 }
 
-// TestTheFormsAreTriedInOrder pins [guardResolver.chooseForm]'s staircase,
-// which is what keeps an existing candidate on the form it already uses.
-//
-// Each form is tried after the ones before it, so a site an earlier form covers
-// is covered by exactly that form. Moving a candidate between forms changes the
-// bytes of the instrumented tree for no gain at all, and the order is the only
-// thing that stops it.
 func TestTheFormsAreTriedInOrder(t *testing.T) {
 	t.Parallel()
 
@@ -388,10 +303,6 @@ func TestTheFormsAreTriedInOrder(t *testing.T) {
 			want: GuardFormS,
 		},
 		{
-			// A named boolean with no statement around it: the tag of a
-			// switch is an expression whose statement is the switch itself,
-			// which no statement form covers, and its type is boolean
-			// underneath without being the universe bool.
 			name: "a named boolean takes Form C'",
 			src:  "package pkg\n\ntype flag bool\n\nfunc probe(f flag) {\n\tswitch f && f {\n\t}\n}\n",
 			find: binaryOp(token.LAND),
@@ -443,7 +354,6 @@ func TestTheFormsAreTriedInOrder(t *testing.T) {
 	}
 }
 
-// binaryOp finds a binary expression with one operator.
 func binaryOp(op token.Token) func(ast.Node) bool {
 	return func(node ast.Node) bool {
 		binary, isBinary := node.(*ast.BinaryExpr)
@@ -451,14 +361,6 @@ func binaryOp(op token.Token) func(ast.Node) bool {
 	}
 }
 
-// TestWhatFormDRefusesToReadAtAll is the other end of the same helpers, asked
-// with declarations built rather than parsed.
-//
-// None of these is a shape Go writes: the left of a `:=` is always a name, a
-// `var` block always holds value specifications, and a name a `var` declares is
-// always one the checker defined. They are still decisions, and they are the
-// decisions that keep a wrong answer from being a *generated file that does not
-// compile* -- so each of them is stated with a node built to reach it.
 func TestWhatFormDRefusesToReadAtAll(t *testing.T) {
 	t.Parallel()
 
@@ -540,8 +442,6 @@ func TestWhatFormDRefusesToReadAtAll(t *testing.T) {
 	t.Run("a declaration of nothing", func(t *testing.T) {
 		t.Parallel()
 
-		// No names and no initialisers: there is nothing to rebind and nothing
-		// to hoist, and both questions have to answer rather than index.
 		if g.rebindsOwnInitialiser(nil, nil) {
 			t.Error("rebindsOwnInitialiser answered yes about a declaration of nothing")
 		}
@@ -556,11 +456,6 @@ func TestWhatFormDRefusesToReadAtAll(t *testing.T) {
 	t.Run("a composite literal the checker recorded nothing for", func(t *testing.T) {
 		t.Parallel()
 
-		// fieldKeyed decides whether a literal's keys are field names or
-		// ordinary expressions. Answering "field names" with nothing to read it
-		// from would let a map literal keyed by the variable being declared
-		// through, which is the mistake that costs a wrong verdict rather than
-		// a candidate.
 		literal := &ast.CompositeLit{Type: ast.NewIdent("wrapper")}
 		blind := &guardResolver{}
 		if blind.fieldKeyed(literal) {

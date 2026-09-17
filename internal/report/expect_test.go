@@ -12,14 +12,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// TestStateOf is the expectations state machine, every input.
-//
-// The table is exhaustive over what a run can know about an id: absent from the
-// catalogue, rejected by validation, or catalogued with each of the six
-// outcomes. Only survival fulfils an expectation; only absence is stale;
-// everything else is unfulfilled, which is two different things at once by
-// design — see the fourth column, and [TestExpectationFailureDistinguishes] for
-// why the document folds them and the decision does not.
 func TestStateOf(t *testing.T) {
 	t.Parallel()
 
@@ -85,8 +77,6 @@ func TestStateOf(t *testing.T) {
 	}
 }
 
-// TestEvaluateKeepsLedgerOrder proves the ledger is reported in the order it
-// was written, which is the order its author reads it in.
 func TestEvaluateKeepsLedgerOrder(t *testing.T) {
 	t.Parallel()
 
@@ -110,8 +100,6 @@ func TestEvaluateKeepsLedgerOrder(t *testing.T) {
 	}
 }
 
-// TestEvaluateOfAnEmptyLedgerIsAnEmptyArray proves that no ledger produces `[]`
-// rather than `null`.
 func TestEvaluateOfAnEmptyLedgerIsAnEmptyArray(t *testing.T) {
 	t.Parallel()
 
@@ -120,8 +108,6 @@ func TestEvaluateOfAnEmptyLedgerIsAnEmptyArray(t *testing.T) {
 	}
 }
 
-// TestFixtureExpectations checks the three states against a real run, joined to
-// the mutants they name.
 func TestFixtureExpectations(t *testing.T) {
 	t.Parallel()
 
@@ -143,15 +129,6 @@ func TestFixtureExpectations(t *testing.T) {
 	}
 }
 
-// TestExpectationFailureDistinguishes is the reason the state machine may fold
-// two situations into "unfulfilled" without doing any harm.
-//
-// The document's three values are what a reader sees; the exit decision is made
-// from the outcomes. A ledger row whose mutant the tests caught is a contract
-// failure and exits 2. A row whose mutant was never measured — because
-// `--mutant` narrowed the run, or because validation rejected it — is not,
-// however unfulfilled it looks: escalating that would make every narrowed run
-// fail on every unrelated ledger row.
 func TestExpectationFailureDistinguishes(t *testing.T) {
 	t.Parallel()
 
@@ -161,8 +138,6 @@ func TestExpectationFailureDistinguishes(t *testing.T) {
 	cases := []struct {
 		name   string
 		ledger []config.Expectation
-		// narrow replaces every result with a not-run one, as a `--mutant` run
-		// or an interruption would.
 		narrow bool
 		want   bool
 	}{
@@ -235,10 +210,6 @@ func TestExpectationFailureDistinguishes(t *testing.T) {
 	}
 }
 
-// TestExpectedSurvivorsLeaveTheDenominator proves the wiring between the ledger
-// and the score: a survivor the ledger predicted is neither a detection nor a
-// miss, so adding the expectation raises the score without changing a single
-// outcome.
 func TestExpectedSurvivorsLeaveTheDenominator(t *testing.T) {
 	t.Parallel()
 
@@ -267,8 +238,6 @@ func TestExpectedSurvivorsLeaveTheDenominator(t *testing.T) {
 	if without.Summary.ScorePercent == nil || with.Summary.ScorePercent == nil {
 		t.Fatal("one of the runs has no score")
 	}
-	// Three detections out of five become three out of three: both survivors
-	// leave the denominator, and nothing else moves.
 	if got := *without.Summary.ScorePercent; got != 60 {
 		t.Errorf("score without the ledger = %v, want 60", got)
 	}

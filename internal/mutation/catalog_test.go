@@ -14,14 +14,11 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-// The catalogue fixture: two files, three candidates, real byte offsets.
 const (
 	aSource = "package a\n\nvar flag = true\n\nvar same = x == y\n"
 	bSource = "package b\n\nvar n = x + y\n"
 )
 
-// Golden identities for the fixture, produced by the same independent
-// implementation of the recipe that backs the vectors in id_test.go.
 const (
 	aTrueID   = "458ab0aa4a5ed705327e39c5bcd384e5411106f9c7f37ef24d909d47ac65ce27"
 	aEqID     = "8baf253cad6cb0e68984d68936933bd1d823d0e58b8f28116b7170d1d987550b"
@@ -29,9 +26,6 @@ const (
 	catDigest = "6ebb649e25651f6c4f0c9e781f5f01ad8ba66edb4cc24f8f006b8b3d565eb424"
 )
 
-// newCandidate builds a candidate and proves the span really covers the
-// original text in the given source, so a fixture can never drift into
-// testing a mutation of bytes that are not there.
 func newCandidate(t *testing.T, path, ruleName string, start, end uint32, source, original, replacement string) Candidate {
 	t.Helper()
 
@@ -113,9 +107,6 @@ func TestEmptyCatalog(t *testing.T) {
 	if !catalog.Empty() || catalog.Len() != 0 {
 		t.Fatalf("Build() of no candidates = %d mutants, want an empty catalogue", catalog.Len())
 	}
-	// Even an empty catalogue has an identity, so a run that discovered
-	// nothing can still be compared against another run that discovered
-	// nothing.
 	if !IsDigest(catalog.Digest()) {
 		t.Errorf("Digest() = %q, want a digest", catalog.Digest())
 	}
@@ -124,10 +115,6 @@ func TestEmptyCatalog(t *testing.T) {
 	}
 }
 
-// TestCatalogIsInsertionOrderIndependent is the determinism contract: two
-// discovery passes that find the same candidates in different orders must
-// produce byte-identical catalogues, because the dense index they assign ends
-// up baked into the generated runtime array.
 func TestCatalogIsInsertionOrderIndependent(t *testing.T) {
 	t.Parallel()
 
@@ -154,13 +141,10 @@ func TestCatalogIsInsertionOrderIndependent(t *testing.T) {
 	}
 }
 
-// manyCandidates returns a candidate set with several files, several rules,
-// interleaved spans, and two deduplication conflicts.
 func manyCandidates(t *testing.T) []Candidate {
 	t.Helper()
 
 	const (
-		// Offsets 0..3 hold "true", 4..5 hold "==", 6 holds "+".
 		source = "true==+ !x && y"
 	)
 	trueSpan := Span{StartByte: 0, EndByte: 4}
@@ -193,11 +177,7 @@ func manyCandidates(t *testing.T) []Candidate {
 			mk(path, "add-to-sub", addSpan, "+", "-"),
 			mk(path, "remove-negation", notSpan, "!x", " x"),
 			mk(path, "and-to-or", andSpan, "&&", "||"),
-			// A second rule proposing the byte-identical edit at the "&&"
-			// site: one of the two has to lose deduplication.
 			mk(path, "negate-condition", andSpan, "&&", "||"),
-			// And an exact repeat of one candidate, as a duplicated
-			// discovery pass would produce.
 			mk(path, "true-to-false", trueSpan, "true", "false"),
 		)
 	}
@@ -211,10 +191,6 @@ func TestDedupKeepsTheMoreLocalRule(t *testing.T) {
 	span := Span{StartByte: 2, EndByte: 4}
 	digest := DigestString(source)
 
-	// "and-to-or" sits in boolean-connective at table position 5;
-	// "negate-condition", which can produce the byte-identical edit here,
-	// sits earlier in condition-negation at position 2. The earlier table
-	// row wins.
 	local := Candidate{
 		Path: "x.go", Rule: mustRule(t, "negate-condition"), Span: span,
 		Original: "&&", Replacement: "||", SourceDigest: digest,
@@ -288,15 +264,9 @@ func TestDedupRecordsIdenticalCandidates(t *testing.T) {
 	}
 }
 
-// TestDedupIgnoresTheRuleInItsKey pins the other half of the dedup contract:
-// two rules that produce *different* replacements at one span are two
-// mutants, not a duplicate.
 func TestDedupIgnoresTheRuleInItsKey(t *testing.T) {
 	t.Parallel()
 
-	// Two return-replacement rules at one `return x` site propose different
-	// replacements, which makes them two mutants sharing a span rather than
-	// a duplicate. The dedup key is the edit, not the site.
 	const source = "\treturn x\n"
 	span := Span{StartByte: 1, EndByte: 9}
 	digest := DigestString(source)
@@ -322,9 +292,6 @@ func TestDedupIgnoresTheRuleInItsKey(t *testing.T) {
 	}
 }
 
-// TestCatalogOrderBreaksTiesOnTheReplacement covers the last tiebreak in the
-// canonical order: one rule proposing two different replacements at one span
-// still has to land in a stable order.
 func TestCatalogOrderBreaksTiesOnTheReplacement(t *testing.T) {
 	t.Parallel()
 
@@ -356,22 +323,9 @@ func TestCatalogOrderBreaksTiesOnTheReplacement(t *testing.T) {
 	}
 }
 
-// TestCompareEntriesOrdersEveryTiebreak pins the canonical order as a
-// comparator, level by level, and in both directions.
-//
-// Both directions is the point. `Build` sorts with slices.SortFunc, which only
-// ever asks whether one entry sorts *before* another, so a comparator that
-// answered "equal" where it means "after" would sort identically today and
-// stop being an ordering the moment anything else read it — a merge, a report,
-// a binary search over catalogue order. slices.SortFunc documents that its
-// comparison must be a strict weak ordering; that is a contract about the
-// function, not about the one call site, so it is asserted about the function.
 func TestCompareEntriesOrdersEveryTiebreak(t *testing.T) {
 	t.Parallel()
 
-	// Registry positions and ids stand in for real ones: compareEntries reads
-	// the path, the span, the position, the replacement and the id, in that
-	// order, and nothing else.
 	base := entry{
 		candidate: Candidate{
 			Path:        "internal/a.go",
@@ -447,8 +401,6 @@ func TestDisplayLengthFallsBackToTheDefault(t *testing.T) {
 			t.Errorf("display length %d produced %q, want %d characters",
 				length, first.DisplayID, DisplayIDLength)
 		}
-		// The catalogue reports the length it actually proved unique, not
-		// the out-of-range one it was asked for.
 		if got := catalog.DisplayLength(); got != DisplayIDLength {
 			t.Errorf("DisplayLength() = %d after a request for %d, want %d",
 				got, length, DisplayIDLength)
@@ -456,11 +408,6 @@ func TestDisplayLengthFallsBackToTheDefault(t *testing.T) {
 	}
 }
 
-// TestDisplayLengthAcceptsTheFullIDLength is the boundary the fallback above
-// is written around. Sixty-four is a display length, not an out-of-range
-// request: asking for short ids that are the whole id has to be honoured and
-// reported, rather than quietly truncated back to twenty by a check that is
-// one off.
 func TestDisplayLengthAcceptsTheFullIDLength(t *testing.T) {
 	t.Parallel()
 
@@ -485,17 +432,6 @@ func TestDisplayLengthAcceptsTheFullIDLength(t *testing.T) {
 func TestDisplayIDCollisionIsReported(t *testing.T) {
 	t.Parallel()
 
-	// Sixty-four mutants truncated to a single hex character cannot all be
-	// unique: sixteen buckets, sixty-four ids. The pigeonhole makes the test
-	// deterministic without needing a real SHA-256 collision.
-	//
-	// Sixty-four rather than the twenty that the pigeonhole alone needs,
-	// because the sortedness assertion below is the only thing that pins the
-	// order of the reported collisions, and that order is assembled by ranging
-	// over a map. Go randomises that range, so a handful of collisions could
-	// land already sorted by luck and let a comparator that ordered nothing at
-	// all pass. Filling every bucket makes an accidentally sorted list a
-	// one-in-fourteen-factorial event rather than a one-in-a-few-hundred one.
 	const count = 64
 	source := strings.Repeat("true", count)
 	digest := DigestString(source)
@@ -562,20 +498,9 @@ func TestDisplayIDCollisionIsReported(t *testing.T) {
 	}
 }
 
-// TestDisplayIDCollisionOfExactlyTwo is the smallest collision there is, and
-// the boundary the check is written around: a short form shared by two mutants
-// is already ambiguous, so `--mutant` has to be refused rather than resolved to
-// whichever of the two the catalogue happens to hold first. The test above
-// cannot pin it — twenty ids over sixteen buckets crowd several into one, and
-// a check that ignored pairs would still find those.
 func TestDisplayIDCollisionOfExactlyTwo(t *testing.T) {
 	t.Parallel()
 
-	// The pair is searched for rather than hard-coded, the same way
-	// TestResolvePrefixRefusesToGuess finds its ambiguous prefix. Twenty
-	// candidates over sixteen first-hex-character buckets means the pigeonhole
-	// guarantees one, and the identities are fixed, so it is the same pair on
-	// every machine: the test neither skips nor flakes.
 	const count = 20
 	source := strings.Repeat("true", count)
 	digest := DigestString(source)
@@ -646,9 +571,6 @@ func TestDisplayIDsAreUniqueAtTheDefaultLength(t *testing.T) {
 	}
 }
 
-// TestDeduplicationPrecedesTheCollisionCheck guards the Build pipeline order:
-// identical candidates share one full ID, so checking display prefixes first
-// would report every duplicated discovery as a hash collision.
 func TestDeduplicationPrecedesTheCollisionCheck(t *testing.T) {
 	t.Parallel()
 
@@ -688,17 +610,11 @@ func TestBuilderRejectsIncoherentCandidates(t *testing.T) {
 			wantErr: ErrOriginalLengthMismatch,
 		},
 		{
-			// A no-op splices the file back into itself: it compiles by
-			// construction, survives every test, and drags the score down
-			// for a mutation that does not exist.
 			name:    "replacement identical to the original",
 			mutate:  func(c Candidate) Candidate { c.Replacement = c.Original; return c },
 			wantErr: ErrNoOpReplacement,
 		},
 		{
-			// The same no-op wearing a different hat. An empty span is a
-			// legal insertion point, so the length check is satisfied;
-			// deleting nothing from it is still not a mutation.
 			name: "empty span that deletes nothing",
 			mutate: func(c Candidate) Candidate {
 				c.Span = Span{StartByte: c.Span.StartByte, EndByte: c.Span.StartByte}
@@ -789,11 +705,6 @@ func TestBuilderRejectsContradictoryFacts(t *testing.T) {
 	})
 }
 
-// TestAddAllStopsAtTheFirstInvalidCandidate pins that AddAll reports what Add
-// refused rather than swallowing it. A discovery pass that produced one
-// incoherent candidate must not be catalogued as though every candidate were
-// fine: the bad one would simply be missing, and a catalogue that is quietly
-// short is a mutation score computed over the wrong denominator.
 func TestAddAllStopsAtTheFirstInvalidCandidate(t *testing.T) {
 	t.Parallel()
 
@@ -806,9 +717,6 @@ func TestAddAllStopsAtTheFirstInvalidCandidate(t *testing.T) {
 	if !errors.Is(err, ErrNoOpReplacement) {
 		t.Fatalf("AddAll() error = %v, want ErrNoOpReplacement", err)
 	}
-	// It stops where it failed: the candidates before the bad one are queued
-	// and the ones after it are not, which is what "stopping at the first
-	// invalid one" means for a builder that does not roll back.
 	if got := b.Len(); got != 1 {
 		t.Errorf("Len() = %d after a rejected AddAll, want 1", got)
 	}
@@ -849,8 +757,6 @@ func TestCatalogLookups(t *testing.T) {
 		t.Error("ByDisplayID of an unknown display id should not resolve")
 	}
 
-	// Indices are dense and follow catalogue order, because they index the
-	// generated runtime's activation array directly.
 	for i, m := range catalog.Mutants() {
 		if m.Index != uint32(i) {
 			t.Errorf("mutant %d has index %d", i, m.Index)
@@ -897,10 +803,6 @@ func TestResolvePrefix(t *testing.T) {
 	}
 }
 
-// TestResolvePrefixRefusesToGuess covers the ambiguous case. The fixture is
-// large enough that two of its identities share their first four hex
-// characters; because the identities are fixed, so is the collision, and the
-// test neither skips nor flakes.
 func TestResolvePrefixRefusesToGuess(t *testing.T) {
 	t.Parallel()
 
@@ -949,7 +851,6 @@ func TestResolvePrefixRefusesToGuess(t *testing.T) {
 	if !errors.Is(err, ErrAmbiguousPrefix) {
 		t.Fatalf("ResolvePrefix(%q) error = %v, want ErrAmbiguousPrefix", ambiguous, err)
 	}
-	// The error names the candidates rather than picking one.
 	if !strings.Contains(err.Error(), "matches") {
 		t.Errorf("Error() = %q, want it to report how many mutants matched", err)
 	}
@@ -1046,7 +947,6 @@ func TestBuilderWithCustomRegistry(t *testing.T) {
 		t.Fatalf("Len() = %d, want 1", catalog.Len())
 	}
 
-	// The same candidate is not acceptable to the canonical registry.
 	if err := NewBuilder().Add(c); !errors.Is(err, ErrUnknownRule) {
 		t.Fatalf("canonical Add() error = %v, want ErrUnknownRule", err)
 	}
@@ -1060,8 +960,6 @@ func TestDuplicateOrderIsCanonical(t *testing.T) {
 	if len(duplicates) == 0 {
 		t.Fatal("the fixture should produce duplicates")
 	}
-	// Duplicates follow the same canonical order as the catalogue itself:
-	// path, then span. That is what makes `--explain` output diffable.
 	keys := make([]string, 0, len(duplicates))
 	for _, d := range duplicates {
 		keys = append(keys, fmt.Sprintf("%s|%010d|%010d", d.Dropped.Path, d.Dropped.Span.StartByte, d.Dropped.Span.EndByte))

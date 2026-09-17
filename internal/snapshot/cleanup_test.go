@@ -29,18 +29,12 @@ func TestCleanupRemovesTheSnapshot(t *testing.T) {
 	if _, err := os.Stat(snap.Root); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("snapshot root survived Cleanup (err=%v)", err)
 	}
-	// The owned directory goes too, and with it the lock and the marker: an
-	// ownership file left behind would be an orphan of exactly the kind this
-	// pair exists to collect.
 	if _, err := os.Stat(snap.Dir()); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("the owned directory survived Cleanup (err=%v)", err)
 	}
-	// The source tree is untouched, which is the entire point of the package.
 	if got := readFile(t, filepath.Join(src, "a", "b", "c.go")); got != "package c\n" {
 		t.Errorf("source file changed to %q", got)
 	}
-	// Removing what is already gone is not an error: a run that cleans up on
-	// both the happy path and a deferred call must not report a failure.
 	if err := snap.Cleanup(); err != nil {
 		t.Errorf("second Cleanup: %v", err)
 	}
@@ -55,9 +49,6 @@ func TestCleanupNilSnapshot(t *testing.T) {
 	}
 }
 
-// TestCleanupRefusesUnsafeRoots is the guard. Each case is a directory that a
-// bug could plausibly put there, and every one of them must be refused without
-// a single file being touched.
 func TestCleanupRefusesUnsafeRoots(t *testing.T) {
 	t.Parallel()
 
@@ -107,9 +98,6 @@ func TestCleanupRefusesUnsafeRoots(t *testing.T) {
 	}
 }
 
-// TestCleanupAcceptsTheOSTemporaryDirectory covers the second half of the
-// guard: a snapshot created with the default DestParent lands directly in the
-// operating system temporary directory, and must still be removable.
 func TestCleanupAcceptsTheOSTemporaryDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -126,15 +114,10 @@ func TestCleanupAcceptsTheOSTemporaryDirectory(t *testing.T) {
 	}
 }
 
-// owned assembles the Snapshot a Create with these paths would have produced,
-// minus the directory itself, so that the guard cases below read as the paths
-// they are about rather than as three fields each.
 func owned(dir, destParent string) Snapshot {
 	return Snapshot{dir: dir, Root: filepath.Join(dir, TreeName), destParent: destParent}
 }
 
-// TestCleanupRetriesUntilItSucceeds pins the retry loop against a removal that
-// fails the way a Windows file lock does: for a moment, and then not.
 func TestCleanupRetriesUntilItSucceeds(t *testing.T) {
 	t.Parallel()
 
@@ -158,7 +141,6 @@ func TestCleanupRetriesUntilItSucceeds(t *testing.T) {
 	if attempts != 3 {
 		t.Errorf("attempts = %d, want 3", attempts)
 	}
-	// One pause between each pair of attempts, doubling each time.
 	want := []time.Duration{cleanupBackoff, 2 * cleanupBackoff}
 	if len(slept) != len(want) {
 		t.Fatalf("slept %v, want %v", slept, want)
@@ -170,8 +152,6 @@ func TestCleanupRetriesUntilItSucceeds(t *testing.T) {
 	}
 }
 
-// TestCleanupGivesUp proves the loop is bounded. A snapshot that will not go
-// away has to become a diagnostic, not a process that never exits.
 func TestCleanupGivesUp(t *testing.T) {
 	t.Parallel()
 
@@ -192,7 +172,6 @@ func TestCleanupGivesUp(t *testing.T) {
 	if attempts != cleanupAttempts {
 		t.Errorf("attempts = %d, want %d", attempts, cleanupAttempts)
 	}
-	// The ladder doubles and stays bounded: 20, 40, 80, 160 ms.
 	want := []time.Duration{cleanupBackoff, 2 * cleanupBackoff, 4 * cleanupBackoff, 8 * cleanupBackoff}
 	if len(slept) != len(want) {
 		t.Fatalf("slept %v, want %v", slept, want)

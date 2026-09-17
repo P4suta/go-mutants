@@ -200,11 +200,6 @@ func TestTheCacheProgramIsDispatchedBeforeTheCommandLayer(t *testing.T) {
 		t.Fatalf("cacheprog stdout = %q, want the protocol", stdout.String())
 	}
 	stdout.Reset()
-	// The refusal is the cache program's own code, not INSUFFICIENT. This
-	// assertion used to name cli.ExitInsufficient, which was the collision
-	// rather than a decision: the two codes were the same number, so a test
-	// about a cache server that could not start passed by naming a verdict no
-	// verification had reached.
 	if exit := realMainStreams([]string{"cacheprog"}, strings.NewReader(""), &stdout, &stderr, service); exit != buildcache.CacheProgramUsageExitCode {
 		t.Fatalf("cacheprog without a scratch layer = %d, want %d", exit, buildcache.CacheProgramUsageExitCode)
 	}

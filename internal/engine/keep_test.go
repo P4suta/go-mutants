@@ -21,19 +21,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// temporariesFixture is the pair of directories one run makes, built without a
-// run.
-//
-// Everything [session.release] decides is decidable from the two directories
-// and the run's error, and neither needs a toolchain: a snapshot is a copy of a
-// tree and a scratch directory is an os.MkdirTemp with a lock in it. Driving a
-// whole pipeline to reach the deferred cleanup would pay minutes of real
-// building for a rule that is a single boolean.
-//
-// The parent is the test's own temporary directory, so the kept directories
-// these tests deliberately leave behind are removed by the test's cleanup —
-// which is the point of naming a parent rather than letting the snapshot land
-// in the machine's shared temporary directory.
 func temporariesFixture(t *testing.T) (*session, *temporaries, chan Event, *RunOutcome) {
 	t.Helper()
 
@@ -54,9 +41,6 @@ func temporariesFixture(t *testing.T) (*session, *temporaries, chan Event, *RunO
 	}
 	t.Cleanup(func() { _ = owner.Release() })
 
-	// Buffered well past the two events a keep publishes, because nothing is
-	// draining: [session.emit] blocks on an unbuffered channel and the point of
-	// these tests is what release decided, not how it was consumed.
 	events := make(chan Event, 8)
 	return &session{events: events}, &temporaries{
 		snapshot:     snap,
@@ -65,7 +49,6 @@ func temporariesFixture(t *testing.T) (*session, *temporaries, chan Event, *RunO
 	}, events, &RunOutcome{}
 }
 
-// keptEvents drains what a release published, by kind and path.
 func keptEvents(t *testing.T, events chan Event) []PreservedDir {
 	t.Helper()
 	close(events)
@@ -78,13 +61,6 @@ func keptEvents(t *testing.T, events chan Event) []PreservedDir {
 	return kept
 }
 
-// requireKeptMarker fails unless the directory is still there and its owner
-// marker says the keep was deliberate.
-//
-// Both halves are the claim. A directory left behind with a lock nobody holds
-// is indistinguishable from one a killed process abandoned, and the next run's
-// sweep collects exactly those — so a keep that did not record itself in a way
-// the sweep obeys is a keep that lasts until somebody else runs go-mutants.
 func requireKeptMarker(t *testing.T, directory string) {
 	t.Helper()
 	if _, err := os.Stat(directory); err != nil {
@@ -99,7 +75,6 @@ func requireKeptMarker(t *testing.T, directory string) {
 	}
 }
 
-// requireGone fails unless the directory was removed.
 func requireGone(t *testing.T, directory string) {
 	t.Helper()
 	if _, err := os.Stat(directory); !errors.Is(err, fs.ErrNotExist) {
@@ -107,9 +82,6 @@ func requireGone(t *testing.T, directory string) {
 	}
 }
 
-// TestKeepTempAlwaysLeavesTheSnapshotAndScratchMarkedKept is the whole of what
-// the option promises: both directories are still there afterwards, both say
-// they were preserved on purpose, and the run says which they are.
 func TestKeepTempAlwaysLeavesTheSnapshotAndScratchMarkedKept(t *testing.T) {
 	t.Parallel()
 
@@ -132,12 +104,6 @@ func TestKeepTempAlwaysLeavesTheSnapshotAndScratchMarkedKept(t *testing.T) {
 	}
 }
 
-// TestKeepTempOnFailureKeepsOnlyWhenTheRunFails is the difference between the
-// two modes, stated as the four combinations that exist.
-//
-// `on-failure` is the mode a CI job can afford to leave on: a run that went
-// fine leaves nothing behind, so the disk only pays for the runs somebody has
-// to diagnose. `always` is the one a person types once.
 func TestKeepTempOnFailureKeepsOnlyWhenTheRunFails(t *testing.T) {
 	t.Parallel()
 
@@ -182,18 +148,6 @@ func TestKeepTempOnFailureKeepsOnlyWhenTheRunFails(t *testing.T) {
 	}
 }
 
-// TestAnInterruptedRunKeepsNothing holds `on-failure` to what it says.
-//
-// A Ctrl-C is not a failure: nothing went wrong, the user asked for the run to
-// stop, and a mode that filled the disk every time somebody changed their mind
-// would be a mode nobody could leave on.
-//
-// Every way an interruption reaches the run counts, and each of them carries the
-// context's own cause rather than a code of its own — this package's
-// [CodeInterrupted], internal/execute's and internal/validate's, and a bare
-// context.Canceled from whichever package noticed first. That is what lets
-// [interrupted] ask one question; see
-// [TestInterruptedIsACancellationAndNeverADeadline].
 func TestAnInterruptedRunKeepsNothing(t *testing.T) {
 	t.Parallel()
 
@@ -226,14 +180,6 @@ func TestAnInterruptedRunKeepsNothing(t *testing.T) {
 	}
 }
 
-// TestAKeptDirectoryIsNotCollectedByTheNextRunsSweep is the other half of a
-// keep, and the half that decides whether it lasts.
-//
-// Every run sweeps the temporary parent before it copies anything, and what it
-// collects is every go-mutants directory whose lock is free. A kept directory's
-// lock is free — the process that held it has exited — so the only thing
-// standing between the answer somebody kept and the next run's collector is the
-// marker.
 func TestAKeptDirectoryIsNotCollectedByTheNextRunsSweep(t *testing.T) {
 	t.Parallel()
 
@@ -260,21 +206,6 @@ func TestAKeptDirectoryIsNotCollectedByTheNextRunsSweep(t *testing.T) {
 	}
 }
 
-// TestInterruptedIsACancellationAndNeverADeadline is the predicate two features
-// now hang off, checked where the two causes are actually told apart.
-//
-// [check] asks the context after it has judged the command, and the answer it
-// used to give was the same for both causes: any `ctx.Err()` became
-// [CodeInterrupted], which the old predicate matched by code. That made a
-// deadline an interruption *here* and a failure everywhere else — internal/gocmd,
-// internal/validate and internal/execute each surface the same expiry under
-// their own code — so one run kept its directories and wrote a bundle or did
-// not, depending on which command happened to be in flight when the clock ran
-// out. One cause, two answers.
-//
-// The rule is now the cause and nothing else. A cancellation is somebody
-// stopping the run; a deadline is the run failing to finish in the time it was
-// given, which is a failure worth the tree and the bundle.
 func TestInterruptedIsACancellationAndNeverADeadline(t *testing.T) {
 	t.Parallel()
 
@@ -320,13 +251,9 @@ func TestInterruptedIsACancellationAndNeverADeadline(t *testing.T) {
 			if got := Interrupted(err); got != c.interrupted {
 				t.Errorf("Interrupted(%v) = %t, want %t", err, got, c.interrupted)
 			}
-			// And what the run does about it follows from that one answer, which
-			// is the whole point of there being one answer.
 			if got := keepsTemporaries(KeepTempOnFailure, err); got == c.interrupted {
 				t.Errorf("keepsTemporaries(on-failure, %v) = %t, want %t", err, got, !c.interrupted)
 			}
-			// The command is named whichever cause it was: what was still
-			// running is the first thing a reader of either asks for.
 			var coded *Error
 			if !errors.As(err, &coded) || coded.Invocation == nil {
 				t.Errorf("check lost the command it judged: %v", err)
@@ -335,15 +262,6 @@ func TestInterruptedIsACancellationAndNeverADeadline(t *testing.T) {
 	}
 }
 
-// TestPreservedIsSortedAndMatchesTheKeptEvents keeps the two accounts of one
-// decision in step.
-//
-// [RunOutcome.Preserved] is what a caller reads afterwards and [DirectoryKept]
-// is what a renderer prints as it happens, and a reader comparing a console
-// against a returned value must not find one of them holding a directory the
-// other does not. The order is fixed for the same reason every other list this
-// package publishes is: two runs of one workspace produce two lists that line
-// up row for row.
 func TestPreservedIsSortedAndMatchesTheKeptEvents(t *testing.T) {
 	t.Parallel()
 
@@ -365,14 +283,9 @@ func TestPreservedIsSortedAndMatchesTheKeptEvents(t *testing.T) {
 	}
 }
 
-// TestDirectoryKeptIsASealedEvent is a compile-time assertion: it travels on the
-// engine's stream, so it has to be part of the sealed interface a renderer
-// switches over.
 func TestDirectoryKeptIsASealedEvent(t *testing.T) {
 	t.Parallel()
 
-	// The declaration is the assertion: the interface's marker method is
-	// unexported, so a type that forgot it would not compile here.
 	var kept Event = DirectoryKept{Kind: KeptSnapshot, Path: "/tmp/go-mutants-snap-0000"}
 
 	if got := eventNames([]Event{kept}); !slices.Equal(got, []string{"DirectoryKept"}) {
@@ -380,12 +293,6 @@ func TestDirectoryKeptIsASealedEvent(t *testing.T) {
 	}
 }
 
-// TestKeepTempIsARecordedArtifactAndNeverAWarning pins where a keep is written
-// down in the run's own account.
-//
-// A kept directory is a path the run produced, so it is an `artifact` beside
-// the report documents rather than a note about something that went wrong.
-// Nothing went wrong: the user asked for the directory and got it.
 func TestKeepTempIsARecordedArtifactAndNeverAWarning(t *testing.T) {
 	t.Parallel()
 
@@ -413,8 +320,6 @@ func TestKeepTempIsARecordedArtifactAndNeverAWarning(t *testing.T) {
 	}
 }
 
-// TestKeepTempIsPrintedAsTheWordAUserTyped keeps the mode's spelling and the
-// flag's spelling one string.
 func TestKeepTempIsPrintedAsTheWordAUserTyped(t *testing.T) {
 	t.Parallel()
 
@@ -434,17 +339,6 @@ func TestKeepTempIsPrintedAsTheWordAUserTyped(t *testing.T) {
 	}
 }
 
-// TestTheScratchGoesEvenAfterAKilledTestLeftADirectoryShut is the removal a
-// mutation run has to be able to make.
-//
-// Killing test processes is what this tool does: a per-mutant timeout kills
-// one, an interrupted run kills every worker at once. A suite that had made one
-// of its own temporary directories unreadable -- to prove a permission refusal,
-// which is how half the failure paths in this repository are tested -- and
-// would have put it back on the way out is a suite that never got the chance.
-// What is left is a directory nothing can list, inside the run's own scratch,
-// and a run that could not remove it leaves one behind per killed test for as
-// long as anybody uses the tool.
 func TestTheScratchGoesEvenAfterAKilledTestLeftADirectoryShut(t *testing.T) {
 	t.Parallel()
 
@@ -460,8 +354,6 @@ func TestTheScratchGoesEvenAfterAKilledTestLeftADirectoryShut(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(deep, "eight"), []byte("12345678"), 0o600); err != nil {
 		t.Fatalf("staging a file: %v", err)
 	}
-	// Read without execute, which is the shape a test proving "this file cannot
-	// be stat-ed" leaves behind -- and the one os.RemoveAll cannot walk into.
 	if err := os.Chmod(deep, 0o600); err != nil {
 		t.Fatalf("shutting the directory: %v", err)
 	}
@@ -477,12 +369,6 @@ func TestTheScratchGoesEvenAfterAKilledTestLeftADirectoryShut(t *testing.T) {
 	}
 }
 
-// TestForcingARemovalStillReportsOneItCannotMake is the other half: widening a
-// mode is not the same as promising the directory will go.
-//
-// The caller's whole answer to a directory that will not be removed is to say
-// so, and a forcing removal that swallowed the second failure would turn a
-// disk somebody has to look at into silence.
 func TestForcingARemovalStillReportsOneItCannotMake(t *testing.T) {
 	t.Parallel()
 
@@ -490,8 +376,6 @@ func TestForcingARemovalStillReportsOneItCannotMake(t *testing.T) {
 		t.Skip("root ignores the permissions this test uses to make a removal fail")
 	}
 
-	// The parent refuses the unlink, which no mode inside the tree can widen:
-	// removing an entry is a write to the directory holding it.
 	parent := t.TempDir()
 	root := filepath.Join(parent, "scratch")
 	if err := os.MkdirAll(filepath.Join(root, "inner"), 0o700); err != nil {
@@ -513,12 +397,6 @@ func TestForcingARemovalStillReportsOneItCannotMake(t *testing.T) {
 	}
 }
 
-// TestWidenReachesADirectoryItCannotListUntilItHasWidenedIt pins the ordering
-// that makes the walk work at all.
-//
-// A directory that cannot be searched cannot be walked into, so a widener that
-// listed before changing the mode would stop at exactly the entry it exists
-// for. The mode comes first, and the listing after it.
 func TestWidenReachesADirectoryItCannotListUntilItHasWidenedIt(t *testing.T) {
 	t.Parallel()
 
@@ -532,8 +410,6 @@ func TestWidenReachesADirectoryItCannotListUntilItHasWidenedIt(t *testing.T) {
 	if err := os.MkdirAll(inner, 0o700); err != nil {
 		t.Fatalf("staging: %v", err)
 	}
-	// Both shut, the outer one first: reaching the inner one at all means the
-	// outer one was widened before it was listed.
 	for _, dir := range []string{inner, outer} {
 		if err := os.Chmod(dir, 0o000); err != nil {
 			t.Fatalf("shutting %s: %v", dir, err)

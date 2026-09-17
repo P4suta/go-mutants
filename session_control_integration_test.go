@@ -3,22 +3,6 @@
 
 //go:build integration
 
-// Session.Control: the original program, run through the binaries a session
-// already prepared.
-//
-// A consumer measuring a mutant wants the same tests run twice — once with the
-// mutant on and once with it off — and until this call the only way to get the
-// second was to freeze a second copy of the module and build a second set of
-// binaries for it. The claim every test here circles is that the second copy
-// was never needed: with nothing activated, the mutant tree's binaries *are*
-// the user's program, so a control is an execution minus one environment entry.
-//
-// The tests therefore come in pairs wherever they can. What a control reports
-// is stated beside what Exec reports about the same target, because "the
-// control passed" is only worth anything if the same binary, the same
-// arguments and the same budget produced a kill when the mutant was switched
-// on.
-
 package gomutants_test
 
 import (
@@ -39,32 +23,10 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// controlFailEnv switches the injected fixture's failing test on. Its value,
-// not merely its presence, is what the target reads, so that an inherited empty
-// variable cannot turn it on by accident — the rule [sessionBlockEnv] follows
-// and for the same reason.
 const controlFailEnv = "CONTROL_FAIL"
 
-// killableModule is the fixture's import path, as a request's Package takes it.
 const killableModule = "fixture.example/killable"
 
-// controlledFixture is the one session the control tests share: fixtures/killable
-// with [killableExtraTests] written into it.
-//
-// It is killable rather than probeable because two of the claims below need
-// targets only the injected source has — one that proves no activation reached
-// the child from inside the process, and one that is red on the original
-// program — and a shared session is what keeps them affordable: preparing one
-// is the expensive thing this file does, and every assertion here is about the
-// answers *one* prepared session gives.
-//
-// The environment is opened without the fixture's gate variables for the reason
-// [hostEnvWithoutFixtureGates] exists: Open freezes an environment and every
-// target inherits it, so a developer or a runner with SESSION_BLOCK already
-// exported would have the injected sleeper cost this file a minute per target,
-// and one with CONTROL_FAIL exported would make every control below red.
-// Verification is skipped because nothing here needs the fixture's own suite to
-// have been run against the instrumented tree, only binaries to run it in.
 var controlledFixture = sync.OnceValue(func() *preparedFixture {
 	return prepareFixtureWith("killable",
 		map[string]string{"session_test.go": killableExtraTests},
@@ -76,8 +38,6 @@ var controlledFixture = sync.OnceValue(func() *preparedFixture {
 		})
 })
 
-// controlled returns that session, failing the calling test if preparing it did
-// not work.
 func controlled(t *testing.T) *preparedFixture {
 	t.Helper()
 	prepared := controlledFixture()
@@ -87,30 +47,14 @@ func controlled(t *testing.T) *preparedFixture {
 	return prepared
 }
 
-// survivingMutant is the fixture's mutant nothing calls, which is what a test
-// asks for when it wants an execution that is *not* about the mutant: activate
-// it and every target in the package still behaves exactly as the original.
 func survivingMutant(t *testing.T, prepared *preparedFixture) gomutants.Mutant {
 	t.Helper()
 	return mutantkit.APIMutantAt(t, prepared.catalog, "untested.go", "neq-to-eq")
 }
 
-// TestControlRunsTheOriginalProgram is the feature in one assertion, and its
-// second half is what makes the first mean anything.
-//
-// The injected TestSessionEnvironment fails when EXPECT_CLEAN is set and
-// GO_MUTANTS_ACTIVE is not empty, so it is a target that reports from *inside
-// the child process* whether an activation reached it. Under a control it
-// passes, which is the claim; under an execution of the very same binary with
-// the same arguments and the same overlay it fails and the mutant is killed,
-// which is what rules out the control having passed because nothing ran, or
-// because the target does not look, or because activation is broken generally.
 func TestControlRunsTheOriginalProgram(t *testing.T) {
 	prepared := controlled(t)
 	args := []string{"-test.run=^TestSessionEnvironment$"}
-	// FROZEN_AT_OPEN is the target's own second condition and is supplied as an
-	// overlay rather than frozen at Open, because this file's session is shared
-	// and one test may not decide what the whole of it inherits.
 	env := []string{expectCleanEnv + "=yes", "FROZEN_AT_OPEN=before"}
 
 	control, err := prepared.session.Control(t.Context(), gomutants.ControlRequest{
@@ -152,25 +96,8 @@ func TestControlRunsTheOriginalProgram(t *testing.T) {
 	}
 }
 
-// TestControlTimesOutLikeExec is the paired-timeout guarantee applied to a
-// control, and it proves the same two things Exec's own timeout test does.
-//
-// The bound rules out a call that *returned late* — a supervisor that waited
-// for a tree it should have killed — and [requireTargetIsGone] rules out the
-// other half, which no elapsed check can: a call that came back promptly while
-// the process tree it started went on sleeping. Both are asserted for the
-// control and for the execution beside it, because a control that was bounded
-// by something other than the session's supervisor would be a second timeout
-// mechanism nobody wrote down.
 func TestControlTimesOutLikeExec(t *testing.T) {
 	prepared := controlled(t)
-	// Run the binary once, untimed, before anything here is bounded. The
-	// argument is written out in full at the warm-up in api_integration_test.go
-	// and is the same one: the proofs below need the target to reach its own
-	// `init`, and what stands between `exec` and `init` is a loader whose cost
-	// on a freshly written image is a fact about the machine. Paying it here
-	// leaves the budget covering the target's own first instructions, which is
-	// not a number that varies.
 	if _, warmErr := prepared.session.Control(t.Context(), gomutants.ControlRequest{
 		Package: killableModule,
 		Args:    []string{"-test.run=^$"},
@@ -179,11 +106,6 @@ func TestControlTimesOutLikeExec(t *testing.T) {
 		t.Fatalf("warming the prepared test binary: %v", warmErr)
 	}
 
-	// Two seconds, for the reason the blocking executions in
-	// api_integration_test.go use it: the target still has something to do
-	// before it is cut off, and the warm-up above is what keeps that something
-	// from being the loader. It is two orders below the minute the target
-	// sleeps for.
 	const budget = 2 * time.Second
 	controlPID := filepath.Join(t.TempDir(), "control.pid")
 	execPID := filepath.Join(t.TempDir(), "exec.pid")
@@ -239,16 +161,6 @@ func TestControlTimesOutLikeExec(t *testing.T) {
 	requireTargetIsGone(t, execPID, "bounded execution")
 }
 
-// TestControlReportsAFailingSuite is the two answers a control gives, and the
-// pair is the whole diagnostic value of the call.
-//
-// A mutant's suite going red is only evidence about the mutant if the same
-// suite is green on the original program. So a control of the target that kills
-// a known-killed mutant has to pass — that is the first half — and a control of
-// a target that is red without any mutant has to say so, with the output,
-// rather than come back as an infrastructure failure. A consumer that could not
-// tell those two apart would report the repository's own broken test as a
-// mutation score.
 func TestControlReportsAFailingSuite(t *testing.T) {
 	prepared := controlled(t)
 	clamp := mutantkit.APIMutantAt(t, prepared.catalog, "clamp.go", "lt-to-le")
@@ -307,13 +219,6 @@ func TestControlReportsAFailingSuite(t *testing.T) {
 	})
 }
 
-// TestControlRefusesWhatExecRefuses keeps the two calls one request vocabulary.
-//
-// A consumer composing arguments for a mutant run hands the same arguments to
-// the control beside it, so a flag one refuses and the other accepts would be a
-// difference discovered at run time, in the call that was supposed to be the
-// trustworthy half. Every row therefore asserts the same typed refusal from
-// both, and that the refusal names which call made it.
 func TestControlRefusesWhatExecRefuses(t *testing.T) {
 	prepared := controlled(t)
 	mutant := survivingMutant(t, prepared)
@@ -404,10 +309,6 @@ func TestControlRefusesWhatExecRefuses(t *testing.T) {
 			},
 		},
 		{
-			// The budget's other half, refused in the same shape and by both
-			// calls. A negative bound is not a small one: it would be a budget
-			// every process is over, so a session that accepted it would kill
-			// every mutant it started and call each one detected.
 			name:   "a negative memory limit",
 			memory: -1,
 			assert: func(t *testing.T, call string, err error) {
@@ -447,8 +348,6 @@ func TestControlRefusesWhatExecRefuses(t *testing.T) {
 	}
 }
 
-// assertReservedFlag is the refusal a reserved test flag produces, named by the
-// call that made it.
 func assertReservedFlag(t *testing.T, call string, err error, flag string) {
 	t.Helper()
 	var reserved *gomutants.ReservedError
@@ -464,21 +363,6 @@ func assertReservedFlag(t *testing.T, call string, err error, flag string) {
 	}
 }
 
-// TestControlLeavesNoScratchBehind is the promise every per-call temporary
-// directory carries: a session that was not asked to keep anything holds
-// nothing after the call returns.
-//
-// It is a set comparison rather than a count, because what has to be true is
-// that no directory *this call* made survived it — a session that leaked one
-// per control would fill a machine over a run, and a count could be satisfied
-// by a leak and a removal happening to cancel out.
-//
-// The comparison itself is [expectScratchAfterCall], because the answer depends
-// on the keep policy the suite is running under: under one, this shared session
-// is opened with KeepTemp and the control's own scratch is kept on purpose. The
-// promise being checked is the same either way — a call owns exactly the
-// directory it made — and stating it in one place is what keeps the two answers
-// from drifting into two tests.
 func TestControlLeavesNoScratchBehind(t *testing.T) {
 	prepared := controlled(t)
 	before := perCallScratch(t, prepared.parent)
@@ -497,20 +381,11 @@ func TestControlLeavesNoScratchBehind(t *testing.T) {
 	expectScratchAfterCall(t, prepared, before, perCallScratch(t, prepared.parent))
 }
 
-// perCallScratch is every per-call scratch directory under a workspace's
-// temporary parent, sorted, whichever of the session's calls made it.
-//
-// It walks rather than reading one directory because the per-call scratch is
-// nested: it lives inside the session's, which lives inside the workspace's,
-// which is the arrangement that keeps it out of reach of any sweep.
 func perCallScratch(t *testing.T, parent string) []string {
 	t.Helper()
 	var found []string
 	err := filepath.WalkDir(parent, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			// A directory that vanished under the walk is another call tidying
-			// up after itself, which is the behaviour under test rather than a
-			// reason to fail.
 			if errors.Is(walkErr, fs.ErrNotExist) {
 				return nil
 			}
@@ -528,16 +403,6 @@ func perCallScratch(t *testing.T, parent string) []string {
 	return found
 }
 
-// TestControlAndExecShareEveryLaunchFact is the guarantee stated where a
-// consumer can check it: in the recording.
-//
-// A control is evidence about a mutant run only if the two started the same
-// program. The `exec` events carry everything that decides which program that
-// is — the argument vector, the directory a Go test resolves testdata relative
-// to, the paired timeout, and the names of the variables the child could see —
-// so comparing them field for field is the strongest form of the claim
-// available from outside the engine. The *only* difference allowed is the
-// activation variable, and the kind and subject that say which call it was.
 func TestControlAndExecShareEveryLaunchFact(t *testing.T) {
 	prepared := controlled(t)
 	args := []string{"-test.run=^TestClamp$"}
@@ -569,9 +434,6 @@ func TestControlAndExecShareEveryLaunchFact(t *testing.T) {
 	}
 
 	events := recordingOf(t, prepared.workspace)
-	// Through the published validator, because a new command kind is a new line
-	// shape: `control-run` has to be in the schema's enum or every recording
-	// carrying one stops validating for a consumer decoding it strictly.
 	validateRecording(t, events)
 	controlExec := lastExecOfKind(t, events, trace.ExecKindControlRun)
 	mutantExec := lastExecOfKind(t, events, trace.ExecKindMutantRun)
@@ -605,14 +467,8 @@ func TestControlAndExecShareEveryLaunchFact(t *testing.T) {
 	}
 }
 
-// activationVariable is the one entry a control's environment may lack. It is
-// spelled out rather than imported, because internal/instrument is not a
-// package a consumer of this API can name and the whole claim is one a consumer
-// has to be able to make.
 const activationVariable = "GO_MUTANTS_ACTIVE"
 
-// lastExecOfKind is the most recent `exec` event of one kind in a recording,
-// which is the one the call that just returned recorded.
 func lastExecOfKind(t *testing.T, events []trace.Event, kind string) trace.ExecRecord {
 	t.Helper()
 	for i := len(events) - 1; i >= 0; i-- {
@@ -624,10 +480,6 @@ func lastExecOfKind(t *testing.T, events []trace.Event, kind string) trace.ExecR
 	return trace.ExecRecord{}
 }
 
-// TestControlHonoursOutputLimit is the output budget applied to a control, and
-// it is the same claim [TestSessionExecHonoursOutputLimit] makes about an
-// execution: a caller says how much it is willing to hold, and what was dropped
-// is reported rather than left to be guessed at from a notice line.
 func TestControlHonoursOutputLimit(t *testing.T) {
 	prepared := controlled(t)
 	const limit = 4096
@@ -659,14 +511,6 @@ func TestControlHonoursOutputLimit(t *testing.T) {
 	}
 }
 
-// TestControlTraceSeqPointsAtItsRecord is the join, and it is the one place the
-// shape of a control's recording is pinned.
-//
-// The trace contract's event `type` enum is closed and holds no payload for a
-// control, so the call is recorded as its per-binary `exec` events plus one
-// `note` summarising them — and the note is what the result names. A consumer
-// holding this number has to land on that note rather than on whatever event
-// happened to be recorded next.
 func TestControlTraceSeqPointsAtItsRecord(t *testing.T) {
 	prepared := controlled(t)
 
@@ -693,10 +537,6 @@ func TestControlTraceSeqPointsAtItsRecord(t *testing.T) {
 		t.Errorf("the note carries the diagnostic code %q for a control that ran", event.Note.Code)
 	}
 
-	// And the join down to the commands is a *field* rather than the note's
-	// prose. A note has no `exec_seqs` of its own — `mutant-exec` and
-	// `probe-exec` do — so without this a consumer would be parsing a sentence
-	// written for a person to find the executions its control ran.
 	if len(control.ExecSeqs) != len(control.Binaries) {
 		t.Fatalf("ExecSeqs = %v for binaries %v, want one sequence per binary started",
 			control.ExecSeqs, control.Binaries)
@@ -719,14 +559,6 @@ func TestControlTraceSeqPointsAtItsRecord(t *testing.T) {
 	}
 }
 
-// TestControlWithoutAPackageRunsEveryPreparedBinary pins the whole-package
-// request, which is the one an ordinary consumer sends.
-//
-// An empty Package selects every compiled test package, exactly as it does for
-// [gomutants.ExecRequest] — the control of "the whole suite" is the control a
-// caller wants beside a mutant run it did not narrow either — and a call that
-// quietly ran none of them would report the original program as passing having
-// started nothing.
 func TestControlWithoutAPackageRunsEveryPreparedBinary(t *testing.T) {
 	prepared := controlled(t)
 
@@ -745,22 +577,6 @@ func TestControlWithoutAPackageRunsEveryPreparedBinary(t *testing.T) {
 	}
 }
 
-// TestControlOnAFuzzTargetRunsInAPrivateCopy is the isolation an execution gets,
-// applied to a control.
-//
-// A fuzz target writes: a corpus entry, a cache, a crasher. Under Exec that
-// lands in a private copy of the snapshot, so the tree every later mutant is
-// measured against does not move underneath the run — and a control that ran a
-// fuzz target in the shared tree would drift it in exactly the way the drift
-// gate exists to catch, while looking like nothing at all.
-//
-// The launch shape is compared here too, and for a fuzz target two of its parts
-// have to differ: the working directory, because each call runs in a copy of the
-// tree of its own, and the value of `-test.fuzzcachedir`, because each call
-// caches inside its own scratch. Those two differing *is* the isolation. The
-// executable is the same file — the binaries live outside the snapshot and are
-// not copied — and everything else must match flag for flag, which is what
-// [fuzzLaunchShape] compares.
 func TestControlOnAFuzzTargetRunsInAPrivateCopy(t *testing.T) {
 	prepared := controlled(t)
 	args := []string{
@@ -770,10 +586,6 @@ func TestControlOnAFuzzTargetRunsInAPrivateCopy(t *testing.T) {
 	}
 	const budget = 30 * time.Second
 
-	// Where an *ordinary* control runs, first, so that "in a copy of its own"
-	// is a comparison against something rather than a name in a path. An
-	// ordinary target runs in the package's directory inside the prepared
-	// snapshot; a fuzz target must not.
 	if _, plainErr := prepared.session.Control(t.Context(), gomutants.ControlRequest{
 		Package: killableModule,
 		Args:    []string{"-test.run=^TestClamp$"},
@@ -806,8 +618,6 @@ func TestControlOnAFuzzTargetRunsInAPrivateCopy(t *testing.T) {
 		t.Fatalf("the fuzz execution = %s, want a survivor:\n%s", execution.Outcome, execution.OutputTail)
 	}
 
-	// The private copy, stated as the thing it exists to protect: the prepared
-	// snapshot is exactly as Prepare left it.
 	changes, err := prepared.session.Changes()
 	if err != nil {
 		t.Fatalf("checking the snapshot after the fuzz control: %v", err)
@@ -856,11 +666,6 @@ func TestControlOnAFuzzTargetRunsInAPrivateCopy(t *testing.T) {
 	}
 }
 
-// fuzzLaunchShape is one fuzz argument vector with the one part a private
-// scratch necessarily moves taken out: the value of `-test.fuzzcachedir`, which
-// the session points at the call's own directory. Everything else — the
-// executable, the harness-owned timeout, and every flag the caller wrote, in
-// order — has to match between a control and an execution of the same target.
 func fuzzLaunchShape(argv []string) []string {
 	shape := make([]string, 0, len(argv))
 	for _, argument := range argv {
@@ -873,13 +678,8 @@ func fuzzLaunchShape(argv []string) []string {
 	return shape
 }
 
-// fuzzCacheFlag is the flag the session owns and appends for a fuzz target. It
-// is spelled here rather than imported because a consumer cannot import the
-// engine's internals, and because it is a *reserved* flag: the value of this
-// test is that the session sets it and the caller may not.
 const fuzzCacheFlag = "-test.fuzzcachedir="
 
-// fuzzCacheDir is the directory one launch was told to keep its fuzz cache in.
 func fuzzCacheDir(t *testing.T, argv []string) string {
 	t.Helper()
 	for _, argument := range argv {
@@ -891,28 +691,12 @@ func fuzzCacheDir(t *testing.T, argv []string) string {
 	return ""
 }
 
-// withoutActivationName is one recorded environment's names with the activation
-// removed, which is the whole of what a control's may differ by.
 func withoutActivationName(names []string) []string {
 	return slices.DeleteFunc(slices.Clone(names), func(name string) bool {
 		return name == activationVariable
 	})
 }
 
-// TestControlScratchIsKeptUnderKeepTemp holds a control to the promise every
-// per-call directory carries.
-//
-// KeepTemp exists to answer the one question a removed directory cannot — what
-// did the tree this ran in actually look like — and a control's scratch is half
-// of that answer for the run a consumer compares a mutant against: it is where
-// the target's TMPDIR pointed and where a fuzz cache lived. A keep that covered
-// Exec and Probe and quietly dropped Control would be an escape hatch with a
-// hole in exactly the call added last.
-//
-// The artifact kind is the execution's, deliberately: a kept control scratch is
-// the same kind of directory as a kept execution scratch, and inventing a
-// fourth kind would make a consumer branch on a distinction that changes
-// nothing about what the directory holds.
 func TestControlScratchIsKeptUnderKeepTemp(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "killable")
@@ -958,7 +742,6 @@ func TestControlScratchIsKeptUnderKeepTemp(t *testing.T) {
 	}
 }
 
-// statDirectory reports whether path exists and is a directory.
 func statDirectory(path string) (bool, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -967,20 +750,9 @@ func statDirectory(path string) (bool, error) {
 	return info.IsDir(), nil
 }
 
-// TestAFailedControlStillPointsAtItsRecord is the one case a consumer most
-// wants to read about and the one it could otherwise not find.
-//
-// A control whose child a cancellation killed establishes nothing — no status,
-// no timeout, no output — but it *did* reach an execution, so it is in the
-// recording. Handing back a zero sequence there would leave the failure with no
-// account at all, and the binaries and their executions are the first question
-// a cut-off run raises: which ones had already run?
 func TestAFailedControlStillPointsAtItsRecord(t *testing.T) {
 	prepared := controlled(t)
 	pidFile := filepath.Join(t.TempDir(), "cancelled.pid")
-	// Untimed, for the warm-up argument in api_integration_test.go: the
-	// cancellation below is armed by a clock, and a target still in its loader
-	// when it fires records no pid.
 	if _, warmErr := prepared.session.Control(t.Context(), gomutants.ControlRequest{
 		Package: killableModule,
 		Args:    []string{"-test.run=^$"},

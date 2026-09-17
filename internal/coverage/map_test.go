@@ -11,16 +11,12 @@ import (
 	"github.com/P4suta/go-mutants/internal/coverage"
 )
 
-// The module and the two test binaries every case below is written against.
 const (
 	module = "example.com/m"
 	core   = module + "/internal/core"
 	edge   = module + "/internal/edge"
 )
 
-// coreFile and edgeFile are the two sources, in the two spellings that have to
-// be kept apart: a profile names a file by import path, and a mutant is located
-// by a module-relative path.
 const (
 	coreFile     = "internal/core/core.go"
 	edgeFile     = "internal/edge/edge.go"
@@ -28,17 +24,10 @@ const (
 	edgeProfiled = module + "/" + edgeFile
 )
 
-// profile builds a `set`-mode profile out of "<file> <startLine>-<endLine>
-// <count>" triples, so a case can be read as a table rather than as a struct
-// literal.
 func profile(blocks ...coverage.Block) coverage.Profile {
 	return coverage.Profile{Mode: "set", Blocks: blocks}
 }
 
-// block is one covered or uncovered line range. The columns are filled in with
-// values the mapping must ignore: 1 at the start of every block and 1 at the
-// end, which is a *narrower* range than any real block and would exclude every
-// mutant if columns were ever consulted.
 func block(file string, startLine, endLine, count int) coverage.Block {
 	return coverage.Block{
 		File:      file,
@@ -51,12 +40,10 @@ func block(file string, startLine, endLine, count int) coverage.Block {
 	}
 }
 
-// mutant is one located mutant on a single line.
 func mutant(id, path string, line int) coverage.Mutant {
 	return coverage.Mutant{ID: id, Path: path, StartLine: line, EndLine: line}
 }
 
-// spans is one located mutant over several lines.
 func spans(id, path string, start, end int) coverage.Mutant {
 	return coverage.Mutant{ID: id, Path: path, StartLine: start, EndLine: end}
 }
@@ -68,9 +55,7 @@ func TestMap(t *testing.T) {
 		name     string
 		mutants  []coverage.Mutant
 		profiles map[string]coverage.Profile
-		// want is the covering binaries per mutant id; an id absent from it is
-		// expected to be uncovered.
-		want map[string][]string
+		want     map[string][]string
 	}{
 		{
 			name:    "a covered line is covered by the binary that reached it",
@@ -89,8 +74,6 @@ func TestMap(t *testing.T) {
 			want: nil,
 		},
 		{
-			// The whole point of per-binary profiles. `edge`'s tests call into
-			// `core`; `core`'s own tests do not reach this line.
 			name:    "only the binary that reaches the line covers it",
 			mutants: []coverage.Mutant{mutant("a", coreFile, 20)},
 			profiles: map[string]coverage.Profile{
@@ -109,8 +92,6 @@ func TestMap(t *testing.T) {
 			want: map[string][]string{"a": {core, edge}},
 		},
 		{
-			// A file no profile names is a package no test binary linked, which
-			// is the ordinary way a mutant ends up uncovered.
 			name:    "a file absent from every profile is uncovered",
 			mutants: []coverage.Mutant{mutant("a", edgeFile, 7)},
 			profiles: map[string]coverage.Profile{
@@ -160,10 +141,6 @@ func TestMap(t *testing.T) {
 			want: nil,
 		},
 		{
-			// A multi-line statement deletion. Overlap, not containment: one
-			// reached line inside the span is enough, because the mutant
-			// changes the whole span and any of it running can change what a
-			// test sees.
 			name:    "a multi-line mutant overlapping a covered block at its start",
 			mutants: []coverage.Mutant{spans("a", coreFile, 11, 20)},
 			profiles: map[string]coverage.Profile{
@@ -200,11 +177,6 @@ func TestMap(t *testing.T) {
 			want: nil,
 		},
 		{
-			// A span whose end precedes its start is not a line interval, and
-			// the guard says so before the search runs. Without it the search
-			// answers "does any covered line lie in [10,3]" with the first
-			// interval that reaches line 10, and a mutant is reported as
-			// covered by a block holding no line of it.
 			name:    "a reversed span is covered by nothing",
 			mutants: []coverage.Mutant{spans("a", coreFile, 10, 3)},
 			profiles: map[string]coverage.Profile{
@@ -213,10 +185,6 @@ func TestMap(t *testing.T) {
 			want: nil,
 		},
 		{
-			// A profile lists a file's blocks in the order the toolchain wrote
-			// them, which is not sorted by line. The index sorts them, and this
-			// is the case that says so: line 3 is inside the second block
-			// listed, and a search over the unsorted pair stops at the first.
 			name:    "covered blocks listed out of order still cover the line between them",
 			mutants: []coverage.Mutant{mutant("a", coreFile, 3)},
 			profiles: map[string]coverage.Profile{
@@ -228,11 +196,6 @@ func TestMap(t *testing.T) {
 			want: map[string][]string{"a": {core}},
 		},
 		{
-			// The blocks of a function and of a branch inside it nest, and the
-			// index sorts by the line a block opens on. Sorting by the line it
-			// closes on would put the inner block first and leave the joined
-			// range opening where the inner one does, which loses every line
-			// between the two opening lines.
 			name:    "a block nested inside another still covers the outer block's first line",
 			mutants: []coverage.Mutant{mutant("a", coreFile, 1)},
 			profiles: map[string]coverage.Profile{
@@ -244,9 +207,6 @@ func TestMap(t *testing.T) {
 			want: map[string][]string{"a": {core}},
 		},
 		{
-			// Two blocks of one file can open on the same line, and they
-			// overlap by definition: the joined range has to reach the further
-			// of the two ends whichever of them the profile listed first.
 			name:    "two covered blocks that open on one line reach the further end",
 			mutants: []coverage.Mutant{mutant("a", coreFile, 9)},
 			profiles: map[string]coverage.Profile{
@@ -258,9 +218,6 @@ func TestMap(t *testing.T) {
 			want: map[string][]string{"a": {core}},
 		},
 		{
-			// Two mutants on one line share a verdict. That is the
-			// over-approximation the line-only rule buys, stated as a test so
-			// that nobody later "fixes" it with columns.
 			name: "two mutants on one line are decided together",
 			mutants: []coverage.Mutant{
 				mutant("a", coreFile, 10),
@@ -281,8 +238,6 @@ func TestMap(t *testing.T) {
 			want: map[string][]string{"a": {core}},
 		},
 		{
-			// A file from outside the module cannot hold a mutant, and a name
-			// that does not resolve must not be matched by accident.
 			name:    "a file outside the module is ignored",
 			mutants: []coverage.Mutant{mutant("a", coreFile, 10)},
 			profiles: map[string]coverage.Profile{
@@ -291,8 +246,6 @@ func TestMap(t *testing.T) {
 			want: nil,
 		},
 		{
-			// The prefix has to be a whole path element. "example.com/mine" is
-			// not inside "example.com/m".
 			name:    "a module whose path is a prefix of another is not confused with it",
 			mutants: []coverage.Mutant{mutant("a", coreFile, 10)},
 			profiles: map[string]coverage.Profile{
@@ -344,11 +297,6 @@ func TestMap(t *testing.T) {
 	}
 }
 
-// TestMapIsDeterministic proves the output does not depend on map iteration
-// order, which is the one way a pure function over a map can stop being one.
-//
-// Go randomizes map iteration per range statement rather than per process, so
-// repeating the call inside one test is what exercises it.
 func TestMapIsDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -383,9 +331,6 @@ func TestMapIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestMapKeepsTheCallersMutantOrder pins the one ordering the mapping does not
-// impose itself, because a renderer listing uncovered mutants should list them
-// in the order the run scheduled them.
 func TestMapKeepsTheCallersMutantOrder(t *testing.T) {
 	t.Parallel()
 
@@ -402,14 +347,6 @@ func TestMapKeepsTheCallersMutantOrder(t *testing.T) {
 	}
 }
 
-// TestMapReportsWhetherAnythingLinedUp is the sanity check the engine fails open
-// on.
-//
-// A module path that does not match what the toolchain wrote produces a
-// perfectly well formed answer in which every mutant is uncovered, and a run
-// that believed it would report a workspace as having no test coverage at all.
-// Matched is what makes that visible without the caller having to reason about
-// it.
 func TestMapReportsWhetherAnythingLinedUp(t *testing.T) {
 	t.Parallel()
 
@@ -421,9 +358,6 @@ func TestMapReportsWhetherAnythingLinedUp(t *testing.T) {
 		Mutants:    []coverage.Mutant{mutant("a", coreFile, 10)},
 		Profiles:   profiles,
 	})
-	// Both files are counted, the uncovered one included: "profiled and never
-	// reached" is a fact that lined up, and it is the fact that makes a mutant
-	// honestly uncovered.
 	if lined.Matched != 2 {
 		t.Errorf("Matched = %d, want both files of the profile", lined.Matched)
 	}
@@ -442,8 +376,6 @@ func TestMapReportsWhetherAnythingLinedUp(t *testing.T) {
 	}
 }
 
-// TestMapWithNoModulePathTakesProfilesAtFaceValue covers the hand-written
-// fixture case, where a profile already spells its files module-relatively.
 func TestMapWithNoModulePathTakesProfilesAtFaceValue(t *testing.T) {
 	t.Parallel()
 
@@ -456,8 +388,6 @@ func TestMapWithNoModulePathTakesProfilesAtFaceValue(t *testing.T) {
 	}
 }
 
-// TestEndLineCountsTheNewlinesInTheOriginal pins the derivation the engine uses
-// to turn a start line and the mutant's own bytes into a line interval.
 func TestEndLineCountsTheNewlinesInTheOriginal(t *testing.T) {
 	t.Parallel()
 
@@ -473,8 +403,6 @@ func TestEndLineCountsTheNewlinesInTheOriginal(t *testing.T) {
 		{name: "a trailing newline still opens a line", start: 12, original: "foo()\n", want: 13},
 		{name: "a whole block", start: 3, original: "a\nb\nc\nd", want: 6},
 		{
-			// CRLF, because the snapshot preserves whatever the file had and a
-			// Windows checkout has them. Counting '\n' is right for both.
 			name: "windows line endings", start: 12, original: "foo(\r\n\tbar)", want: 13,
 		},
 	}
@@ -519,12 +447,6 @@ func TestCodesAreUniqueAndInBlock(t *testing.T) {
 	}
 }
 
-// TestCodeStringIsTheCodeItself pins the one thing a Code renders as.
-//
-// It is a defined string type, so `%s` and `string(c)` agree with String()
-// whatever String() does — which is exactly why the method needs a test of its
-// own: every caller that prints a code through the fmt.Stringer interface, the
-// `doctor` table included, reads this method and nothing else.
 func TestCodeStringIsTheCodeItself(t *testing.T) {
 	t.Parallel()
 
@@ -538,13 +460,6 @@ func TestCodeStringIsTheCodeItself(t *testing.T) {
 	}
 }
 
-// TestErrorRendersItsCause pins both halves of the rendering, because the
-// difference between them is the whole diagnostic value of the cause.
-//
-// A malformed profile is reported as infrastructure trouble, and the only thing
-// that says which trouble is the wrapped error the toolchain or the reader
-// produced. Dropping it leaves a caller with "the coverage profile could not be
-// read" and nothing to act on.
 func TestErrorRendersItsCause(t *testing.T) {
 	t.Parallel()
 
@@ -592,11 +507,6 @@ func TestCodeOfForeignError(t *testing.T) {
 	}
 }
 
-// TestMapTestsNamesTheTestsThatReachEachMutant is the test-level twin of
-// [TestMap]: a profile per (binary, test) rather than per binary, and a
-// mutant maps to the tests whose blocks reach its lines, across binaries, in
-// a fixed order. Everything [coverage.Map] decides about lines, zero counts
-// and absent files holds here unchanged; what is new is only the key.
 func TestMapTestsNamesTheTestsThatReachEachMutant(t *testing.T) {
 	t.Parallel()
 
@@ -608,17 +518,13 @@ func TestMapTestsNamesTheTestsThatReachEachMutant(t *testing.T) {
 		{ID: "d", Path: "core/b.go", StartLine: 1, EndLine: 1},
 	}
 	profiles := map[coverage.TestKey]coverage.Profile{
-		// TestOne in core reaches line 10 and not 20-22.
 		{ImportPath: module + "/core", Name: "TestOne"}: profile(
 			coverage.Block{File: module + "/core/a.go", StartLine: 9, EndLine: 11, NumStmt: 1, Count: 1},
 			coverage.Block{File: module + "/core/a.go", StartLine: 20, EndLine: 22, NumStmt: 1, Count: 0},
 		),
-		// TestTwo in core reaches 20-22 only.
 		{ImportPath: module + "/core", Name: "TestTwo"}: profile(
 			coverage.Block{File: module + "/core/a.go", StartLine: 21, EndLine: 21, NumStmt: 1, Count: 3},
 		),
-		// TestUser in user reaches core's line 10 through an import, and its
-		// own line 5.
 		{ImportPath: module + "/user", Name: "TestUser"}: profile(
 			coverage.Block{File: module + "/core/a.go", StartLine: 10, EndLine: 10, NumStmt: 1, Count: 1},
 			coverage.Block{File: module + "/user/u.go", StartLine: 5, EndLine: 6, NumStmt: 1, Count: 1},
@@ -660,9 +566,6 @@ func TestMapTestsNamesTheTestsThatReachEachMutant(t *testing.T) {
 	}
 }
 
-// TestMapTestsAgreesWithMapOnBinaries pins that folding the per-test answer
-// back to binaries gives exactly what [coverage.Map] gives for the union of
-// the tests' profiles — the two mappings are one rule with two keys.
 func TestMapTestsAgreesWithMapOnBinaries(t *testing.T) {
 	t.Parallel()
 

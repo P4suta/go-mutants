@@ -71,12 +71,6 @@ type mutationUnitSession struct {
 	control  func(gomutants.ControlRequest) (gomutants.ControlResult, error)
 }
 
-// Control answers a control of the original program.
-//
-// The zero handler reports a clean run of a measurable duration, because the
-// tests in this file are about routing and budgets rather than about a red
-// suite, and a control that reported nothing would make every one of them
-// inconclusive for a reason none of them is testing.
 func (session *mutationUnitSession) Control(_ context.Context, request gomutants.ControlRequest) (gomutants.ControlResult, error) {
 	session.mu.Lock()
 	session.controls = append(session.controls, request)
@@ -90,7 +84,6 @@ func (session *mutationUnitSession) Control(_ context.Context, request gomutants
 
 func (session *mutationUnitSession) Catalog() gomutants.Catalog { return session.catalog }
 
-// controlRequests is every control this session was asked for.
 func (session *mutationUnitSession) controlRequests() []gomutants.ControlRequest {
 	session.mu.Lock()
 	defer session.mu.Unlock()

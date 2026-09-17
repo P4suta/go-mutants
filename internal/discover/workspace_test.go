@@ -14,15 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// TestDetectWorkspaceReadsTheModulesAWorkspaceJoins is the success path, and
-// the one every refusal below is measured against.
-//
-// What the detector answers is not "is this a workspace" -- os.Stat answers
-// that -- but "which modules is it, and where are they". Both halves are
-// needed before anything else can happen: the directories decide what is
-// snapshotted and what each baseline runs in, and the module paths are the
-// tenth field of a workspace mutant's identity, which is the only thing
-// keeping two modules' `app.go` apart.
 func TestDetectWorkspaceReadsTheModulesAWorkspaceJoins(t *testing.T) {
 	t.Parallel()
 
@@ -55,14 +46,6 @@ func TestDetectWorkspaceReadsTheModulesAWorkspaceJoins(t *testing.T) {
 	}
 }
 
-// TestDetectWorkspaceReadsTheFixtureTheRefusalWasWrittenFor points the reader
-// at a real tree rather than a constructed one.
-//
-// testdata/workspace is the workspace the loader tests use, and everything
-// written above is worth exactly as much as its answer here: two modules, the
-// directories the file names, and the module paths their go.mod files declare.
-// A detector that agreed with its own fixtures and disagreed with this one
-// would be a detector that agreed with itself.
 func TestDetectWorkspaceReadsTheFixtureTheRefusalWasWrittenFor(t *testing.T) {
 	t.Parallel()
 
@@ -83,20 +66,11 @@ func TestDetectWorkspaceReadsTheFixtureTheRefusalWasWrittenFor(t *testing.T) {
 			t.Errorf("Modules[%d] = %+v, want %+v", i, module, want[i])
 		}
 	}
-	// And the refusal the pipeline still makes is the same refusal, reached
-	// through the same read: a workspace this build cannot yet measure.
 	if CodeOf(CheckWorkspace(root)) != CodeWorkspace {
 		t.Errorf("CheckWorkspace no longer refuses a workspace it can read")
 	}
 }
 
-// TestDetectWorkspaceOrdersTheModulesByDirectory keeps the answer the same
-// whichever order the file names them.
-//
-// The order is not a presentation detail. It decides which module's baseline
-// runs first and which module a partial run got through, and a run whose order
-// came from the order somebody happened to type `use` lines in would reorder
-// itself on an unrelated edit.
 func TestDetectWorkspaceOrdersTheModulesByDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -118,11 +92,6 @@ func TestDetectWorkspaceOrdersTheModulesByDirectory(t *testing.T) {
 	}
 }
 
-// TestDetectWorkspaceAcceptsTheRootItself pins the one-module workspace.
-//
-// `use .` is legal and not pointless: it is what a repository with one module
-// and a `go.work` for its tooling looks like. Refusing it would refuse a tree
-// that has nothing multi-module about it.
 func TestDetectWorkspaceAcceptsTheRootItself(t *testing.T) {
 	t.Parallel()
 
@@ -139,8 +108,6 @@ func TestDetectWorkspaceAcceptsTheRootItself(t *testing.T) {
 	}
 }
 
-// TestDetectWorkspaceSaysADirectoryIsAModule is the negative of all of it: a
-// directory with no go.work is not a workspace, and saying so is not an error.
 func TestDetectWorkspaceSaysADirectoryIsAModule(t *testing.T) {
 	t.Parallel()
 
@@ -156,17 +123,6 @@ func TestDetectWorkspaceSaysADirectoryIsAModule(t *testing.T) {
 	}
 }
 
-// TestDetectWorkspaceRefusesWhatItCannotMeasure is the whole refusal surface in
-// one table, and every row is a tree go-mutants must not proceed on.
-//
-// They divide into three kinds, and the division is why they are refusals
-// rather than warnings. A file that does not parse, or names no module, leaves
-// nothing to measure. A `use` that does not resolve to a module leaves a
-// module path missing from the identity table, and a mutant with no module
-// path is a mutant minted under the single-module recipe -- silently sharing
-// an identity with a mutant of another module. And anything reaching outside
-// the root reaches outside the snapshot, which is the one thing the whole run
-// is keyed on.
 func TestDetectWorkspaceRefusesWhatItCannotMeasure(t *testing.T) {
 	t.Parallel()
 
@@ -224,9 +180,6 @@ func TestDetectWorkspaceRefusesWhatItCannotMeasure(t *testing.T) {
 			says: "outside",
 		},
 		{
-			// Two, with a third between them in directory order: the collision
-			// is a property of the set and not of two adjacent rows, and a
-			// check that compared neighbours would pass this.
 			name: "two modules declaring one path",
 			build: func(t *testing.T, root string) {
 				writeWorkspace(t, root, "go 1.26\n\nuse (\n\t./a\n\t./b\n\t./c\n)\n")
@@ -290,14 +243,6 @@ func TestDetectWorkspaceRefusesWhatItCannotMeasure(t *testing.T) {
 	}
 }
 
-// TestDetectWorkspaceAcceptsAReplaceThatStaysInside is the other side of the
-// escaping-replace refusal, and it is what keeps that refusal from being a ban
-// on `replace`.
-//
-// A workspace that redirects a dependency at a directory it holds is
-// self-contained: the snapshot carries the replacement, and the build inside
-// it resolves exactly as the build outside did. So is a replacement by module
-// version, which names no directory at all.
 func TestDetectWorkspaceAcceptsAReplaceThatStaysInside(t *testing.T) {
 	t.Parallel()
 
@@ -317,7 +262,6 @@ func TestDetectWorkspaceAcceptsAReplaceThatStaysInside(t *testing.T) {
 	}
 }
 
-// writeWorkspace puts a go.work at the root of a tree under test.
 func writeWorkspace(t *testing.T, root, body string) {
 	t.Helper()
 
@@ -329,7 +273,6 @@ func writeWorkspace(t *testing.T, root, body string) {
 	}
 }
 
-// writeModuleAt puts the smallest go.mod that declares a module path at dir.
 func writeModuleAt(t *testing.T, dir, path string) {
 	t.Helper()
 
@@ -342,18 +285,6 @@ func writeModuleAt(t *testing.T, dir, path string) {
 	}
 }
 
-// TestDiscoverWorkspaceMeasuresEveryModuleUnderItsOwnPath is the workspace
-// counterpart of [TestDiscoverRefusesAWorkspace], and it asks for the two
-// things a workspace run needs that a single-module run does not.
-//
-// The first is that every module is discovered, each with its own module path
-// stamped on its candidates. Without the stamp the two modules' files are one
-// file to the catalogue, because a module-relative path is all a candidate has.
-//
-// The second is that the workspace file is *obeyed*, and testdata/workspace is
-// the fixture that can tell. `first` imports example.com/second and requires it
-// nowhere, so it loads if and only if the `use` lines are in effect: candidates
-// in `first` are not a count, they are the observation.
 func TestDiscoverWorkspaceMeasuresEveryModuleUnderItsOwnPath(t *testing.T) {
 	root := fixture(t, "workspace")
 	results, err := DiscoverWorkspace(context.Background(), Options{
@@ -391,10 +322,6 @@ func TestDiscoverWorkspaceMeasuresEveryModuleUnderItsOwnPath(t *testing.T) {
 			}
 		}
 	}
-	// The two modules each hold a file the other does not, so nothing here is
-	// a collision -- but the catalogue is what would find out, and it is the
-	// reason the stamp exists. Building one is the cheapest proof that the
-	// two discoveries produce a set the catalogue accepts.
 	builder := mutation.NewBuilder()
 	for _, result := range results {
 		for _, located := range result.Result.Candidates {
@@ -412,11 +339,6 @@ func TestDiscoverWorkspaceMeasuresEveryModuleUnderItsOwnPath(t *testing.T) {
 	}
 }
 
-// TestDiscoverWorkspaceRefusesADirectoryThatIsNotOne is the fail-closed half.
-//
-// A caller that asked for a workspace and was handed a module would otherwise
-// get one module's worth of candidates with no module path on them, which is a
-// single-module catalogue wearing a workspace run's name.
 func TestDiscoverWorkspaceRefusesADirectoryThatIsNotOne(t *testing.T) {
 	t.Parallel()
 
@@ -435,14 +357,6 @@ func TestDiscoverWorkspaceRefusesADirectoryThatIsNotOne(t *testing.T) {
 	}
 }
 
-// TestAWorkspacePatternIsWrittenAgainstTheWorkspaceRoot decides the one thing
-// a user has to be able to predict about `mutation.include` in a workspace.
-//
-// A pattern is written by somebody looking at their tree, and in a workspace
-// what they are looking at is the workspace: `first/*.go` is the module's
-// files, and `*.go` at the root is nothing. Matching module-relative paths
-// instead would make one pattern mean a different set in every module, and
-// `*.go` would quietly mean "every module's top-level files".
 func TestAWorkspacePatternIsWrittenAgainstTheWorkspaceRoot(t *testing.T) {
 	root := fixture(t, "workspace")
 	results, err := DiscoverWorkspace(context.Background(), Options{
@@ -468,21 +382,6 @@ func TestAWorkspacePatternIsWrittenAgainstTheWorkspaceRoot(t *testing.T) {
 	}
 }
 
-// TestAWorkspaceFileThatCannotBeReadIsNotAMissingOne is the distinction
-// [DetectWorkspace] turns on, and the only one in it whose two sides are
-// answered by the same call.
-//
-// "There is no go.work here" is the ordinary answer for every module in the
-// world, and it is not an error. "There is one and this process cannot read it"
-// is a refusal, because the alternative is measuring a workspace as though it
-// were a module: one module's candidates, no module paths on them, and
-// identities that silently collide with another module's. The two arrive from
-// `os.ReadFile` as errors that differ only in what they wrap.
-//
-// A directory in the file's place is how the second is staged. It needs no
-// permission change, so it is the same test on every platform and in every
-// container, and it is a shape a real tree produces: a `go.work` directory is
-// what a botched extraction or a stray `mkdir` leaves behind.
 func TestAWorkspaceFileThatCannotBeReadIsNotAMissingOne(t *testing.T) {
 	t.Parallel()
 
@@ -517,9 +416,6 @@ func TestAWorkspaceFileThatCannotBeReadIsNotAMissingOne(t *testing.T) {
 			t.Errorf("the refusal %q does not say what went wrong", err)
 		}
 
-		// And the two callers that ask the same question and do different
-		// things with the answer both carry the refusal rather than reading it
-		// as "this is a module".
 		if err := CheckWorkspace(root); CodeOf(err) != CodeWorkspace {
 			t.Errorf("CheckWorkspace = %v, want the workspace refusal", err)
 		}
@@ -531,10 +427,6 @@ func TestAWorkspaceFileThatCannotBeReadIsNotAMissingOne(t *testing.T) {
 	t.Run("a module file that cannot be read", func(t *testing.T) {
 		t.Parallel()
 
-		// The same distinction one level down: a `use` pointing at a directory
-		// with no go.mod is one sentence, and one pointing at a go.mod this
-		// process cannot read is another. Both refuse, and a reader of the
-		// refusal has to be able to tell which happened.
 		root := t.TempDir()
 		writeWorkspace(t, root, "go 1.26\n\nuse ./app\n")
 		if err := os.MkdirAll(filepath.Join(root, "app", "go.mod"), 0o755); err != nil {
@@ -572,15 +464,6 @@ func TestAWorkspaceFileThatCannotBeReadIsNotAMissingOne(t *testing.T) {
 	})
 }
 
-// TestAUseLineIsResolvedAgainstTheRootItWasGiven pins [containedIn], including
-// the one way the resolution itself can fail.
-//
-// `filepath.Rel` refuses a pair it cannot express — a relative root and an
-// absolute target have no relative path between them without knowing the
-// working directory — and the answer has to be a refusal rather than a
-// guess. The root a real run passes is absolute, so this is the fail-closed
-// arm; it is stated because a caller that passed a relative root would
-// otherwise get a path that looks fine and points somewhere else.
 func TestAUseLineIsResolvedAgainstTheRootItWasGiven(t *testing.T) {
 	t.Parallel()
 
@@ -622,15 +505,6 @@ func TestAUseLineIsResolvedAgainstTheRootItWasGiven(t *testing.T) {
 	}
 }
 
-// TestAWorkspaceRunCarriesOneModulesRefusalOut pins the two refusals
-// [DiscoverWorkspace] can meet before it has measured anything.
-//
-// A workspace run is N module runs under one answer, and neither loop collects:
-// a module that cannot be discovered makes the whole workspace's catalogue a
-// catalogue of some of the workspace, with nothing in it to say which part. So
-// the first refusal is the run's answer, and it is the module's own refusal
-// rather than a workspace-shaped restatement of it -- the user has to be told
-// which module and why.
 func TestAWorkspaceRunCarriesOneModulesRefusalOut(t *testing.T) {
 	t.Parallel()
 
@@ -646,9 +520,6 @@ func TestAWorkspaceRunCarriesOneModulesRefusalOut(t *testing.T) {
 	t.Run("a module that is itself a workspace", func(t *testing.T) {
 		t.Parallel()
 
-		// Nested workspaces are not a shape the go command supports, and the
-		// module run refuses it for the reason a single-module discovery
-		// always has: everything it does assumes one module.
 		root := t.TempDir()
 		writeWorkspace(t, root, "go 1.26\n\nuse ./app\n")
 		app := filepath.Join(root, "app")

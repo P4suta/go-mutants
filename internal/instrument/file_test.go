@@ -15,17 +15,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// TestInstrumentFileRewritesOneFileWithASubset is the property compile
-// validation is built on: a file can be re-guarded with fewer of its mutants
-// while every index in the tree keeps meaning what it meant.
-//
-// The mutant that is dropped is the catalogue's *first*, which is what makes
-// the second half of that sentence testable. The survivors keep the indices
-// 1..n-1 that the generated runtime — written once, from the full catalogue,
-// and never rewritten — hands out; an implementation that renumbered a subset
-// from zero would produce a file that still compiles, still guards the right
-// expressions, and activates the wrong mutant every time. The absent `.M[0]`
-// and the present `.M[1]` are the difference.
 func TestInstrumentFileRewritesOneFileWithASubset(t *testing.T) {
 	t.Parallel()
 
@@ -45,18 +34,13 @@ func TestInstrumentFileRewritesOneFileWithASubset(t *testing.T) {
 	}
 	dropped, kept := mutants[0], mutants[1:]
 
-	// The file on disk is the fully instrumented one; the rewrite is composed
-	// against the pristine bytes the caller kept, and the restore is the same
-	// write as the rewrite.
 	guards, err := instrument.InstrumentFile(instrument.FileOptions{
 		SnapshotRoot:  root,
 		RuntimeImport: result.RuntimeImport,
 		Path:          sampleFile,
 		Source:        pristine,
 		Mutants:       kept,
-		// The whole run's hints, not the subset's: they are an index by mutant
-		// id, and a bisection narrows the mutants rather than the hints.
-		Hints: hintsInSource(t, pristine, catalog, hintOptions{}),
+		Hints:         hintsInSource(t, pristine, catalog, hintOptions{}),
 	})
 	if err != nil {
 		t.Fatalf("InstrumentFile: %v", err)
@@ -75,7 +59,6 @@ func TestInstrumentFileRewritesOneFileWithASubset(t *testing.T) {
 		t.Errorf("the dropped mutant %s is still guarded: %s survived in\n%s", dropped.DisplayID, flag, out)
 	}
 
-	// The invariants a full pass owes are owed by a partial one too.
 	if _, parseErr := parser.ParseFile(token.NewFileSet(), sampleFile, out, parser.SkipObjectResolution); parseErr != nil {
 		t.Errorf("the rewritten file does not parse: %v\n%s", parseErr, out)
 	}
@@ -87,15 +70,6 @@ func TestInstrumentFileRewritesOneFileWithASubset(t *testing.T) {
 	}
 }
 
-// TestInstrumentFileWithNoMutantsRestoresThePristineFile pins what "every
-// candidate in this file was rejected" writes: the file the user wrote, over
-// whatever guards were there before.
-//
-// The result has to be byte-identical rather than merely guard-free. A file
-// that gained the runtime import and no guards would not compile — an unused
-// import is an error in Go — so an empty subset that still injected one would
-// turn a fully rejected file into a broken build that no further bisection
-// could explain.
 func TestInstrumentFileWithNoMutantsRestoresThePristineFile(t *testing.T) {
 	t.Parallel()
 
@@ -127,14 +101,6 @@ func TestInstrumentFileWithNoMutantsRestoresThePristineFile(t *testing.T) {
 	}
 }
 
-// TestInstrumentFileRefusesBadOptions covers the five ways a caller can point
-// this function at something it must not rewrite.
-//
-// The mutant-from-another-file case is the one worth having. The subsets a
-// bisection passes here are slices of a catalogue being split by file and by
-// half, and a slice taken from the wrong group would carry spans measured
-// against a different file: they would usually miss, and when they did not they
-// would splice an edit no mutant identity describes.
 func TestInstrumentFileRefusesBadOptions(t *testing.T) {
 	t.Parallel()
 
@@ -175,18 +141,6 @@ func TestInstrumentFileRefusesBadOptions(t *testing.T) {
 	}
 }
 
-// TestInstrumentFileRefusesAlreadyInstrumentedBytes proves the safety net under
-// the one thing a caller still has to get right.
-//
-// A caller that hands over the file's current bytes instead of the pristine
-// ones is asking for guards nested inside guards, and the spans it would use
-// describe bytes that are no longer where they were. Two checks stand in the
-// way and either may be the one that speaks first — the site lookup, which asks
-// whether the operator a mutant names really starts at that offset, and the
-// splicer, which asks whether the bytes a splice claims to replace are the
-// bytes actually there — so the assertion is that the refusal is one of them
-// rather than which. What matters is that the mistake is a coded refusal naming
-// the file rather than a rewrite that quietly means something else.
 func TestInstrumentFileRefusesAlreadyInstrumentedBytes(t *testing.T) {
 	t.Parallel()
 
@@ -199,7 +153,6 @@ func TestInstrumentFileRefusesAlreadyInstrumentedBytes(t *testing.T) {
 	result := instrumentSnapshot(t, root, catalog)
 	instrumented := testkit.ReadFile(t, file)
 
-	// The instrumented bytes as Source, deliberately.
 	_, err := instrument.InstrumentFile(instrument.FileOptions{
 		SnapshotRoot:  root,
 		RuntimeImport: result.RuntimeImport,
@@ -211,11 +164,7 @@ func TestInstrumentFileRefusesAlreadyInstrumentedBytes(t *testing.T) {
 	if err == nil {
 		t.Fatal("InstrumentFile rewrote an already-instrumented file, want a refusal")
 	}
-	//exhaustive:total Two codes are the acceptable answers here and the default is the
-	// assertion that refuses every other one.
-	switch got := instrument.CodeOf(err); got {
-	case instrument.CodeSiteNotFound, instrument.CodeSpliceMismatch:
-	default:
+	if got := instrument.CodeOf(err); got != instrument.CodeSiteNotFound && got != instrument.CodeSpliceMismatch {
 		t.Errorf("InstrumentFile failed with %s, want %s or %s: %v",
 			got, instrument.CodeSiteNotFound, instrument.CodeSpliceMismatch, err)
 	}

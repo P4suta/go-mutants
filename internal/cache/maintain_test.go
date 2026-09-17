@@ -14,8 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// populated builds a cache root holding one workspace with three stored
-// outcomes, and returns the root and the directory they are filed in.
 func populated(t *testing.T) (root, dir string) {
 	t.Helper()
 	root = t.TempDir()
@@ -28,7 +26,6 @@ func populated(t *testing.T) (root, dir string) {
 	return root, store.Dir()
 }
 
-// age backdates a file's modification time, which is what `cache gc` reads.
 func age(t *testing.T, path string, d time.Duration) {
 	t.Helper()
 	when := time.Now().Add(-d)
@@ -37,8 +34,6 @@ func age(t *testing.T, path string, d time.Duration) {
 	}
 }
 
-// TestStatusCountsWhatIsStored is `cache status` over a cache with something in
-// it.
 func TestStatusCountsWhatIsStored(t *testing.T) {
 	t.Parallel()
 
@@ -72,8 +67,6 @@ func TestStatusCountsWhatIsStored(t *testing.T) {
 	}
 }
 
-// TestStatusOfAnEmptyMachineIsNotAFailure: nothing has been cached here yet,
-// which is an answer rather than an error.
 func TestStatusOfAnEmptyMachineIsNotAFailure(t *testing.T) {
 	t.Parallel()
 
@@ -86,15 +79,12 @@ func TestStatusOfAnEmptyMachineIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestGCRemovesOnlyWhatIsOldEnough is the mtime window, checked on both sides
-// of the cutoff and on it.
 func TestGCRemovesOnlyWhatIsOldEnough(t *testing.T) {
 	t.Parallel()
 
 	root, dir := populated(t)
 	age(t, filepath.Join(dir, mutantIDs[0]+".json"), 40*24*time.Hour)
 	age(t, filepath.Join(dir, mutantIDs[1]+".json"), 31*24*time.Hour)
-	// The third keeps today's time and must survive.
 
 	cutoff := time.Now().AddDate(0, 0, -cache.DefaultGCDays)
 	sweep, err := cache.GC(root, cutoff)
@@ -120,14 +110,11 @@ func TestGCRemovesOnlyWhatIsOldEnough(t *testing.T) {
 			t.Errorf("entry %d found = %t, want %t", i, found, want)
 		}
 	}
-	// The context directory still holds the survivor, so it stays.
 	if _, statErr := os.Stat(dir); statErr != nil {
 		t.Errorf("the context directory was removed with a live entry in it: %v", statErr)
 	}
 }
 
-// TestGCPrunesAContextNothingIsLeftIn keeps a cache from accumulating thousands
-// of empty directories, one per tool version anybody ever ran.
 func TestGCPrunesAContextNothingIsLeftIn(t *testing.T) {
 	t.Parallel()
 
@@ -148,16 +135,11 @@ func TestGCPrunesAContextNothingIsLeftIn(t *testing.T) {
 	if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
 		t.Errorf("the emptied context directory is still there: %v", statErr)
 	}
-	// Never above it: `outcomes/` and the workspace directory are still the
-	// store, and the run history lives in the same place.
 	if _, statErr := os.Stat(filepath.Dir(dir)); statErr != nil {
 		t.Errorf("gc removed the outcomes directory itself: %v", statErr)
 	}
 }
 
-// TestGCLeavesATemporaryFileAlone: a concurrent run in the middle of an atomic
-// write has a temporary file in the directory, and deleting it out from under
-// that run would be the one thing a garbage collector must not do.
 func TestGCLeavesATemporaryFileAlone(t *testing.T) {
 	t.Parallel()
 
@@ -184,20 +166,12 @@ func TestGCLeavesATemporaryFileAlone(t *testing.T) {
 	}
 }
 
-// TestGCRefusesEntriesThatLeaveTheCache. The containment check is what makes
-// deleting files in the operating system's cache directory acceptable, and a
-// check that compares two strings does not make it: the cache root is a
-// directory anything on the machine can write to, so an `outcomes/` replaced by
-// a link to somewhere else is lexically inside the cache and physically
-// wherever it points.
 func TestGCRefusesEntriesThatLeaveTheCache(t *testing.T) {
 	t.Parallel()
 
 	root, dir := populated(t)
 	outcomes := filepath.Dir(dir)
 
-	// The stored outcomes moved out of the cache, with a link left behind under
-	// the name the walk will find.
 	outside := filepath.Join(t.TempDir(), "elsewhere")
 	if err := os.Rename(outcomes, outside); err != nil {
 		t.Fatalf("moving the outcomes out of the cache: %v", err)
@@ -226,9 +200,6 @@ func TestGCRefusesEntriesThatLeaveTheCache(t *testing.T) {
 	}
 }
 
-// TestCleanRemovesTheOutcomesAndNothingElse is the boundary between this
-// command and `report clean`: the run history filed in the same workspace
-// directory is a record of what happened and is not the cache's to delete.
 func TestCleanRemovesTheOutcomesAndNothingElse(t *testing.T) {
 	t.Parallel()
 
@@ -258,7 +229,6 @@ func TestCleanRemovesTheOutcomesAndNothingElse(t *testing.T) {
 			t.Errorf("clean removed %s, which is not the cache's: %v", kept, statErr)
 		}
 	}
-	// And a second clean is not a failure: there is simply nothing left.
 	again, err := cache.Clean(root)
 	if err != nil {
 		t.Fatalf("Clean of an already clean cache: %v", err)
@@ -268,21 +238,14 @@ func TestCleanRemovesTheOutcomesAndNothingElse(t *testing.T) {
 	}
 }
 
-// TestADirectoryWithoutOurMarkerIsRefused is the safety property of every
-// command in this file. The cache root is a directory in the operating system's
-// cache that other programs also keep things in, and the marker is the whole of
-// what makes deleting anything there defensible.
 func TestADirectoryWithoutOurMarkerIsRefused(t *testing.T) {
 	t.Parallel()
 
 	root, _ := populated(t)
 	base := filepath.Join(root, report.WorkspacesDirName)
 
-	// Somebody else's directory, with something in it that would be deleted if
-	// the marker were not checked.
 	stranger := filepath.Join(base, "somebody-elses-tool")
 	write(t, filepath.Join(stranger, cache.OutcomesDirName, "ctx", "a.json"), "{}")
-	// And one carrying a marker this build did not write.
 	impostor := filepath.Join(base, "0123456789abcdef")
 	write(t, filepath.Join(impostor, report.MarkerFileName), "go-mutants-workspace-v9\nnot a digest\n")
 	write(t, filepath.Join(impostor, cache.OutcomesDirName, "ctx", "b.json"), "{}")
@@ -325,10 +288,6 @@ func TestADirectoryWithoutOurMarkerIsRefused(t *testing.T) {
 	}
 }
 
-// copyTree copies a directory and everything under it, which is what a restored
-// CI cache, an `xcopy`, or a `cp -r` of somebody's cache directory leaves
-// behind: the same entries and the same marker, under a name this build would
-// never have chosen.
 func copyTree(t *testing.T, from, to string) {
 	t.Helper()
 	if err := os.MkdirAll(to, 0o700); err != nil {
@@ -354,26 +313,17 @@ func copyTree(t *testing.T, from, to string) {
 	}
 }
 
-// copiedKey is the name the copy is filed under: sixteen hex characters, so it
-// is shaped exactly like a workspace key and is refused for what its marker
-// says rather than for how it is spelled. The hex shape is the point of the
-// fixture, not a credential, which is what the gitleaks annotation records.
 const copiedKey = "0123456789abcdef" //gitleaks:allow
 
-// withACopiedWorkspace builds a cache root holding one populated workspace and
-// a copy of it under [copiedKey], and returns the root along with one stored
-// outcome inside the copy that no command may touch.
 func withACopiedWorkspace(t *testing.T) (root, entry string) {
 	t.Helper()
 	root, dir := populated(t)
-	// dir is <root>/workspaces/<key>/outcomes/<context>.
 	original := filepath.Dir(filepath.Dir(dir))
 	copied := filepath.Join(filepath.Dir(original), copiedKey)
 	copyTree(t, original, copied)
 	return root, filepath.Join(copied, cache.OutcomesDirName, filepath.Base(dir), mutantIDs[0]+".json")
 }
 
-// checkTheCopyWasSkipped is the one skipped row every command owes for it.
 func checkTheCopyWasSkipped(t *testing.T, skipped []cache.Skipped) {
 	t.Helper()
 	if len(skipped) != 1 {
@@ -390,23 +340,9 @@ func checkTheCopyWasSkipped(t *testing.T, skipped []cache.Skipped) {
 	}
 }
 
-// TestASweepSkipsAWorkspaceDirectoryThatIsACopy is the name-and-digest rule of
-// [cache.Status], [cache.GC] and [cache.Clean], and the twin of internal/report's
-// TestListSkipsAWorkspaceDirectoryThatIsACopy.
-//
-// A workspace directory copied under another name carries the original's
-// marker, so the ownership check alone waves it through. What follows is not
-// the history store's list-and-delete divergence — these three key their
-// deletions by the directory entry they are standing in, so what they sweep is
-// what they walked — but the plainer error underneath it: the copy's entries
-// would be counted as the original workspace's by `cache status` and removed as
-// the original workspace's by `cache gc` and `cache clean`, under a key that
-// was never theirs. A deleted entry cannot be put back once the arithmetic is
-// noticed, so the directory is skipped and reported instead.
 func TestASweepSkipsAWorkspaceDirectoryThatIsACopy(t *testing.T) {
 	t.Parallel()
 
-	// `cache status` counts the original once and names the copy as skipped.
 	root, entry := withACopiedWorkspace(t)
 	survey, err := cache.Status(root)
 	if err != nil {
@@ -427,15 +363,10 @@ func TestASweepSkipsAWorkspaceDirectoryThatIsACopy(t *testing.T) {
 		t.Errorf("a survey that changes nothing lost an entry: %v", err)
 	}
 
-	// And both sweeps leave every one of the copy's entries where they were.
-	// Each starts from its own root, so that what one deleted is not what the
-	// next one is looking at.
 	for _, sweep := range []struct {
 		name string
 		run  func(root string) (cache.Sweep, error)
 	}{
-		// A cutoff in the future makes every stored outcome old enough, so
-		// nothing here turns on a modification time.
 		{"gc", func(root string) (cache.Sweep, error) { return cache.GC(root, time.Now().Add(time.Hour)) }},
 		{"clean", cache.Clean},
 	} {
@@ -461,9 +392,6 @@ func TestASweepSkipsAWorkspaceDirectoryThatIsACopy(t *testing.T) {
 	}
 }
 
-// TestASweepReportsWhatItRemovedBeforeItFailed. Deleting is the whole of what
-// these commands do, so a failure is an error rather than a warning — and the
-// entries already gone are still gone, which the caller has to be able to say.
 func TestASweepReportsWhatItRemovedBeforeItFailed(t *testing.T) {
 	t.Parallel()
 
@@ -474,8 +402,6 @@ func TestASweepReportsWhatItRemovedBeforeItFailed(t *testing.T) {
 	}
 }
 
-// TestGCOfANeverUsedRootIsNotAFailure, for the same reason status is not: a
-// machine that has never run go-mutants has nothing to collect.
 func TestGCOfANeverUsedRootIsNotAFailure(t *testing.T) {
 	t.Parallel()
 

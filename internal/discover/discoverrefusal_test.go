@@ -12,22 +12,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// The order [Discover] refuses things in, and the fact that each refusal is the
-// run's answer rather than a note on the side.
-//
-// The cheap checks come first on purpose: a snapshot root that is not there, a
-// workspace file where a module was expected, and an operator name that names
-// nothing are all answerable before a toolchain is located or a package loaded,
-// and learning about one of them after several minutes of loading would be a
-// poor way to find out. Each of them is carried out of Discover unchanged,
-// because a discovery that returned a partial catalogue beside an error would
-// be a catalogue of a scope nobody asked for.
-//
-// None of these needs a toolchain, which is why they are here rather than in
-// the fixture-driven suite: every one of them is reached before the loader runs.
-
-// TestDiscoverRefusesBeforeItLoadsAnything is the prefix of the pipeline that
-// costs nothing.
 func TestDiscoverRefusesBeforeItLoadsAnything(t *testing.T) {
 	t.Parallel()
 

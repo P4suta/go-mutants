@@ -3,15 +3,6 @@
 
 //go:build integration
 
-// The one test in session.go's suite that needs a Go toolchain.
-//
-// It is here rather than beside the rest because a whole file is the unit a
-// build constraint applies to, and the other six tests in session_test.go are
-// pure: they resolve options, compare paths and clone a catalogue. Leaving this
-// one with them would have put all seven behind the tag and left the resolution
-// rules — which is most of what can actually be wrong in that file — untested
-// in the tier a developer runs on every save.
-
 package gomutants
 
 import (
@@ -26,10 +17,6 @@ import (
 
 func TestInstrumentationEnvironmentSupportsOverlayPathWithWhitespace(t *testing.T) {
 	t.Parallel()
-	// The harness rather than a bare os/exec lookup, so the skip policy is the
-	// one every other suite obeys: absent Go skips, and under
-	// GO_MUTANTS_TEST_REQUIRE_TOOLS — which every CI test job sets — it fails
-	// instead of quietly retiring the test.
 	goBinary := testkit.GoBinary(t)
 	root := filepath.Join(t.TempDir(), "module root")
 	if mkdirErr := os.MkdirAll(root, privateDirectoryMode); mkdirErr != nil {

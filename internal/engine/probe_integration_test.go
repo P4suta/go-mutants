@@ -14,16 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// The probe phase's own claim, and it is a claim about two runs rather than
-// about one: probing changes how much a run does and not what it concludes.
-//
-// That is the only thing worth asserting about an optimisation whose whole
-// contract is "same answer, less work", and it is why both halves are measured
-// in one test. A run that agreed and did no less work would be paying for
-// nothing; one that did less work and disagreed would be wrong.
-
-// probedRun runs a fixture with probing set one way and returns what it
-// concluded and what it started.
 func probedRun(t *testing.T, probing config.Probing) ([]string, map[string]int, RunOutcome) {
 	t.Helper()
 
@@ -44,13 +34,6 @@ func probedRun(t *testing.T, probing config.Probing) ([]string, map[string]int, 
 	return settled, execKinds(sink.Events()), outcome
 }
 
-// TestProbingReachesTheSameVerdictsForLessWork is the whole contract.
-//
-// The verdicts are compared as strings so that a disagreement names the mutant
-// and both answers rather than reporting a count. The work is compared as
-// counted child processes, which is the only comparison this repository makes
-// about cost: a duration is a fact about the machine that day, and a process
-// count is a fact about the run.
 func TestProbingReachesTheSameVerdictsForLessWork(t *testing.T) {
 	t.Parallel()
 
@@ -72,9 +55,6 @@ func TestProbingReachesTheSameVerdictsForLessWork(t *testing.T) {
 			probedOut.Probe)
 	}
 
-	// The counted saving. A mutant the probe settled is a mutant-run the
-	// executor never starts, so the probing run has strictly fewer of them --
-	// and strictly more probe-runs, which is what it paid.
 	if probedKinds[trace.ExecKindMutantRun] >= quietKinds[trace.ExecKindMutantRun] {
 		t.Errorf("probing started %d mutant runs and not probing started %d: the saving is the point",
 			probedKinds[trace.ExecKindMutantRun], quietKinds[trace.ExecKindMutantRun])
@@ -87,20 +67,6 @@ func TestProbingReachesTheSameVerdictsForLessWork(t *testing.T) {
 	}
 }
 
-// TestProbingChangesNoVerdictOverTheWholeOperatorCorpus is the same claim made
-// where it is hardest to hold.
-//
-// `fixtures/unobserved` is two mutants chosen to exercise the two answers a
-// probe can give, which makes the test above precise and makes it narrow. The
-// families fixture is the other kind of evidence: every rule the registry
-// implements, with a live candidate each, so every probe form and every refusal
-// is exercised at once — and the claim is the only one that matters, which is
-// that not one verdict moved.
-//
-// Nothing about the *saving* is asserted here. Whether this fixture has mutants
-// a probe can settle is a fact about the fixture, and a test that required one
-// would fail the day somebody tightened a test in it. What cannot change is the
-// answer.
 func TestProbingChangesNoVerdictOverTheWholeOperatorCorpus(t *testing.T) {
 	t.Parallel()
 
@@ -131,13 +97,6 @@ func TestProbingChangesNoVerdictOverTheWholeOperatorCorpus(t *testing.T) {
 	}
 }
 
-// TestAProbeSettledSurvivorIsNotAnUncoveredOne keeps the pair of fields a
-// reader tells two remedies apart with.
-//
-// An uncovered mutant's lines are never run and the remedy is a test that
-// reaches them. An unobserved one's lines are run, and the remedy is an
-// assertion in a test that already runs them. A report that called the second
-// "uncovered" would send somebody to write a test that exists.
 func TestAProbeSettledSurvivorIsNotAnUncoveredOne(t *testing.T) {
 	t.Parallel()
 

@@ -148,27 +148,17 @@ type configWritableFile interface {
 	Close() error
 }
 
-// writeHooks are the operations writing this file performs.
-//
-// The zero value is production. These were five package-level variables, and a
-// test replacing any one of them owned internal/config for as long as it ran -
-// twenty-one tests, most of which touch none of the five.
 type writeHooks struct {
-	// open creates the file Init writes, refusing one that already exists.
 	open func(name string, flag int, mode os.FileMode) (configWritableFile, error)
 
-	// createTemp makes the temporary a rewrite is staged in.
 	createTemp func(directory, pattern string) (configWritableFile, error)
 
-	// marshal encodes the document.
 	marshal func(any) ([]byte, error)
 
-	// remove and rename finish the rewrite, and clean up after one that failed.
 	remove func(string) error
 	rename func(oldpath, newpath string) error
 }
 
-// resolved fills every operation this value leaves unset.
 func (hooks writeHooks) resolved() writeHooks {
 	if hooks.open == nil {
 		hooks.open = func(name string, flag int, mode os.FileMode) (configWritableFile, error) {
@@ -376,7 +366,6 @@ func Init(root string) error {
 	return initWithHooks(root, writeHooks{})
 }
 
-// initWithHooks is Init with the operations it performs passed in.
 func initWithHooks(root string, hooks writeHooks) error {
 	hooks = hooks.resolved()
 	path := filepath.Join(root, FileName)
@@ -425,25 +414,6 @@ func AddAcceptance(root string, acceptance Acceptance) error {
 	return appendAcceptance(root, acceptance)
 }
 
-// appendAcceptance writes one acceptance table onto the end of the file rather
-// than writing the configuration back out.
-//
-// The difference is the whole of this function. Re-serialising the model loses
-// every comment in the file, and a configuration file is a document rather than
-// a serialisation of a struct: most of what a reader needs from it -- the SPDX
-// header this repository's licence gate requires, and the argument beside each
-// setting for why it is not at its default -- lives in the part the struct does
-// not hold. `goatest accept` deleted fourteen lines of reasoning and the
-// licence header from goatest's own configuration before this, and the only
-// thing that would have noticed is a gate about licences.
-//
-// Appended rather than inserted in sorted order, because sorting means
-// rewriting and rewriting is what this exists to avoid. The order acceptances
-// were recorded in is also the more useful one to read.
-//
-// A file that does not exist is the one case a full write is right for: there
-// is nothing to preserve, and [Load] answered with defaults that have to be
-// written down before an acceptance can sit beside them.
 func appendAcceptance(root string, acceptance Acceptance) error {
 	path := filepath.Join(root, FileName)
 	existing, err := os.ReadFile(path)
@@ -482,7 +452,6 @@ func save(root string, input Config) error {
 	return saveWithHooks(root, input, writeHooks{})
 }
 
-// saveWithHooks is save with the operations it performs passed in.
 func saveWithHooks(root string, input Config, hooks writeHooks) error {
 	hooks = hooks.resolved()
 	raw := rawConfig{

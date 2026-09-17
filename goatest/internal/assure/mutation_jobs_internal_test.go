@@ -33,9 +33,6 @@ func TestMutationJobLimitParallelizesLocalWorkAndSerializesExclusiveResources(t 
 	if got := mutationJobLimit(Options{MutationJobs: 3}, exclusive); got != 1 {
 		t.Fatalf("exclusive-resource mutation jobs = %d, want 1", got)
 	}
-	// The zero case is asserted by TestTheDerivedWorkerCountIsTheCapAndTheMachine
-	// instead. Bounding it by the runner's own derivation here would compare a
-	// function with itself and pass for any value it ever returned.
 	if got := mutationJobLimit(Options{MutationJobs: uncappedMutationJobs}, config.Config{}); got != uncappedMutationJobs {
 		t.Fatalf("explicit mutation jobs = %d, want 12: an operator's explicit choice is respected, only the default is capped", got)
 	}
@@ -60,14 +57,6 @@ func TestMutationProgressReportsFirstPercentMilestonesAndLast(t *testing.T) {
 	}
 }
 
-// TestTheDerivedWorkerCountIsTheCapAndTheMachine pins what a run takes when
-// nothing asked: the ceiling, the machine, whichever is smaller, never zero.
-//
-// That the ceiling is the *engine's* ceiling is a separate claim, and it is
-// held by internal/devgates, which reads both trees. It cannot be held here:
-// a run is built with GOWORK=off against the engine version go.mod pins, so
-// naming a symbol the engine gained after that pin would fail to compile in
-// exactly the build this package's own gate uses.
 func TestTheDerivedWorkerCountIsTheCapAndTheMachine(t *testing.T) {
 	want := max(1, min(runtime.GOMAXPROCS(0), defaultMutationJobCap))
 	if got := mutationJobLimit(Options{}, config.Config{}); got != want {

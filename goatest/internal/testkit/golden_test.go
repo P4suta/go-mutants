@@ -48,9 +48,6 @@ func TestGoldenAcceptsMatchingBytesAndReportsMismatches(t *testing.T) {
 		t.Skip("-update rewrites the sample fixture this test asserts on")
 	}
 
-	// The recorder is the subject, not a helper. It is a fake testing.TB that
-	// collects what Golden reports, so marking it as a helper would move the
-	// reported line of a failure this test is here to read.
 	//nolint:thelper // the TB is a recording fake under test, not a test helper
 	matching := recordFailures(t, func(recorder testing.TB) {
 		testkit.Golden(recorder, goldenSampleName, goldenSampleContents)

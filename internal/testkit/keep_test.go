@@ -15,15 +15,6 @@ import (
 	"testing"
 )
 
-// keptRootFor points the keep policy at a directory of this test's own and
-// returns it.
-//
-// Every test in this file calls it, and none of them may skip it: the real kept
-// root is `<os.UserCacheDir()>/go-mutants-test/kept`, a directory the developer
-// running the suite owns and a directory CI names for the whole job. A test that
-// wrote there would leave evidence of a test that passed, and a test that
-// *removed* from there would delete the evidence of the failure somebody was
-// reading.
 func keptRootFor(t *testing.T, policy string) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "kept")
@@ -33,21 +24,6 @@ func keptRootFor(t *testing.T, policy string) string {
 	return root
 }
 
-// requireDefaultKeptRootUntouched fails a test that filed anything in the
-// developer's own kept root.
-//
-// It is the package guard in [TestMain] narrowed to one test, and it exists
-// because that guard has to stand down in exactly the configuration this test
-// creates. `GO_MUTANTS_TEST_KEEP=1` with no `GO_MUTANTS_TEST_KEEP_DIR` is the
-// documented way to keep things locally, so the package guard cannot read "the
-// default root appeared" as a defect — every test in the package files there by
-// design under that setting. The tests that go out of their way to *unset* the
-// override are the exception: what they are asking is where the default is, and
-// asking must not create it. So they say so here, per test.
-//
-// A root that was already there is left alone and not checked: it is the
-// developer's, it may hold evidence they are reading, and nothing here can tell
-// what this test added to it.
 func requireDefaultKeptRootUntouched(t *testing.T) {
 	t.Helper()
 	if pinned.userCache == "" {
@@ -68,17 +44,6 @@ func requireDefaultKeptRootUntouched(t *testing.T) {
 	})
 }
 
-// keepTB is a [testing.TB] that records what the keep policy did to it and lets
-// a test decide whether it failed.
-//
-// It is the recorder pattern this package already uses for [expectFatal], with
-// the three methods the policy needs on top: Name, because a kept directory is
-// named after the test; Cleanup, because keeping and removing both happen there
-// and a test of them has to be able to run them; and Failed, because
-// "on failure" is a question asked of the test rather than of the harness.
-//
-// The embedded TB is the parent, as [recorder]'s is, because [Scratch] falls
-// back to t.TempDir under the policy that keeps nothing.
 type keepTB struct {
 	testing.TB
 	name     string
@@ -115,8 +80,6 @@ func (k *keepTB) Fatalf(format string, args ...any) {
 	runtime.Goexit()
 }
 
-// finish runs the cleanups the way the testing package does: last registered
-// first, and after the test's own body has decided whether it failed.
 func (k *keepTB) finish() {
 	for i := len(k.cleanups) - 1; i >= 0; i-- {
 		k.cleanups[i]()
@@ -124,11 +87,8 @@ func (k *keepTB) finish() {
 	k.cleanups = nil
 }
 
-// log is everything the fake was told, as one document to assert on.
 func (k *keepTB) log() string { return strings.Join(k.logs, "\n") }
 
-// run calls body on a goroutine of its own, so that a Fatalf inside it can end
-// it with runtime.Goexit rather than the parent test.
 func (k *keepTB) run(body func(testing.TB)) {
 	done := make(chan struct{})
 	go func() {
@@ -138,13 +98,6 @@ func (k *keepTB) run(body func(testing.TB)) {
 	<-done
 }
 
-// TestScratchIsRemovedByDefault is the promise that turning nothing on changes
-// nothing: without the policy, a scratch directory is t.TempDir and the testing
-// package removes it.
-//
-// Both halves are asserted, and the second is the one that matters on a
-// developer's machine: nothing at all appears under the kept root. Keeping
-// unconditionally filled a disk twice, which is why the default is off.
 func TestScratchIsRemovedByDefault(t *testing.T) {
 	root := keptRootFor(t, "")
 
@@ -163,9 +116,6 @@ func TestScratchIsRemovedByDefault(t *testing.T) {
 	}
 }
 
-// TestScratchIsKeptWhenTheTestFailsUnderThePolicy is the whole feature in one
-// test: a failed test's directory is still there afterwards, and it says what
-// the test was.
 func TestScratchIsKeptWhenTheTestFailsUnderThePolicy(t *testing.T) {
 	keptRootFor(t, "1")
 
@@ -193,17 +143,6 @@ func TestScratchIsKeptWhenTheTestFailsUnderThePolicy(t *testing.T) {
 	}
 }
 
-// TestScratchIsRemovedWhenTheTestPassesUnderKeepOnFailure is the other half of
-// the same policy, and the half a disk depends on: CI turns keeping on for every
-// job, and a green job must leave no evidence behind.
-//
-// No evidence, rather than no directory. The package directory the scratch was
-// filed under is left exactly where it is, empty, and this test says so on
-// purpose — removing it as soon as it was empty is what raced two test binaries
-// filing under the same short name against each other, and an empty directory
-// buys nothing: actions/upload-artifact puts files in an artifact and skips
-// empty directories, `if-no-files-found: ignore` says nothing about them, and
-// `mise run test-clean` empties the whole root regardless.
 func TestScratchIsRemovedWhenTheTestPassesUnderKeepOnFailure(t *testing.T) {
 	root := keptRootFor(t, "on-failure")
 
@@ -227,8 +166,6 @@ func TestScratchIsRemovedWhenTheTestPassesUnderKeepOnFailure(t *testing.T) {
 	}
 }
 
-// TestScratchIsKeptAlwaysUnderAlways is the setting for the run where the
-// question is what a *passing* test produced.
 func TestScratchIsKeptAlwaysUnderAlways(t *testing.T) {
 	keptRootFor(t, "always")
 
@@ -245,13 +182,6 @@ func TestScratchIsKeptAlwaysUnderAlways(t *testing.T) {
 	}
 }
 
-// TestKeptNamesStayShort is the bound that keeps a kept directory nameable on
-// every filesystem, and the uniqueness that keeps two of them apart.
-//
-// A Go test name is a path — `TestX/a_case/deeper` — and a directory named after
-// one would be a tree three levels deep under a name nothing could list. A
-// subtest's separators are folded, the name is cut, and the six hex digits are
-// what make two directories of one test two directories rather than one.
 func TestKeptNamesStayShort(t *testing.T) {
 	root := keptRootFor(t, "always")
 
@@ -284,13 +214,6 @@ func TestKeptNamesStayShort(t *testing.T) {
 	}
 }
 
-// TestKeepPolicyRejectsAnUnknownSpelling is why a typo cannot switch keeping
-// off.
-//
-// The variable is set for a whole CI job, in a file nobody reads again. A policy
-// that read `GO_MUTANTS_TEST_KEEP=sometimes` as "never" would leave every job
-// with nothing to upload and nothing in the log to say why, which is exactly the
-// failure the feature exists to prevent.
 func TestKeepPolicyRejectsAnUnknownSpelling(t *testing.T) {
 	t.Setenv(KeepEnv, "sometimes")
 
@@ -308,13 +231,6 @@ func TestKeepPolicyRejectsAnUnknownSpelling(t *testing.T) {
 	t.Errorf("KeepPolicy returned %s rather than refusing an unknown spelling", KeepPolicy())
 }
 
-// TestDumpFilesPrintsOnlyOnFailureAndBoundsTheOutput is the rule that makes a
-// dump readable and affordable.
-//
-// A passing test prints nothing, because a suite that printed every
-// instrumented tree it built would bury the one that matters. A failing one
-// prints them, capped: a CI log has a size limit of its own, and a dump that
-// blows through it takes the failure with it.
 func TestDumpFilesPrintsOnlyOnFailureAndBoundsTheOutput(t *testing.T) {
 	keptRootFor(t, "")
 
@@ -357,8 +273,6 @@ func TestDumpFilesPrintsOnlyOnFailureAndBoundsTheOutput(t *testing.T) {
 	}
 }
 
-// truncateForReport keeps a failure message from being the very wall of text the
-// test is about.
 func truncateForReport(s string) string {
 	if len(s) <= 2000 {
 		return s
@@ -366,9 +280,6 @@ func truncateForReport(s string) string {
 	return s[:2000] + "\n…"
 }
 
-// TestDumpFilesCopiesIntoTheKeptDirectory is what makes a dump more than a log
-// line: the files are beside the directory that was kept, whole rather than cut
-// at the log's cap.
 func TestDumpFilesCopiesIntoTheKeptDirectory(t *testing.T) {
 	keptRootFor(t, "always")
 
@@ -384,9 +295,6 @@ func TestDumpFilesCopiesIntoTheKeptDirectory(t *testing.T) {
 	})
 	tb.finish()
 
-	// One numbered directory per call, named after the tree it came from: the
-	// first call of this test over a directory whose base name is the temporary
-	// one the parent made.
 	copied := filepath.Join(kept, DumpDirName, "1-"+sanitizedName(filepath.Base(root), keptNameBudget),
 		"inner", "f.go")
 	if got := ReadFile(t, copied); string(got) != string(body) {
@@ -394,9 +302,6 @@ func TestDumpFilesCopiesIntoTheKeptDirectory(t *testing.T) {
 	}
 }
 
-// TestPackageScratchReleaseRemovesUnlessKept is the same policy for a directory
-// a TestMain owns, where there is no [testing.TB] to ask whether anything
-// failed — so the caller says.
 func TestPackageScratchReleaseRemovesUnlessKept(t *testing.T) {
 	for _, test := range []struct {
 		policy string
@@ -428,9 +333,6 @@ func TestPackageScratchReleaseRemovesUnlessKept(t *testing.T) {
 	}
 }
 
-// TestForceFailHookFiresOnlyForTheNamedTest is the hook that makes the feature
-// demonstrable: a developer who wants to see what a failure leaves behind names
-// a test rather than editing one.
 func TestForceFailHookFiresOnlyForTheNamedTest(t *testing.T) {
 	keptRootFor(t, "")
 	t.Setenv(ForceFailEnv, "TestTheNamedOne")
@@ -450,12 +352,6 @@ func TestForceFailHookFiresOnlyForTheNamedTest(t *testing.T) {
 	}
 }
 
-// TestExecLedgerRecordsEveryChildArgv is what turns a kept directory into a
-// reproduction: the commands the test ran, in order, quoted the way a shell
-// would take them back.
-//
-// The child is this very test binary with a pattern that selects nothing, which
-// is the one child a unit-tier test can start without a toolchain.
 func TestExecLedgerRecordsEveryChildArgv(t *testing.T) {
 	keptRootFor(t, "always")
 
@@ -478,16 +374,6 @@ func TestExecLedgerRecordsEveryChildArgv(t *testing.T) {
 	}
 }
 
-// TestKeepPolicyReadsTheSpellingsAPersonTypes is the table of what the variable
-// accepts, and it is a table because the variable is typed by a person into a
-// workflow file or a shell.
-//
-// `yes`, `on` and `enabled` are here because [RequireTools] already accepts
-// them for the harness's other switch: two variables in one namespace that
-// disagree about what "on" is spelled would be a trap with no symptom, since one
-// of them would silently be off. `no`, `off`, `0` and `false` are the same
-// argument in the other direction — the one spelling of "off" a person is most
-// likely to type is the one that used to panic.
 func TestKeepPolicyReadsTheSpellingsAPersonTypes(t *testing.T) {
 	for _, test := range []struct {
 		value string
@@ -507,8 +393,6 @@ func TestKeepPolicyReadsTheSpellingsAPersonTypes(t *testing.T) {
 		{value: "failed", want: KeepOnFailure},
 		{value: "on-failure", want: KeepOnFailure},
 		{value: "always", want: KeepAlways},
-		// Case and surrounding space are a shell's doing rather than a
-		// decision, so they are read through.
 		{value: " ALWAYS ", want: KeepAlways},
 		{value: "On-Failure", want: KeepOnFailure},
 	} {
@@ -521,14 +405,6 @@ func TestKeepPolicyReadsTheSpellingsAPersonTypes(t *testing.T) {
 	}
 }
 
-// TestTwoDumpsInOneTestDoNotOverwriteEachOther is the failure a test with two
-// snapshots had: TestValidateIsDeterministic instruments the same fixture twice
-// and compares the two trees, and both dumps landed in one `dump/` directory
-// under the same relative names — so what a reader found was one tree, half of
-// it from each run, with nothing saying so.
-//
-// The printed headers have the same problem in the log: `--- limits.go` appears
-// twice and names neither root.
 func TestTwoDumpsInOneTestDoNotOverwriteEachOther(t *testing.T) {
 	keptRootFor(t, "always")
 
@@ -575,13 +451,6 @@ func TestTwoDumpsInOneTestDoNotOverwriteEachOther(t *testing.T) {
 	}
 }
 
-// TestEveryKeptDirectoryNamesTheOthers is what makes several kept directories
-// one piece of evidence rather than three.
-//
-// A real integration test takes a scratch for its environment, one for each
-// snapshot and one for a fixture copy, and they are siblings named after the
-// same test with different random suffixes. A reader who opens one has no way to
-// know the others exist, let alone which is which — so each account lists them.
 func TestEveryKeptDirectoryNamesTheOthers(t *testing.T) {
 	keptRootFor(t, "always")
 
@@ -608,12 +477,6 @@ func TestEveryKeptDirectoryNamesTheOthers(t *testing.T) {
 	}
 }
 
-// TestForceFailFiresForATestThatTakesNoScratch is the hole the hook had: it was
-// called from [Scratch], so a test that resolves a fixture, locates a toolchain
-// or reads a shared session — the whole root package — could name itself in
-// GO_MUTANTS_TEST_FORCE_FAIL and see nothing happen at all.
-//
-// It now fires from the one line every constructor here already writes.
 func TestForceFailFiresForATestThatTakesNoScratch(t *testing.T) {
 	keptRootFor(t, "")
 	t.Setenv(ForceFailEnv, "TestThatOnlyResolvesAFixture")
@@ -627,26 +490,6 @@ func TestForceFailFiresForATestThatTakesNoScratch(t *testing.T) {
 	}
 }
 
-// TestConcurrentScratchesSurviveConcurrentSiblings is the CI failure that turned
-// an ubuntu job red on PR #48 with the keep policy on:
-//
-//	creating a kept scratch directory under /home/runner/work/_temp/go-mutants-kept:
-//	mkdir …/go-mutants-kept/testkit/TestImportGateNamesAProductionImportOfTh-05eeab:
-//	no such file or directory
-//
-// Nothing was wrong with the name and nothing was wrong with the root. Parallel
-// tests file their directories under one package directory, and the cleanup of
-// the one that finished first removed its own directory and then removed that
-// package directory, empty at that instant — while another was between the
-// [os.MkdirAll] of the parent and the [os.Mkdir] of its own directory. The
-// second syscall landed in a directory that no longer existed, and a test with
-// nothing to do with keeping failed on the harness's own bookkeeping.
-//
-// Nothing removes the package directory any more, so this is now the guard that
-// the removals still happening — one per test that passed — cannot break a
-// creation beside them. It stays because the failure it reproduced was
-// timing-dependent and rare enough to be argued with: many workers creating and
-// removing under one package directory, every creation asserted to succeed.
 func TestConcurrentScratchesSurviveConcurrentSiblings(t *testing.T) {
 	keptRootFor(t, "1")
 
@@ -664,13 +507,8 @@ func TestConcurrentScratchesSurviveConcurrentSiblings(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for round := range rounds {
-				// A name of its own per directory, because the ledger is keyed
-				// by the test's name and these stand in for different tests.
 				tb := newKeepTB(t, fmt.Sprintf("TestParallelWorker%02d/round=%02d", worker, round))
 				tb.run(func(inner testing.TB) { Scratch(inner) })
-				// The policy is on-failure and the fake passed, so this removes
-				// the directory again — the other half of what runs concurrently
-				// under one package directory.
 				tb.finish()
 				if len(tb.fatals) == 0 {
 					continue

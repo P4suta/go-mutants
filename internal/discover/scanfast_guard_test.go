@@ -5,10 +5,6 @@ package discover
 
 import "testing"
 
-// scanStmt scans a file with one function whose body is the given statements,
-// so a test can pin the guard form discovery computes for a statement in
-// isolation. The parameters cover the operand and receiver shapes the guard
-// tests need.
 func scanStmt(t *testing.T, body string) scanned {
 	t.Helper()
 	return scanSource(t, `package pkg
@@ -25,11 +21,6 @@ func F(a, b, n int, ch chan int, s flags, m map[int]int) int {
 `)
 }
 
-// TestStatementFormsAreSVsD pins statementGuard: a statement that declares
-// nothing is Form S, and a `:=` or `var` that declares a name is Form D. Every
-// row exercises a distinct case of the type switch in statementGuard, so a
-// mutation that folds two cases together — dropping the DEFINE test, treating a
-// DeclStmt as Form S — changes exactly one row's form.
 func TestStatementFormsAreSVsD(t *testing.T) {
 	t.Parallel()
 
@@ -62,10 +53,6 @@ func TestStatementFormsAreSVsD(t *testing.T) {
 	}
 }
 
-// TestFormDNamesEveryDeclaredIdentifier pins defineTypes and declTypes: a Form
-// D site declares every non-blank name on its left, in source order, with the
-// type each was inferred as, and passes over the blank identifier. Mutating the
-// `_` test or the order would change the summary.
 func TestFormDNamesEveryDeclaredIdentifier(t *testing.T) {
 	t.Parallel()
 
@@ -96,9 +83,6 @@ func TestFormDNamesEveryDeclaredIdentifier(t *testing.T) {
 	}
 }
 
-// TestBoolExpressionsAreFormC pins formCSite: a bool-valued expression that may
-// legally be parenthesised is a Form C site, whether it is a return value, an
-// `if` condition, a `for` condition, or a bool struct field read.
 func TestBoolExpressionsAreFormC(t *testing.T) {
 	t.Parallel()
 
@@ -127,12 +111,6 @@ func TestBoolExpressionsAreFormC(t *testing.T) {
 	}
 }
 
-// TestAFieldNameIsNotItsOwnFormCSite pins the SelectorExpr case of
-// wrappablePosition: `s.ok` reads a bool, so the whole selector is one Form C
-// site, but the field name `ok` is not an expression that may be wrapped. The
-// scan produces exactly one return-true candidate — on `s.ok` — and none on the
-// bare field name. Flipping `parent.Sel != expr` to `==` would emit a second
-// candidate on the field name.
 func TestAFieldNameIsNotItsOwnFormCSite(t *testing.T) {
 	t.Parallel()
 
@@ -150,25 +128,6 @@ func F(s S) bool { return s.ok }
 	}
 }
 
-// TestASimpleStatementSlotIsReachedByAClosureForm pins what the expression
-// forms buy, in the slots that used to be the reason a candidate was dropped.
-//
-// A statement in the init or post of a `for`, the init of an `if`, or the tag
-// of a `switch` cannot be replaced by an `if` block -- the grammar there holds
-// a simple statement, and a block is not one. That used to end the matter: the
-// candidate was suppressed and a skip site recorded, and this test asserted
-// exactly that.
-//
-// [GuardFormF] and [GuardFormE] lifted it. Form F puts the guard inside a
-// closure and calls it where the statement was, which reaches the post slot;
-// Form E does the same for an expression of the site's own type, which reaches
-// the other three. So the arithmetic in each of these slots is a candidate now,
-// and nothing is skipped for it.
-//
-// The form is asserted and not just the count, because "there is a candidate"
-// is true for a form the instrumenter cannot write. Which form reaches which
-// slot is the claim: a change that made Form F answer for the `switch` tag
-// would pass a count and produce a rewrite that does not compile.
 func TestASimpleStatementSlotIsReachedByAClosureForm(t *testing.T) {
 	t.Parallel()
 
@@ -202,15 +161,6 @@ func TestASimpleStatementSlotIsReachedByAClosureForm(t *testing.T) {
 	}
 }
 
-// TestARedeclaringShortDeclarationIsReachedByTheExpressionForm pins the other
-// half of the same lifting.
-//
-// A `:=` that rebinds a name already in scope cannot be expressed as Form D,
-// which would have to declare some names and leave others alone, and this test
-// asserted that the site was therefore refused whole. [GuardFormE] does not
-// need the statement at all: it wraps the *initialiser*, which is an expression
-// of a type this file can spell, and the declaration is left exactly as the
-// author wrote it.
 func TestARedeclaringShortDeclarationIsReachedByTheExpressionForm(t *testing.T) {
 	t.Parallel()
 
@@ -232,11 +182,6 @@ func F(a, b int) (int, error) {
 	}
 }
 
-// TestFormDSpellsNamedAndImportedTypes pins declTypeOf and typeString: a Form D
-// site declares each name with the source spelling of its type, qualified
-// against the file's own imports. A named type from the same package is spelled
-// bare, and an imported type is spelled with its package qualifier, which is
-// what the rewrite has to write back into the file verbatim.
 func TestFormDSpellsNamedAndImportedTypes(t *testing.T) {
 	t.Parallel()
 

@@ -13,58 +13,22 @@ import (
 	"github.com/P4suta/go-mutants/internal/execute"
 )
 
-// A setVerifier holds the distinct sets of tests that mutants are narrowed to
-// and checks each one, before any mutant runs, with a control: the same tests,
-// no mutant. A set that passes test by test can still fail when its tests are
-// run together — one leaves state another needs — and a mutant narrowed to
-// such a set would be reported killed by a failure that is not the mutant's.
-// The control is what tells the two apart, and running it up front means the
-// runs handed to the scheduler are already the ones whose verdicts can be
-// trusted.
-//
-// Each distinct set is checked once, however many mutants share it, because the
-// question — do these tests pass together without a mutant — has one answer per
-// set.
 type setVerifier struct {
 	sets map[string]verifierSet
 }
 
-// A verifierSet is one distinct selection to check, and the budget to check it
-// under: a control is measured under the same bound the executions it licenses
-// are.
 type verifierSet struct {
 	tests   map[string][]string
 	timeout time.Duration
 	memory  int64
 	args    []string
-	// known marks a set whose control the run has already paid for, and which
-	// therefore starts no process of its own. See [setVerifier.want].
-	known bool
+	known   bool
 }
 
-// newSetVerifier returns an empty verifier.
 func newSetVerifier() *setVerifier {
 	return &setVerifier{sets: make(map[string]verifierSet)}
 }
 
-// want records that some mutant is narrowed to tests, under run's budget. The
-// selection is canonicalised so that the same set from two mutants is checked
-// once.
-//
-// A set of *one* test is recorded as already known, and starts no process. The
-// question a control asks is "do these tests pass together with nothing
-// activated", and for one test "together" is "alone" -- which is exactly what
-// the profiling pass ran: the same binary, in the same directory, with nothing
-// activated. A test that did not pass there makes its whole binary ineligible
-// for narrowing, so every test that reaches this point passed alone and the
-// answer is already in hand. On a suite where most mutants are reached by one
-// test that is most of this phase's process starts, and every one of them would
-// be asking a question the run has already answered.
-//
-// The arguments are why that is not unconditional. A control carries the
-// accepted test flags a mutant run carries and the profiling pass does not, so
-// under `-test.short` the two would be different invocations of one test and
-// only the control would be the right one.
 func (v *setVerifier) want(tests map[string][]string, run execute.MutantRun) {
 	key := setKey(tests)
 	if _, seen := v.sets[key]; seen {
@@ -74,15 +38,11 @@ func (v *setVerifier) want(tests map[string][]string, run execute.MutantRun) {
 		tests:   cloneSelection(tests),
 		timeout: run.Timeout,
 		memory:  run.MemoryLimit,
-		// The same arguments the mutant runs with: an accepted flag such as
-		// -test.short changes what the tests do, so a control without it would
-		// be a control of a different invocation.
-		args:  slices.Clone(run.Args),
-		known: len(run.Args) == 0 && countTests(tests) == 1,
+		args:    slices.Clone(run.Args),
+		known:   len(run.Args) == 0 && countTests(tests) == 1,
 	}
 }
 
-// countTests is how many tests a selection names across every binary in it.
 func countTests(tests map[string][]string) int {
 	total := 0
 	for _, names := range tests {
@@ -91,23 +51,12 @@ func countTests(tests map[string][]string) int {
 	return total
 }
 
-// run checks every recorded set with a control and returns the verdicts. A set
-// whose control passed is reliable; a set whose control failed, timed out or
-// could not run is not, and its mutants are widened to their whole binaries.
-//
-// The controls go through the scheduler's own worker pool, so the checks cost
-// what the machine can hold at once rather than one after another. A control
-// that cannot even start is treated as an unreliable set rather than a failed
-// run, for the reason the whole phase fails open: an optimisation that cannot
-// be verified is one the run does without.
 func (v *setVerifier) run(ctx context.Context, opts execute.Options, bins []execute.TestBinary) setVerdicts {
 	verdicts := setVerdicts{reliable: make(map[string]bool, len(v.sets))}
 	if len(v.sets) == 0 {
 		return verdicts
 	}
 
-	// The sets that still need asking, in one order: a control's place in the
-	// recording has to be a function of the sets rather than of a map walk.
 	var keys []string
 	for _, key := range slices.Sorted(maps.Keys(v.sets)) {
 		if v.sets[key].known {
@@ -149,16 +98,11 @@ func (v *setVerifier) run(ctx context.Context, opts execute.Options, bins []exec
 	return verdicts
 }
 
-// setVerdicts is which sets a [setVerifier] found reliable.
 type setVerdicts struct {
-	reliable map[string]bool
-	// unreliable is the sorted `<import path> <name>` labels of every test in a
-	// set that failed its control, for the one warning that names them.
+	reliable   map[string]bool
 	unreliable []string
 }
 
-// ok reports whether the set of these tests passed its control. An empty set
-// is trivially ok: it narrows nothing and there was no control to fail.
 func (s setVerdicts) ok(tests map[string][]string) bool {
 	if len(tests) == 0 {
 		return true
@@ -166,9 +110,6 @@ func (s setVerdicts) ok(tests map[string][]string) bool {
 	return s.reliable[setKey(tests)]
 }
 
-// setKey canonicalises a selection into one string: import paths sorted, names
-// sorted within each, so that the same set always keys the same however it was
-// built.
 func setKey(tests map[string][]string) string {
 	var b strings.Builder
 	for _, importPath := range slices.Sorted(maps.Keys(tests)) {
@@ -185,7 +126,6 @@ func setKey(tests map[string][]string) string {
 	return b.String()
 }
 
-// setLabels renders a selection as sorted `<import path> <name>` labels.
 func setLabels(tests map[string][]string) []string {
 	var labels []string
 	for importPath, names := range tests {
@@ -197,7 +137,6 @@ func setLabels(tests map[string][]string) []string {
 	return labels
 }
 
-// cloneSelection deep-copies a selection.
 func cloneSelection(tests map[string][]string) map[string][]string {
 	out := make(map[string][]string, len(tests))
 	for importPath, names := range tests {

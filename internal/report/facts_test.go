@@ -19,23 +19,8 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// beforeTiming is the run report this build wrote before the run facts were
-// added to it, frozen byte for byte.
-//
-// It is not a golden — nothing regenerates it, and `mise run golden-update`
-// must never touch it — because the whole of its value is that it was written
-// by an older build. A document that was regenerated alongside the schema
-// proves nothing about whether the schema still accepts one that was not.
 const beforeTiming = "run-report-v1-before-timing.json"
 
-// TestGoldenDocumentCarriesTimingValidationSnapshotToolchainAndExecutions reads
-// the committed document and checks that the five run facts are in it.
-//
-// It is asserted against the golden file rather than against a freshly built
-// report on purpose: [TestGoldenReport] pins the bytes, and this pins what a
-// consumer will find in them. A reader who wants to know why a run was slow, or
-// how one mutant was actually executed, has to be able to answer it from this
-// file with no trace beside it.
 func TestGoldenDocumentCarriesTimingValidationSnapshotToolchainAndExecutions(t *testing.T) {
 	t.Parallel()
 
@@ -80,9 +65,6 @@ func TestGoldenDocumentCarriesTimingValidationSnapshotToolchainAndExecutions(t *
 			object(doc, "test")["resolved_command"], fixtureGoBin)
 	}
 
-	// One mutant the run executed, and one it adopted from the cache. The
-	// second is the interesting half: it has attempts, because the run that
-	// measured it did, and no executions, because this run performed none.
 	executed := mutant(doc, 1)
 	executions, ok := executed["executions"].([]any)
 	if !ok || len(executions) != 1 {
@@ -100,8 +82,6 @@ func TestGoldenDocumentCarriesTimingValidationSnapshotToolchainAndExecutions(t *
 			t.Errorf("mutants[1].executions[0].%s = %v, want %v", key, execution[key], value)
 		}
 	}
-	// A survivor was caught by nothing, so the row says nothing rather than
-	// naming a binary that is not a name.
 	if _, present := execution["killed_by"]; present {
 		t.Errorf("the surviving attempt names a killer: %v", execution["killed_by"])
 	}
@@ -119,13 +99,6 @@ func TestGoldenDocumentCarriesTimingValidationSnapshotToolchainAndExecutions(t *
 	}
 }
 
-// TestAnOlderDocumentWithoutTheAdditiveFieldsStillValidates is the compatibility
-// claim the whole change rests on.
-//
-// Every field added here is optional, so a report an older build wrote — with
-// no timing, no validation, no snapshot, no toolchain and no executions — is
-// still a valid run-report v1 and still readable by this build. The frozen
-// document is the evidence: it was produced before any of it existed.
 func TestAnOlderDocumentWithoutTheAdditiveFieldsStillValidates(t *testing.T) {
 	t.Parallel()
 
@@ -146,9 +119,6 @@ func TestAnOlderDocumentWithoutTheAdditiveFieldsStillValidates(t *testing.T) {
 	if err := schemas.Validate(schemas.RunReportV1, data); err != nil {
 		t.Fatalf("a document written before the run facts existed no longer validates: %v", err)
 	}
-	// And this build still reads it, which is the other half of additive: the
-	// decoder refuses unknown fields, so a missing one must stay optional there
-	// too.
 	r, err := report.Parse(data)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -158,9 +128,6 @@ func TestAnOlderDocumentWithoutTheAdditiveFieldsStillValidates(t *testing.T) {
 	}
 }
 
-// TestReportValidateAcceptsADocumentWithTheAdditiveFields is the other
-// direction: what this build writes today is what the published schema says it
-// may write.
 func TestReportValidateAcceptsADocumentWithTheAdditiveFields(t *testing.T) {
 	t.Parallel()
 
@@ -168,21 +135,11 @@ func TestReportValidateAcceptsADocumentWithTheAdditiveFields(t *testing.T) {
 	if err := schemas.Validate(schemas.RunReportV1, data); err != nil {
 		t.Fatalf("the document this build writes does not satisfy its own schema: %v", err)
 	}
-	// Through the same door `go-mutants report validate FILE` uses, so the
-	// command and the test cannot disagree about what a valid document is.
 	if _, err := report.Parse(data); err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
 }
 
-// TestBuildRefusesExecutionsOnACachedOrUncoveredMutant states the one thing an
-// execution list may never say.
-//
-// An execution is a pass this run made over the test binaries. A cached mutant
-// was answered from a file, an uncovered one was settled by a coverage profile,
-// and a not-run one was never reached — so a row of per-attempt evidence
-// attached to any of the three would be this run claiming work it did not do,
-// in the one document everything else is derived from.
 func TestBuildRefusesExecutionsOnACachedOrUncoveredMutant(t *testing.T) {
 	t.Parallel()
 
@@ -192,8 +149,7 @@ func TestBuildRefusesExecutionsOnACachedOrUncoveredMutant(t *testing.T) {
 	cases := []struct {
 		name    string
 		options func(t *testing.T) report.Options
-		// which names the result the executions are attached to.
-		which func(result report.MutantResult) bool
+		which   func(result report.MutantResult) bool
 	}{
 		{
 			name:    "a cached mutant",
@@ -242,14 +198,6 @@ func TestBuildRefusesExecutionsOnACachedOrUncoveredMutant(t *testing.T) {
 	}
 }
 
-// TestExecutionsCountEqualsAttempts pins the invariant that keeps one document
-// from stating two different numbers of attempts.
-//
-// `attempts` was the whole of what a report said about how a mutant was run,
-// and it stays: consumers count it, the cache stores it, and the console prints
-// it. The execution rows are the same fact in detail, so a document where the
-// two disagree is a document one of whose halves is wrong, and Build refuses it
-// rather than publishing the pair.
 func TestExecutionsCountEqualsAttempts(t *testing.T) {
 	t.Parallel()
 
@@ -296,15 +244,6 @@ func TestExecutionsCountEqualsAttempts(t *testing.T) {
 	}
 }
 
-// TestMergeOmitsTimingValidationSnapshotToolchainAndExecutions is the rule that
-// keeps a merged document honest.
-//
-// Every fact this change adds describes one run: how long its phases took, how
-// many builds its validation spent, whose toolchain it used, which worker
-// executed which mutant. A merge of four shards is four runs on four machines,
-// so there is no single answer to give — and a merged document that reported
-// the first shard's would be quoting one machine's clock as though it were the
-// run's. It says nothing instead, which is the one honest answer.
 func TestMergeOmitsTimingValidationSnapshotToolchainAndExecutions(t *testing.T) {
 	t.Parallel()
 
@@ -337,13 +276,6 @@ func TestMergeOmitsTimingValidationSnapshotToolchainAndExecutions(t *testing.T) 
 		}
 	}
 
-	// Absent rather than null or empty, so that a consumer's decoder sees a
-	// missing key and not a measurement of zero.
-	//
-	// The keys are looked up where they would be rather than searched for in
-	// the bytes: `snapshot` and `toolchain` are also the names of two stages, so
-	// a substring search for either finds a timeline that is still there and
-	// calls it a merged document that carries a snapshot.
 	doc := mutantkit.DecodeJSON(t, mutantkit.MustMarshal(t, merged))
 	absent := [][]string{
 		{"timing"},
@@ -364,8 +296,6 @@ func TestMergeOmitsTimingValidationSnapshotToolchainAndExecutions(t *testing.T) 
 			t.Errorf("the merged document carries /mutants/%d/executions = %v", i, value)
 		}
 	}
-	// And the document it was built from does carry them, or the absences above
-	// would be a statement about the fixture rather than about the merge.
 	shard := mutantkit.DecodeJSON(t, mutantkit.MustMarshal(t, set[0]))
 	for _, keys := range absent {
 		if _, present := at(shard, keys...); !present {
@@ -374,8 +304,6 @@ func TestMergeOmitsTimingValidationSnapshotToolchainAndExecutions(t *testing.T) 
 	}
 }
 
-// at resolves a path of keys in a decoded document, reporting whether it is
-// there. An array index is a key like any other, spelled as a number.
 func at(doc map[string]any, keys ...string) (any, bool) {
 	var node any = doc
 	for _, key := range keys {
@@ -399,15 +327,6 @@ func at(doc map[string]any, keys ...string) (any, bool) {
 	return node, true
 }
 
-// TestAnExecutionOutcomeIsAnObservationAndNotAVerdict holds the narrower enum
-// to the two places that have to agree about it.
-//
-// A row of `executions` is what one pass over the test binaries saw, and two of
-// the six outcomes are not that: `inconclusive` is what a timeout and a retry
-// that disagree come to, and `not-run` is what a mutant nobody measured is.
-// Both are judgements about several passes, or about none, so a row claiming
-// either would be a verdict wearing an observation's clothes — and the schema
-// and [report.Build] refuse it from opposite directions.
 func TestAnExecutionOutcomeIsAnObservationAndNotAVerdict(t *testing.T) {
 	t.Parallel()
 
@@ -450,13 +369,6 @@ func TestAnExecutionOutcomeIsAnObservationAndNotAVerdict(t *testing.T) {
 	}
 }
 
-// TestStageResultVocabularyIsTheTraceVocabulary holds the report's stage
-// results to the recording's.
-//
-// A stage that `succeeded` in a trace and `ok` in a report would be two words
-// for one fact, and a reader joining the two documents would have to learn a
-// mapping that exists for no reason. The constants are the trace's own, and this
-// is the assertion that the published enum is too.
 func TestStageResultVocabularyIsTheTraceVocabulary(t *testing.T) {
 	t.Parallel()
 
@@ -473,8 +385,6 @@ func TestStageResultVocabularyIsTheTraceVocabulary(t *testing.T) {
 	}
 }
 
-// stageResultEnum reads the published enumeration out of the schema itself,
-// rather than out of a copy of it typed into this test.
 func stageResultEnum(t *testing.T) []string {
 	t.Helper()
 
@@ -499,16 +409,6 @@ func stageResultEnum(t *testing.T) []string {
 	return stage.Properties["result"].Enum
 }
 
-// TestAnExecutionCarriesWhatItCostAndWhetherABoundStoppedIt pins the two
-// additive fields a bounded run writes.
-//
-// They are tested at the document rather than through [report.Build] because
-// the claim is about the published contract: the schema accepts them where they
-// belong, this build reads them back, and the outcome beside them is still one
-// of the four an observation may be. A bound is a budget on evidence and not a
-// new kind of verdict, so `memory_exceeded` had to be a fact next to `killed`
-// rather than a fifth word in the enum, and that is exactly what a consumer
-// would break if somebody widened the vocabulary instead.
 func TestAnExecutionCarriesWhatItCostAndWhetherABoundStoppedIt(t *testing.T) {
 	t.Parallel()
 
@@ -524,7 +424,6 @@ func TestAnExecutionCarriesWhatItCostAndWhetherABoundStoppedIt(t *testing.T) {
 		t.Error("an ordinary execution row carries no peak_memory_bytes, and every execution started a process")
 	}
 
-	// A kill by the bound, written where a real one would be written.
 	row["outcome"] = "killed"
 	row["killed_by"] = alphaPackage
 	row["memory_exceeded"] = true
@@ -548,14 +447,6 @@ func TestAnExecutionCarriesWhatItCostAndWhetherABoundStoppedIt(t *testing.T) {
 	}
 }
 
-// TestAnExecutionWrittenBeforeTheBoundExistedStillValidates is the additive
-// half of the same claim, from the other side.
-//
-// The frozen document [TestAnOlderDocumentWithoutTheAdditiveFieldsStillValidates]
-// reads has no `executions` at all, so it cannot say anything about a row
-// written before these two fields were added to one. This does: a row with
-// neither key is a row this schema accepts and this build parses, which is what
-// "additive" has to mean for a consumer holding last month's reports.
 func TestAnExecutionWrittenBeforeTheBoundExistedStillValidates(t *testing.T) {
 	t.Parallel()
 
@@ -591,14 +482,6 @@ func TestAnExecutionWrittenBeforeTheBoundExistedStillValidates(t *testing.T) {
 	}
 }
 
-// TestTheDocumentSaysWhatTheMemoryBoundWasAndWhereItCameFrom pins the run fact
-// the execution rows are meaningless without.
-//
-// `memory_exceeded` on a row says a bound stopped that pass; without the bound
-// itself, a reader looking at a report from somebody else's CI has no way to
-// tell a runaway mutant from a budget somebody set too tight. The pair is
-// written together and read together, exactly as `timeout_ms` and
-// `timeout_source` are.
 func TestTheDocumentSaysWhatTheMemoryBoundWasAndWhereItCameFrom(t *testing.T) {
 	t.Parallel()
 
@@ -615,9 +498,6 @@ func TestTheDocumentSaysWhatTheMemoryBoundWasAndWhereItCameFrom(t *testing.T) {
 		t.Errorf("memory_source = %v, want %q", got, want)
 	}
 
-	// And a document that says nothing about memory is still a document: both
-	// keys are optional, so a report an older build wrote — or one from a run
-	// that bounded nothing and had no reason to say so — still validates.
 	delete(test, "memory_bytes")
 	delete(test, "memory_source")
 	silent := mutantkit.EncodeJSON(t, doc)
@@ -634,22 +514,12 @@ func TestTheDocumentSaysWhatTheMemoryBoundWasAndWhereItCameFrom(t *testing.T) {
 	}
 }
 
-// TestAMutantSaysWhatItCostWithoutItsExecutionRows is what a cached memory kill
-// needs in order to read like a measured one.
-//
-// A cached mutant has an attempt count and no execution rows — this run started
-// no process for it — so a consumer reading `memory_exceeded` off the rows sees
-// nothing, and `explain` on a warm run reports a kill it cannot explain. The
-// same two facts therefore live on the mutant as well: the maximum over its
-// rows for a mutant this run executed, and what the entry recorded for one it
-// adopted.
 func TestAMutantSaysWhatItCostWithoutItsExecutionRows(t *testing.T) {
 	t.Parallel()
 
 	data := mutantkit.MustMarshal(t, buildFixture(t))
 	doc := mutantkit.DecodeJSON(t, data)
 
-	// The executed one carries the maximum over its rows.
 	executed := mutant(doc, 1)
 	if executed["peak_memory_bytes"] == nil {
 		t.Error("an executed mutant says nothing about what it cost")
@@ -675,8 +545,6 @@ func TestAMutantSaysWhatItCostWithoutItsExecutionRows(t *testing.T) {
 		t.Errorf("the mutant reports %v, want the %v its rows do", got, highest)
 	}
 
-	// And both keys are optional, so a document that says nothing about memory
-	// at any level is still a document.
 	for i := range doc["mutants"].([]any) {
 		m := mutant(doc, i)
 		delete(m, "peak_memory_bytes")
@@ -691,8 +559,6 @@ func TestAMutantSaysWhatItCostWithoutItsExecutionRows(t *testing.T) {
 	}
 }
 
-// TestACachedMemoryKillCarriesItsFactsWithNoRowsUnderIt is the case the
-// mutant-level fields exist for, stated as the shape a warm run produces.
 func TestACachedMemoryKillCarriesItsFactsWithNoRowsUnderIt(t *testing.T) {
 	t.Parallel()
 
@@ -734,14 +600,6 @@ func TestACachedMemoryKillCarriesItsFactsWithNoRowsUnderIt(t *testing.T) {
 	}
 }
 
-// TestBuildRefusesAMemoryBoundThatContradictsItsSource is the pair rule: the
-// number and where it came from are written together or not at all.
-//
-// A document saying `derived` with no bytes describes a bound nobody could
-// check a `memory_exceeded` row against; one saying `unavailable` with a number
-// beside it says there was no bound and here it is. Both are the kind of
-// contradiction a consumer reads straight past, which is why they are refused
-// where they are written rather than where they are read.
 func TestBuildRefusesAMemoryBoundThatContradictsItsSource(t *testing.T) {
 	t.Parallel()
 
@@ -777,14 +635,6 @@ func TestBuildRefusesAMemoryBoundThatContradictsItsSource(t *testing.T) {
 	}
 }
 
-// TestBuildRefusesAMemoryKillThatIsNotAKill pins the one cross-field rule the
-// execution vocabulary rests on.
-//
-// `memory_exceeded` is what tells a `killed` row apart from an assertion's, so
-// it says nothing at all beside `survived`, `timed-out` or `errored` — those
-// are outcomes a tree the supervisor killed for its memory cannot have had. A
-// document that carried the combination would be describing a mutant that both
-// was and was not stopped.
 func TestBuildRefusesAMemoryKillThatIsNotAKill(t *testing.T) {
 	t.Parallel()
 
@@ -793,10 +643,6 @@ func TestBuildRefusesAMemoryKillThatIsNotAKill(t *testing.T) {
 	} {
 		t.Run(string(outcome), func(t *testing.T) {
 			opts := fixtureOptions(t)
-			// The rows are cloned before one is edited: [fixtureOptions] hands
-			// back slices backed by the package's own table, and a test that
-			// wrote through them would leave every later test in this file
-			// building a document with a memory kill in it.
 			marked := false
 			for i := range opts.Results {
 				rows := slices.Clone(opts.Results[i].Executions)
@@ -823,26 +669,12 @@ func TestBuildRefusesAMemoryKillThatIsNotAKill(t *testing.T) {
 	}
 }
 
-// TestAMutantSaysWhetherACountedLoopSettledIt is the divergence half of the
-// fold [TestACachedMemoryKillCarriesItsFactsWithNoRowsUnderIt] states for the
-// memory bound, and the two halves have to be separate for the reason the
-// second case here is about.
-//
-// `diverged` is on a mutant *and* on each of its rows, and the mutant's value
-// is the union of the two sources rather than either of them: a mutant this run
-// executed says it in its rows and may leave the field alone, and a cached one
-// has an attempt count and no rows at all, so the fact comes off the cache
-// entry. A build that folded only the rows would lose every warm run's
-// divergence; one that read only the field would lose every cold run's.
 func TestAMutantSaysWhetherACountedLoopSettledIt(t *testing.T) {
 	t.Parallel()
 
 	t.Run("a mutant this run executed says what its rows say", func(t *testing.T) {
 		t.Parallel()
 
-		// The rows carry it and the mutant does not, which is the shape
-		// internal/engine produces: it fills a row per pass and folds the
-		// mutant's own fields from them.
 		opts := fixtureOptions(t)
 		var target string
 		for i := range opts.Results {
@@ -877,9 +709,6 @@ func TestAMutantSaysWhetherACountedLoopSettledIt(t *testing.T) {
 	t.Run("a cached mutant says it with no rows under it", func(t *testing.T) {
 		t.Parallel()
 
-		// The other source, and the one the mutant-level field exists for. A
-		// warm run started no process, so there is nothing to fold and the
-		// answer is what the run that did measure it recorded.
 		opts := fixtureOptions(t)
 		var target string
 		for i := range opts.Results {
@@ -914,9 +743,6 @@ func TestAMutantSaysWhetherACountedLoopSettledIt(t *testing.T) {
 	t.Run("a mutant no loop settled says nothing", func(t *testing.T) {
 		t.Parallel()
 
-		// The other direction, which is what keeps the fold a fold: the
-		// fixture's own timeouts were ended by a deadline, and neither they nor
-		// their rows may claim a count settled them.
 		built, err := report.Build(fixtureOptions(t))
 		if err != nil {
 			t.Fatalf("Build: %v", err)
@@ -934,8 +760,6 @@ func TestAMutantSaysWhetherACountedLoopSettledIt(t *testing.T) {
 	})
 }
 
-// mutantWithID finds one built mutant by its identity, failing the test when
-// the builder dropped it.
 func mutantWithID(t *testing.T, built *report.Report, id string) report.Mutant {
 	t.Helper()
 	for _, m := range built.Mutants {
