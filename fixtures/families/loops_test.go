@@ -17,6 +17,15 @@ func TestSteps(t *testing.T) {
 	if got := Steps(3); got != 3 {
 		t.Errorf("Steps(3) = %d, want 3", got)
 	}
+	// The row that makes the cap a bound rather than an ornament. Under the
+	// limit it is never consulted, so `steps < 64` and `steps <= 64` agree and
+	// `&&` and `||` agree with them; over the limit they all part company. It
+	// is also the row that kills the post statement's two mutants, which the
+	// cap stops rather than the limit: a loop whose `i` never advances runs
+	// exactly sixty-four times.
+	if got := Steps(100); got != 64 {
+		t.Errorf("Steps(100) = %d, want the cap's 64", got)
+	}
 }
 
 func TestRemaining(t *testing.T) {
@@ -42,5 +51,25 @@ func TestNet(t *testing.T) {
 func TestDrift(t *testing.T) {
 	if got := Drift([]int{0, 0}); got != 0 {
 		t.Errorf("Drift([0 0]) = %d, want 0", got)
+	}
+}
+
+// TestSearch pins the count rather than the answer.
+//
+// Counting is what makes the label observable: a test that asked only whether
+// the value was found would pass against a bare `break`, because the value is
+// found either way. The row holding the match is not the last one, so the two
+// spellings disagree.
+func TestSearch(t *testing.T) {
+	if got := Search([][]int{{1, 2}, {3, 4}}, 2); got != 2 {
+		t.Errorf("Search([[1 2] [3 4]], 2) = %d, want 2", got)
+	}
+}
+
+// TestTally puts the skipped value in the middle of its row, which is the only
+// place the label changes the answer.
+func TestTally(t *testing.T) {
+	if got := Tally([][]int{{1, 2, 5}, {3, 4}}, 2); got != 8 {
+		t.Errorf("Tally([[1 2 5] [3 4]], 2) = %d, want 8", got)
 	}
 }

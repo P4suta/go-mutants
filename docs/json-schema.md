@@ -5,23 +5,26 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # JSON contracts
 
-**Status: four schemas shipped, plus one vendored.**
+**Status: seven schemas shipped, plus one vendored.**
 `schema/catalog-v1.schema.json`, `schema/run-report-v1.schema.json`,
-`schema/doctor-v1.schema.json` and `schema/trace-v1.schema.json` exist, are
-embedded in `internal/schemas`, and every document the CLI writes is validated
-against them in the tests. The Stryker projection is validated too, against the
-vendored third-party schema in `schema/stryker/` — which is deliberately kept
-out of that registry, for the reasons given below.
+`schema/workspace-report-v1.schema.json`, `schema/doctor-v1.schema.json`,
+`schema/trace-v1.schema.json`, `schema/diagnostics-v1.schema.json` and
+`schema/explain-v1.schema.json` exist,
+are embedded in `internal/schemas`,
+and every document the CLI writes is validated against them in the tests. The
+Stryker projection is validated too, against the vendored third-party schema in
+`schema/stryker/` — which is deliberately kept out of that registry, for the
+reasons given below.
 
-go-mutants publishes four native document types and one lossy projection for
-the Stryker report ecosystem. The three that describe *results* are
+go-mutants publishes seven native document types and one lossy projection for
+the Stryker report ecosystem. The six that are whole documents are
 discriminated by two fields that a consumer must check before decoding:
 
 ```json
 { "document_type": "go-mutants/run-report", "schema_version": 1 }
 ```
 
-The fourth, `go-mutants/trace-event`, is not: a trace is a stream of lines
+The seventh, `go-mutants/trace-event`, is not: a trace is a stream of lines
 rather than a document, and it states its format once on its first line. See
 [below](#go-mutantstrace-event-v1).
 
@@ -152,6 +155,7 @@ below.
 | `mutants[].memory_exceeded`, `mutants[].peak_memory_bytes` | Whether the memory bound settled the mutant and what it cost; see [`mutants[]`](#mutants) |
 | `mutants[].executions[].memory_exceeded` | Whether the run's memory bound stopped that pass; see [`mutants[]`](#mutants) |
 | `mutants[].executions[].peak_memory_bytes` | What that pass cost the machine; see [`mutants[]`](#mutants) |
+| `mutants[].diverged`, `mutants[].executions[].diverged` | Whether a counted loop is what settled the mutant rather than the deadline; see [`mutants[]`](#mutants) |
 | `coverage.tests` | How many tests the coverage pass profiled on their own. Present exactly in `test` mode; see [`coverage`](#coverage) |
 | `mutants[].covering_tests[]` | The tests whose own coverage reaches the mutant, as `{package, name}`; written by a `test` run when there are any |
 | `mutants[].executions[].tests[]` | The tests that pass was narrowed to, as `{package, name}`; absent when every binary ran whole |
@@ -308,6 +312,7 @@ test binaries, in attempt order.
 | `tests[]` | The tests the pass was narrowed to, as `{package, name}`: the binary was started with exactly these selected. Absent when the pass ran the whole binary — every pass outside `test` mode, and a `test`-mode pass over a mutant that was widened or whose survival was confirmed against the whole binary |
 | `memory_exceeded` | This pass was stopped by the run's per-mutant memory bound rather than by a test failing or by the deadline; absent when it was not. Optional. The bound itself is `test.memory_bytes` |
 | `peak_memory_bytes` | The highest the pass was observed to hold, as the **maximum over every binary it started** rather than the deciding binary's: resident memory on Unix, committed charge on Windows, which are close but not the same quantity and are deliberately not converted into one another. Written for every pass and not only the bounded ones — every process is sampled, which on Linux is the only measurement that is the child's own; absent where nothing observed one, which includes a pass that ended before its first sample |
+| `diverged` | This pass ended itself because a counted loop of the instrumented tree went past the ceiling the run derived for it from what the original program did under the same tests; absent when it did not. Optional. It is why a row can say `timed-out` after one attempt and a handful of milliseconds: a timeout is measured twice before it is believed, and a divergence is two counts taken in one tree that say nothing about the machine. The loop and both counts are in `output_tail`. See [ADR 0013](adr/0013-a-mutant-that-does-not-return-is-decided-by-work.md) |
 
 The same two facts are on the **mutant** as well as on its rows, and the
 repetition is for one reader: a `cached` mutant has an attempt count and no rows,
@@ -449,8 +454,15 @@ aggregated per file: `path`, `reason`, and `count`. The `reason` enum is
 `const-decl`, `array-length`, `type-param`, `case-label`, `package-var-init`,
 `cgo`, `generated`, `excluded`, `struct-tag`, `label-or-goto`, and
 `unnameable-decl-type` — the identifiers documented in
-[Operators](operators.md). `struct-tag` and `label-or-goto` are still reserved
-for instrumentation; everything else is emitted by discovery.
+[Operators](operators.md).
+
+The enum is deliberately a **superset** of what this build emits, so that a
+reason landing is a code change and not a schema change. Two of them are
+emitted by nothing today and never will be, for the same reason: the position
+they name holds a *type* rather than a value, and no rule in the registry
+rewrites a type. `struct-tag` is a struct tag, and `case-label` is the label of
+a type switch case. [Roadmap](roadmap.md) is the index of both. Everything else
+is emitted by discovery.
 
 ### `expectations[]`
 
@@ -498,6 +510,40 @@ projects' records quietly interleaving. It is also what makes `cache gc` and
 `cache clean` safe to delete anything at all in a directory the whole machine
 shares.
 
+## `go-mutants/workspace-report` v1
+
+`schema/workspace-report-v1.schema.json` — what a run over a `go.work`
+publishes instead of a run report.
+
+A workspace is measured as **one run** over one catalogue that spans its
+modules, so that a mutant is executed against every test that covers it
+whichever module compiled that test, and **reported one module at a time**:
+`workspace.module_path` is required of a run report, and a workspace has no
+single answer for it. See
+[ADR 0012](adr/0012-a-workspace-is-one-run-of-many-modules.md) for why those two
+sentences belong together.
+
+The module documents are **embedded** rather than filed beside this one, and
+that is what keeps one run to one file: a history store names a run's document
+by its run id, and N documents sharing a run id would name one file. Each
+`modules[].report` is a complete, schema-valid run report, so anything that
+reads a run report reads one of these:
+
+```console
+jq '.modules[] | select(.module_path == "example.com/ws/app") | .report'
+```
+
+| Field | What it holds |
+| --- | --- |
+| `workspace` | What every module's report says about the tree, said once: the digest, the platform, the snapshot and the `go` directive. It carries no module path, which is the whole reason this type exists |
+| `summary` | The run's counts added up across the modules, and the policy verdict that decided the exit code. A module's own summary is in its own report, and the two answer different questions: whether this project passed, and which part of it did not |
+| `expectations` | The ledger rows that name no mutant of any module. A row naming another module's mutant is reported in that module's document, where it can be evaluated against the mutants it is about; a row naming nothing is nobody's, and this is the one place it can be called stale |
+| `modules[]` | The workspace's modules in `use` order — `dir`, `module_path`, and the module's own `report` |
+
+A module with no mutants is still one of them. Leaving it out would make "which
+modules does this workspace hold" a question answered by the catalogue, which is
+a different question.
+
 ## `go-mutants/catalog` v1
 
 Produced only by `list --json`, and validated against
@@ -507,9 +553,9 @@ Produced only by `list --json`, and validated against
 | --- | --- |
 | `document_type`, `schema_version` | `go-mutants/catalog`, `1` |
 | `tool_version` | The build that wrote the document |
-| `workspace` | Same shape as the run report's |
+| `workspace` | The run report's shape, with one difference: exactly one of `module_path` and `modules` is present |
 | `selection` | `profile`, `operators`, `include`, `exclude` |
-| `mutants[]` | Identity and coordinates only — no outcome — plus the optional [`branch`](#branch) |
+| `mutants[]` | Identity and coordinates only — no outcome — plus the optional [`branch`](#branch) and, in a workspace, `module_path` |
 | `skips[]` | The same `path`/`reason`/`count` shape |
 
 A catalog is not a run report: it has no outcomes, no summary, no test output,
@@ -518,6 +564,22 @@ entries stop at `replacement` — plus the optional [`branch`](#branch), which i
 a fact about the source and not about a run — and it records the profile
 separately from the selection patterns so that two catalogs from the same tree
 can be compared byte-for-byte as a determinism gate.
+
+A listing of a `go.work` says so where a run report would say which module it
+was about: `workspace.modules` is the modules in `use` order and
+`workspace.module_path` is absent, and every mutant carries the `module_path`
+its own `path` is relative to. Two modules of one workspace can each hold an
+`app.go`, and the path alone would not say which — the same reason the identity
+carries the module. See
+[ADR 0012](adr/0012-a-workspace-is-one-run-of-many-modules.md).
+
+Two optional properties carry what discovery could prove about a mutant before
+anything ran. `branch` is the body a narrowing edit's condition gates; see
+[the run report's](#branch) description of the same shape. `termination` is
+whether the mutant's loop still stops — `bounded`, `unbounded`, or absent, and
+absent is the common case and never a claim that a loop is fine. See
+[Termination proof](operators.md#termination-proof). Neither changes a verdict,
+and a consumer that ignores both reads the same catalogue.
 
 ## `go-mutants/doctor` v1
 
@@ -538,11 +600,111 @@ a status something a reader can act on.
 
 The check names are stable within the schema version, so a consumer may branch
 on them: `go toolchain`, `module`, `git`, `cache directory`, `platform`,
-`configuration`. The list is always complete, even when a check failed — a
-machine with two problems should learn about both at once.
+`memory limit`, `configuration`. The list is always complete, even when a check
+failed — a machine with two problems should learn about both at once. Stable
+means a name that is here keeps its meaning; the list itself grows the way every
+other document on this page does, so a consumer switching on it needs a branch
+for the name it has not seen.
 
 This document describes the machine and not any code, so it carries no run ID,
 no workspace digest, and no mutants.
+
+## `go-mutants/diagnostics` v1
+
+The manifest of a failed run's diagnostics bundle, written as `manifest.json`
+beside the text files it indexes. See
+[the bundle](development.md#4-diagnosing-a-failing-test) for what a bundle is
+and where it goes.
+
+| Field | Contents |
+| --- | --- |
+| `document_type`, `schema_version` | `go-mutants/diagnostics`, `1` |
+| `tool_version` | The build that wrote the bundle |
+| `run_id` | The run it explains, which is also the name of the directory it is in |
+| `platform` | `goos`, `goarch` — the machine the run was measured on |
+| `failure` | `summary`, and `code` when the failure carries one |
+| `files[]` | `name`, `holds` — every file the bundle directory holds, in listing order |
+| `preserved[]` | The temporary directories the run was asked to keep; absent when it kept none |
+
+**It is an index of a directory, not an account of a run.** The account is the
+recording beside it and the claim is the run report, and restating either here
+would be the same run told twice. What it adds is the one thing neither carries:
+which files a reader will actually find, and which failure this directory is
+about — so a CI job that uploads the directory can also say what it uploaded,
+without parsing prose.
+
+`failure.code` is **absent rather than empty** for an error that has none. cobra
+and pflag produce plain errors, and minting a code for one would be a second
+identifier for a condition that has no first. Every code that does appear is one
+[`docs/errors.md`](errors.md) explains.
+
+`files[]` is what the directory holds rather than what a bundle can hold, and
+the two differ every time: a run that published no report has no `report.json`,
+and a traced run's bundle joins its recording, so it holds the stream and the
+`output/` directory beside it that this writer did not put there. The manifest
+is written second to last, after everything it names except itself and
+`preserved-paths.txt` — the completion marker stays the completion marker, and a
+bundle with no `preserved-paths.txt` is one the writer did not finish, whose
+manifest is a statement of what it was going to hold.
+
+## `go-mutants/explain` v1
+
+Produced only by `explain --json`. It is the account of one mutant, or of one
+place in the source, joined from a run report and the recording beside it.
+
+**It is the one document here that is derived, and the only one that names its
+sources.** Everything else is written by the thing that measured it; this is
+read out of two documents that already exist, so it carries a `source` block
+saying which — and a consumer that wants the lossless claim about a run is being
+pointed at the report rather than at a third encoding of it.
+
+It exists because five of the things the account holds are in *neither* source:
+
+| What | Why neither document has it |
+| --- | --- |
+| `reproduce.command` | The recording holds an argument vector and a directory; the line that runs that vector again with this mutant activated is composed here |
+| `reproduce.rebuild` | Composed from two artifact events and the mutant's package, for a library session whose tree is compiled through an overlay |
+| `timeline[].share_ms` | The report's `timing` is the whole run's, so its stage durations are the same figures on every mutant's account; this is the mutant's own part of each |
+| `executions[].commands[].output_tail` | The recording holds a path and a digest, and the bytes are a third file beside both documents |
+| `reproduce.temporaries_kept`, `source.trace.describes_the_report` | Judgements about whether the first of these can be trusted at all |
+
+The document takes one of two shapes, and `subject.kind` says which:
+
+| Field | Contents |
+| --- | --- |
+| `document_type`, `schema_version` | `go-mutants/explain`, `1` |
+| `tool_version` | The build that wrote it |
+| `source` | `report` and `trace`, each null when there is none, and `warnings[]` |
+| `subject` | `kind` is `mutant` or `position`; the rest is what it names |
+| `verdict` | *mutant only.* `outcome`, `summary`, `attempts`, `cached`, `killed_by`, `memory`, `diagnostic`, `not_run_reason` |
+| `coverage` | *mutant only.* `mode`, `summary`, `uncovered`, `packages[]`, `tests[]` |
+| `executions[]` | *mutant only.* One row per pass, with `commands[]` from the recording underneath each |
+| `timeline[]` | *mutant only.* The stages the mutant took part in, with its share of each |
+| `reproduce` | *mutant only.* `available`, and either the command or the reason there is none |
+| `skip_sites[]` | *position only.* Every site discovery declined there |
+| `mutants[]` | *position only.* Every mutant catalogued there, with what the report says became of it |
+
+**Absence is stated, never omitted.** A run that recorded nothing has
+`source.trace: null`, an empty `timeline[]`, and a `reproduce` whose `available`
+is `false` with the reason in `unavailable_reason` — because the command's own
+principle is that a section whose document is missing says so rather than
+composing a plausible command, and in a document that has to be a field a
+consumer can branch on. Every array is written as `[]` and never as `null`, so a
+consumer may iterate without checking first.
+
+`mutants[].outcome` is `null` in two different cases, and `source.report` tells
+them apart: a null outcome with a report present is a mutant that report does
+not name — the workspace has been edited since the run, or a later build
+catalogues differently — and a null `source.report` says every outcome here is
+unknown because nothing has been measured.
+
+The schema declares every field of both shapes once, at the top level, and its
+branch carries key sets alone. That is a diagnostic decision rather than a
+stylistic one: under a `oneOf` over two whole objects, one field of the wrong
+type makes both branches fail and a validator can only report that neither
+matched — so the one field actually at fault is never named.
+`internal/cli/explainjson_test.go` pins that, by breaking a field and requiring
+the failure to point at it.
 
 ## Stryker projection
 

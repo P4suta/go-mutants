@@ -130,6 +130,7 @@ type runOptions struct {
 	trace     string
 	keepTemp  string
 	jobs      int
+	isolate   bool
 	timeout   time.Duration
 	memory    string
 	verbose   int
@@ -298,6 +299,8 @@ func newRunCommandWith(o *runOptions) *cobra.Command {
 		"mutants to execute concurrently (default: execution.jobs, or min(CPUs, 8))")
 	flags.DurationVar(&o.timeout, "timeout", 0,
 		"per-mutant timeout; unset derives max(10s, slowest baseline x 5)")
+	flags.BoolVar(&o.isolate, "isolate", false,
+		"give every worker its own copy of the instrumented tree (default: execution.isolate)")
 	// A string rather than a typed flag, because pflag has a duration type and
 	// no byte-size one. The value goes through config.ParseMemory, so `2GB` is
 	// refused with the same sentence here and in the file, and the diagnostic
@@ -521,20 +524,28 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 	// included: a partial report is still the record of what the run measured,
 	// and a consumer that asked for JSON should not have to parse a console to
 	// find out that it exists.
-	if o.json && outcome.Report != nil {
-		if err := writeReportJSON(out, outcome.Report); err != nil {
-			return err
+	if o.json {
+		if document := publishedDocument(outcome); document != nil {
+			if err := writeReportJSON(out, document); err != nil {
+				return err
+			}
 		}
 	}
 	// Underneath the closing summary, and only when there is a document to
 	// explain: a run that stopped before it had a report has nothing to say
-	// here, and the failure that stopped it has already been reported.
-	if o.explain && outcome.Report != nil {
-		if err := explainRun(rendered, color, outcome.Report); err != nil {
-			return err
+	// here, and the failure that stopped it has already been reported. A
+	// workspace run explains every module in `use` order, because a rejection
+	// or a skip belongs to the module whose file it is about.
+	if o.explain {
+		for _, rep := range publishedReports(outcome) {
+			if err := explainRun(rendered, color, rep); err != nil {
+				return err
+			}
 		}
 	}
-	emitGitHub(out, cmd.ErrOrStderr(), o.json, outcome.Report)
+	for _, rep := range publishedReports(outcome) {
+		emitGitHub(out, cmd.ErrOrStderr(), o.json, rep)
+	}
 
 	if runErr != nil {
 		// The bundle last of all, and never before the error it explains is
@@ -631,6 +642,7 @@ func runOverlay(cmd *cobra.Command, o *runOptions) (config.Overlay, error) {
 		Exclude:   config.When(flags.Changed("exclude"), o.exclude),
 		Operators: config.When(flags.Changed("operator"), o.operators),
 		Jobs:      config.When(flags.Changed("jobs"), o.jobs),
+		Isolate:   config.When(flags.Changed("isolate"), o.isolate),
 		Timeout:   config.When(flags.Changed("timeout"), o.timeout),
 	}
 	// The two spellings are mutually exclusive, so at most one is Changed. Each
@@ -860,6 +872,35 @@ func emitGitHub(out, errOut io.Writer, asJSON bool, r *report.Report) {
 			Err:     err,
 		})
 	}
+}
+
+// publishedDocument is the document a run published, whichever kind it is, and
+// nil for a run that stopped before it had one.
+//
+// A run over one module publishes a run report and a run over a `go.work`
+// publishes a workspace report, and the two are never both there. Reading them
+// through one value is what keeps `--json` from being two code paths that have
+// to stay in step. See ADR 0012.
+func publishedDocument(outcome engine.RunOutcome) interface{ Marshal() ([]byte, error) } {
+	switch {
+	case outcome.WorkspaceReport != nil:
+		return outcome.WorkspaceReport
+	case outcome.Report != nil:
+		return outcome.Report
+	}
+	return nil
+}
+
+// publishedReports is every run report a run published: the one, or one per
+// module of the workspace, in `use` order.
+func publishedReports(outcome engine.RunOutcome) []*report.Report {
+	if outcome.WorkspaceReport != nil {
+		return outcome.WorkspaceReport.Reports()
+	}
+	if outcome.Report == nil {
+		return nil
+	}
+	return []*report.Report{outcome.Report}
 }
 
 // writeReportJSON writes the run report and nothing else.

@@ -1,0 +1,743 @@
+{
+  "document_type": "go-mutants/run-report",
+  "schema_version": 1,
+  "tool_version": "0.0.0-20260914002646-fdd5e5b28a9c+dirty",
+  "run_id": "20260914T002754Z-f9a9",
+  "status": "completed",
+  "started_at": "2026-09-14T00:27:54Z",
+  "finished_at": "2026-09-14T00:27:57Z",
+  "duration_ms": 2995,
+  "workspace": {
+    "module_path": "fixture.example/coverage",
+    "go_version": "1.26",
+    "workspace_digest": "329eb7a4dccc4e028a91b773affdcb237f7eac803aae37b179a0d12457022bf1",
+    "platform": {
+      "os": "darwin",
+      "arch": "arm64"
+    },
+    "snapshot": {
+      "stable_dir": true,
+      "files": 5
+    }
+  },
+  "selection": {
+    "mode": "all",
+    "changed_ref": null,
+    "profile": "balanced",
+    "operators": [],
+    "include": [
+      "**/*.go"
+    ],
+    "exclude": [],
+    "candidates": 11,
+    "rejected": 0,
+    "selected": 11
+  },
+  "shard": null,
+  "test": {
+    "command": [
+      "go",
+      "test",
+      "./..."
+    ],
+    "baseline": {
+      "runs": 3,
+      "durations_ms": [
+        765,
+        72,
+        67
+      ],
+      "slowest_ms": 765
+    },
+    "timeout_ms": 10000,
+    "timeout_source": "derived",
+    "memory_source": "unavailable",
+    "toolchain": {
+      "go_bin": "/Users/yasunobu/.local/share/mise/installs/go/1.26.6/bin/go",
+      "version": "go version go1.26.6 darwin/arm64"
+    },
+    "resolved_command": [
+      "/Users/yasunobu/.local/share/mise/installs/go/1.26.6/bin/go",
+      "test",
+      "./..."
+    ]
+  },
+  "coverage": {
+    "mode": "test",
+    "binaries": 2,
+    "tests": 2,
+    "mutants_uncovered": 3
+  },
+  "cache": {
+    "mode": "on",
+    "hits": 0,
+    "misses": 8,
+    "writes": 8
+  },
+  "summary": {
+    "total": 11,
+    "killed": 8,
+    "survived": 3,
+    "timed_out": 0,
+    "inconclusive": 0,
+    "errored": 0,
+    "not_run": 0,
+    "score_percent": 72.72727272727273,
+    "policy": {
+      "strict": false,
+      "minimum_score": 0,
+      "require_mutants": true,
+      "failure": null
+    }
+  },
+  "mutants": [
+    {
+      "id": "db91de8e494caea024c8720e15ea09c85dc63188c98ff9d552fb664fd63029b5",
+      "display_id": "db91de8e494caea024c8",
+      "path": "caller/caller.go",
+      "package": "fixture.example/coverage/caller",
+      "family": "return-replacement",
+      "rule": "return-true",
+      "rule_version": 1,
+      "line": 17,
+      "column": 9,
+      "start_byte": 614,
+      "end_byte": 632,
+      "original": "core.Differs(a, b)",
+      "replacement": "true",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 8,
+      "killed_by": "fixture.example/coverage/caller",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 7,
+          "outcome": "killed",
+          "killed_by": "fixture.example/coverage/caller",
+          "duration_ms": 8,
+          "binaries": [
+            "fixture.example/coverage/caller"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/coverage/caller",
+              "name": "TestChanged"
+            }
+          ],
+          "peak_memory_bytes": 6275072
+        }
+      ],
+      "output_tail": "--- FAIL: TestChanged (0.00s)\n    caller_test.go:19: Changed(1, 1) = true, want false\nFAIL\ncoverage: 50.0% of statements in fixture.example/coverage/...",
+      "covering_test_packages": [
+        "fixture.example/coverage/caller"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/coverage/caller",
+          "name": "TestChanged"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6275072
+    },
+    {
+      "id": "bf469ac84c8821cddcf97654843d52518590efc6a464ab3e5b1c0acc99c838c9",
+      "display_id": "bf469ac84c8821cddcf9",
+      "path": "caller/caller.go",
+      "package": "fixture.example/coverage/caller",
+      "family": "return-replacement",
+      "rule": "return-false",
+      "rule_version": 1,
+      "line": 17,
+      "column": 9,
+      "start_byte": 614,
+      "end_byte": 632,
+      "original": "core.Differs(a, b)",
+      "replacement": "false",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 6,
+      "killed_by": "fixture.example/coverage/caller",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 3,
+          "outcome": "killed",
+          "killed_by": "fixture.example/coverage/caller",
+          "duration_ms": 6,
+          "binaries": [
+            "fixture.example/coverage/caller"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/coverage/caller",
+              "name": "TestChanged"
+            }
+          ],
+          "peak_memory_bytes": 6668288
+        }
+      ],
+      "output_tail": "--- FAIL: TestChanged (0.00s)\n    caller_test.go:16: Changed(1, 2) = false, want true\nFAIL\ncoverage: 50.0% of statements in fixture.example/coverage/...",
+      "covering_test_packages": [
+        "fixture.example/coverage/caller"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/coverage/caller",
+          "name": "TestChanged"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6668288
+    },
+    {
+      "id": "cc6cb65f5ceaf57ac6cc50cbd8a1276502689caad27930e0d71e1650576b44c1",
+      "display_id": "cc6cb65f5ceaf57ac6cc",
+      "path": "core/core.go",
+      "package": "fixture.example/coverage/core",
+      "family": "return-replacement",
+      "rule": "return-true",
+      "rule_version": 1,
+      "line": 33,
+      "column": 9,
+      "start_byte": 1649,
+      "end_byte": 1654,
+      "original": "v > 0",
+      "replacement": "true",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 7,
+      "killed_by": "fixture.example/coverage/core",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 5,
+          "outcome": "killed",
+          "killed_by": "fixture.example/coverage/core",
+          "duration_ms": 7,
+          "binaries": [
+            "fixture.example/coverage/core"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/coverage/core",
+              "name": "TestAboveZero"
+            }
+          ],
+          "peak_memory_bytes": 6225920
+        }
+      ],
+      "output_tail": "--- FAIL: TestAboveZero (0.00s)\n    --- FAIL: TestAboveZero/below (0.00s)\n        core_test.go:30: AboveZero(-1) = true, want false\n    --- FAIL: TestAboveZero/at_zero (0.00s)\n        core_test.go:30: AboveZero(0) = true, want false\nFAIL\ncoverage: 54.5% of statements in fixture.example/coverage/...",
+      "covering_test_packages": [
+        "fixture.example/coverage/core"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/coverage/core",
+          "name": "TestAboveZero"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6225920
+    },
+    {
+      "id": "4c31ecaba702f24c26a5fb2bbaf85991d72984adb47f568f1e20e0890710c982",
+      "display_id": "4c31ecaba702f24c26a5",
+      "path": "core/core.go",
+      "package": "fixture.example/coverage/core",
+      "family": "return-replacement",
+      "rule": "return-false",
+      "rule_version": 1,
+      "line": 33,
+      "column": 9,
+      "start_byte": 1649,
+      "end_byte": 1654,
+      "original": "v > 0",
+      "replacement": "false",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 8,
+      "killed_by": "fixture.example/coverage/core",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 4,
+          "outcome": "killed",
+          "killed_by": "fixture.example/coverage/core",
+          "duration_ms": 8,
+          "binaries": [
+            "fixture.example/coverage/core"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/coverage/core",
+              "name": "TestAboveZero"
+            }
+          ],
+          "peak_memory_bytes": 6504448
+        }
+      ],
+      "output_tail": "--- FAIL: TestAboveZero (0.00s)\n    --- FAIL: TestAboveZero/above (0.00s)\n        core_test.go:30: AboveZero(1) = false, want true\nFAIL\ncoverage: 54.5% of statements in fixture.example/coverage/...",
+      "covering_test_packages": [
+        "fixture.example/coverage/core"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/coverage/core",
+          "name": "TestAboveZero"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6504448
+    },
+    {
+      "id": "99459e7266dfa35ea5dee124b6367b48afb86a53377f32355571bb93cd2e7cf3",
+      "display_id": "99459e7266dfa35ea5de",
+      "path": "core/core.go",
+      "package": "fixture.example/coverage/core",
+      "family": "comparison",
+      "rule": "gt-to-ge",
+      "rule_version": 1,
+      "line": 33,
+      "column": 11,
+      "start_byte": 1651,
+      "end_byte": 1652,
+      "original": ">",
+      "replacement": ">=",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 9,
+      "killed_by": "fixture.example/coverage/core",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 6,
+          "outcome": "killed",
+          "killed_by": "fixture.example/coverage/core",
+          "duration_ms": 9,
+          "binaries": [
+            "fixture.example/coverage/core"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/coverage/core",
+              "name": "TestAboveZero"
+            }
+          ],
+          "peak_memory_bytes": 6373376
+        }
+      ],
+      "output_tail": "--- FAIL: TestAboveZero (0.00s)\n    --- FAIL: TestAboveZero/at_zero (0.00s)\n        core_test.go:30: AboveZero(0) = true, want false\nFAIL\ncoverage: 54.5% of statements in fixture.example/coverage/...",
+      "covering_test_packages": [
+        "fixture.example/coverage/core"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/coverage/core",
+          "name": "TestAboveZero"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6373376
+    },
+    {
+      "id": "bfbdcf488517e9f67d68407216909f27b28553f05bad12016a3203af0e73a887",
+      "display_id": "bfbdcf488517e9f67d68",
+      "path": "core/core.go",
+      "package": "fixture.example/coverage/core",
+      "family": "return-replacement",
+      "rule": "return-true",
+      "rule_version": 1,
+      "line": 43,
+      "column": 9,
+      "start_byte": 2002,
+      "end_byte": 2008,
+      "original": "a != b",
+      "replacement": "true",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 6,
+      "killed_by": "fixture.example/coverage/caller",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 1,
+          "outcome": "killed",
+          "killed_by": "fixture.example/coverage/caller",
+          "duration_ms": 6,
+          "binaries": [
+            "fixture.example/coverage/caller"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/coverage/caller",
+              "name": "TestChanged"
+            }
+          ],
+          "peak_memory_bytes": 6340608
+        }
+      ],
+      "output_tail": "--- FAIL: TestChanged (0.00s)\n    caller_test.go:19: Changed(1, 1) = true, want false\nFAIL\ncoverage: 58.3% of statements in fixture.example/coverage/...",
+      "covering_test_packages": [
+        "fixture.example/coverage/caller"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/coverage/caller",
+          "name": "TestChanged"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6340608
+    },
+    {
+      "id": "3ad0fb237cf78480b3cddbf617173d774ee033654e559b247e632032dd0c2a94",
+      "display_id": "3ad0fb237cf78480b3cd",
+      "path": "core/core.go",
+      "package": "fixture.example/coverage/core",
+      "family": "return-replacement",
+      "rule": "return-false",
+      "rule_version": 1,
+      "line": 43,
+      "column": 9,
+      "start_byte": 2002,
+      "end_byte": 2008,
+      "original": "a != b",
+      "replacement": "false",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 6,
+      "killed_by": "fixture.example/coverage/caller",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 0,
+          "outcome": "killed",
+          "killed_by": "fixture.example/coverage/caller",
+          "duration_ms": 6,
+          "binaries": [
+            "fixture.example/coverage/caller"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/coverage/caller",
+              "name": "TestChanged"
+            }
+          ],
+          "peak_memory_bytes": 6291456
+        }
+      ],
+      "output_tail": "--- FAIL: TestChanged (0.00s)\n    caller_test.go:16: Changed(1, 2) = false, want true\nFAIL\ncoverage: 58.3% of statements in fixture.example/coverage/...",
+      "covering_test_packages": [
+        "fixture.example/coverage/caller"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/coverage/caller",
+          "name": "TestChanged"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6291456
+    },
+    {
+      "id": "5c0f0fa940143b71c8d57e96e6205114f904f661dda0715bf365287c383d05d9",
+      "display_id": "5c0f0fa940143b71c8d5",
+      "path": "core/core.go",
+      "package": "fixture.example/coverage/core",
+      "family": "comparison",
+      "rule": "neq-to-eq",
+      "rule_version": 1,
+      "line": 43,
+      "column": 11,
+      "start_byte": 2004,
+      "end_byte": 2006,
+      "original": "!=",
+      "replacement": "==",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 8,
+      "killed_by": "fixture.example/coverage/caller",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 2,
+          "outcome": "killed",
+          "killed_by": "fixture.example/coverage/caller",
+          "duration_ms": 8,
+          "binaries": [
+            "fixture.example/coverage/caller"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/coverage/caller",
+              "name": "TestChanged"
+            }
+          ],
+          "peak_memory_bytes": 6225920
+        }
+      ],
+      "output_tail": "--- FAIL: TestChanged (0.00s)\n    caller_test.go:16: Changed(1, 2) = false, want true\n    caller_test.go:19: Changed(1, 1) = true, want false\nFAIL\ncoverage: 58.3% of statements in fixture.example/coverage/...",
+      "covering_test_packages": [
+        "fixture.example/coverage/caller"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/coverage/caller",
+          "name": "TestChanged"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6225920
+    },
+    {
+      "id": "ac9a65bfd8b7d4ca7fd59d9412c118b74e84c3b3dbc4afe79432f3fd083b5452",
+      "display_id": "ac9a65bfd8b7d4ca7fd5",
+      "path": "core/core.go",
+      "package": "fixture.example/coverage/core",
+      "family": "return-replacement",
+      "rule": "return-true",
+      "rule_version": 1,
+      "line": 53,
+      "column": 9,
+      "start_byte": 2381,
+      "end_byte": 2386,
+      "original": "a < b",
+      "replacement": "true",
+      "outcome": "survived",
+      "not_run_reason": null,
+      "duration_ms": 0,
+      "killed_by": null,
+      "attempts": 0,
+      "executions": [],
+      "output_tail": null,
+      "covering_test_packages": [],
+      "uncovered": true,
+      "cached": false
+    },
+    {
+      "id": "11a89f2be605c1f5e96bff6fa41673d261f30ec08253f7af40f66715fdeda82b",
+      "display_id": "11a89f2be605c1f5e96b",
+      "path": "core/core.go",
+      "package": "fixture.example/coverage/core",
+      "family": "return-replacement",
+      "rule": "return-false",
+      "rule_version": 1,
+      "line": 53,
+      "column": 9,
+      "start_byte": 2381,
+      "end_byte": 2386,
+      "original": "a < b",
+      "replacement": "false",
+      "outcome": "survived",
+      "not_run_reason": null,
+      "duration_ms": 0,
+      "killed_by": null,
+      "attempts": 0,
+      "executions": [],
+      "output_tail": null,
+      "covering_test_packages": [],
+      "uncovered": true,
+      "cached": false
+    },
+    {
+      "id": "12f94cf83d280e2f3446521a6ea377025dd3d439e04d30caa53aaafabcde4ed5",
+      "display_id": "12f94cf83d280e2f3446",
+      "path": "core/core.go",
+      "package": "fixture.example/coverage/core",
+      "family": "comparison",
+      "rule": "lt-to-le",
+      "rule_version": 1,
+      "line": 53,
+      "column": 11,
+      "start_byte": 2383,
+      "end_byte": 2384,
+      "original": "<",
+      "replacement": "<=",
+      "outcome": "survived",
+      "not_run_reason": null,
+      "duration_ms": 0,
+      "killed_by": null,
+      "attempts": 0,
+      "executions": [],
+      "output_tail": null,
+      "covering_test_packages": [],
+      "uncovered": true,
+      "cached": false
+    }
+  ],
+  "rejected": [],
+  "skips": [],
+  "expectations": [],
+  "warnings": [],
+  "timing": {
+    "phases": [
+      {
+        "name": "discover",
+        "duration_ms": 35
+      },
+      {
+        "name": "baseline",
+        "duration_ms": 945
+      },
+      {
+        "name": "mutate",
+        "duration_ms": 2014
+      }
+    ],
+    "stages": [
+      {
+        "phase": "discover",
+        "name": "toolchain",
+        "duration_ms": 9,
+        "result": "succeeded"
+      },
+      {
+        "phase": "discover",
+        "name": "sweep",
+        "duration_ms": 11,
+        "result": "succeeded"
+      },
+      {
+        "phase": "discover",
+        "name": "snapshot",
+        "duration_ms": 1,
+        "result": "succeeded"
+      },
+      {
+        "phase": "discover",
+        "name": "scope",
+        "duration_ms": 12,
+        "result": "succeeded"
+      },
+      {
+        "phase": "baseline",
+        "name": "build",
+        "duration_ms": 39,
+        "result": "succeeded"
+      },
+      {
+        "phase": "baseline",
+        "name": "test",
+        "duration_ms": 765,
+        "result": "succeeded"
+      },
+      {
+        "phase": "baseline",
+        "name": "test",
+        "duration_ms": 72,
+        "result": "succeeded"
+      },
+      {
+        "phase": "baseline",
+        "name": "test",
+        "duration_ms": 67,
+        "result": "succeeded"
+      },
+      {
+        "phase": "baseline",
+        "name": "timeout",
+        "duration_ms": 0,
+        "result": "succeeded"
+      },
+      {
+        "phase": "baseline",
+        "name": "memory",
+        "duration_ms": 0,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "discover",
+        "duration_ms": 119,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "catalog",
+        "duration_ms": 0,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "validate",
+        "duration_ms": 77,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "instrumented-baseline",
+        "duration_ms": 697,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "drift",
+        "duration_ms": 0,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "selection",
+        "duration_ms": 0,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "build-binaries",
+        "duration_ms": 280,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "coverage-profile",
+        "duration_ms": 634,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "coverage-narrow",
+        "duration_ms": 146,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "cache-lookup",
+        "duration_ms": 12,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "execute",
+        "duration_ms": 9,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "cache-store",
+        "duration_ms": 35,
+        "result": "succeeded"
+      }
+    ]
+  },
+  "validation": {
+    "builds": 1
+  }
+}

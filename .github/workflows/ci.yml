@@ -477,7 +477,7 @@ jobs:
   # 1m48s -- larger and faster than before the bound, because the two that
   # allocate no longer wait out two timeouts each.
   #
-  # The scope is now 2497 mutants: internal/report joined, which is nearly as
+  # The scope was then 2497 mutants: internal/report joined, which is nearly as
   # many again, and it brought a fourth mutant that never returns. Warm on a
   # quiet machine that scope is 6m13s-6m30s; cold on this runner it is about
   # 4m45s, with the timeout at its 10s floor. It was 9m31s cold on a shared
@@ -489,6 +489,29 @@ jobs:
   # hang and how loud the runner is, since both move the derived timeout. The
   # memory bound is what keeps a runner from being the thing that runs out
   # first.
+  #
+  # It is now 4396 over seventeen packages, and 1513 of those came from
+  # adding six: internal/testlog, internal/tempowner, internal/gitdiff,
+  # internal/snapshot, internal/cache and internal/validate. The rest grew
+  # where the gate already looked -- discovery reaching the case labels of a
+  # tagless switch, the workspace coordinate a mutant is catalogued under --
+  # which is the ordinary way this number moves. Three came off again when
+  # discovery learned to refuse an edit whose replacement is the constant
+  # the source already holds, which is the only way this number has ever
+  # fallen. Three of them never return, where six did until a mutant run
+  # learned to stop at the first test that fails: each of the three that
+  # left fails a test before it reaches the input that hangs it, so the
+  # binary is gone before that test starts and the verdict is a kill. The
+  # three that are left no longer cost a budget either: every loop of the
+  # instrumented tree counts itself against what the original program did,
+  # so a runaway ends in milliseconds instead of two derived timeouts.
+  # Twenty never-returning mutants were removed rather than measured over
+  # the widenings -- internal/gitdiff brought three, internal/snapshot four
+  # and internal/validate thirteen -- because a loop whose stopping
+  # condition is one edit away from never stopping is a loop with one
+  # spelling too many. That is the part of the growth this job's budget
+  # feels, because a mutant that hangs costs a whole derived timeout and
+  # every other mutant costs a fraction of a second.
   dogfood:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -517,12 +540,16 @@ jobs:
         with:
           install: true
           cache: true
+      # The audit that reads this run's report against its recording is
+      # `mise run dogfood-audit`, and it is not here: measured after it was
+      # wired up, it costs a third again on the longest job in this workflow.
+      # nightly.yml runs it. See mise.toml for the numbers.
       - run: mise run dogfood
       # The same gate as platform-tests', and the one job that could break it
-      # without running a test suite at all: `mise run dogfood` is go-mutants
-      # pointed at this repository, and a run writes into the tree it is pointed
-      # at. `always()`, because a run that wrote into the corpus and then failed
-      # its own score gate is exactly the case worth naming.
+      # without running a test suite at all: `mise run dogfood` is
+      # go-mutants pointed at this repository, and a run writes into the tree it
+      # is pointed at. `always()`, because a run that wrote into the corpus and
+      # then failed its own score gate is exactly the case worth naming.
       - name: The corpus is unchanged
         if: always()
         shell: bash
@@ -548,3 +575,131 @@ jobs:
           path: reports/mutation/
           retention-days: 14
           if-no-files-found: warn
+
+  # The composite action, measured against the corpus.
+  #
+  # An action is a file of YAML that nothing compiles, and the half of it that
+  # can be wrong -- the outputs -- is invisible until something reads them. A
+  # caller finds out by putting it in their own pipeline, which is the worst
+  # place to find out.
+  #
+  # `version: skip` is what makes this a test of *this* checkout rather than of
+  # whatever `go install ...@latest` would fetch: the binary is built from the
+  # source under test and put on PATH first, so a change to the report's shape
+  # fails here rather than after a release.
+  #
+  # killable is the fixture because its fates are fixed and documented, and the
+  # assertions below are about the plumbing -- that every output arrived and
+  # that they agree with each other -- rather than about the numbers, which
+  # internal/engine's own suite pins and which would make this job a second
+  # place to edit when a fixture changes.
+  action-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
+        with:
+          install: true
+          cache: true
+      - name: Build the go-mutants under test and put it on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          go build -o "$RUNNER_TEMP/bin/go-mutants" ./cmd/go-mutants
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - id: measured
+        uses: ./.github/actions/go-mutants
+        with:
+          version: skip
+          working-directory: fixtures/killable
+          report: ${{ runner.temp }}/killable-report.json
+          # The fixture has a survivor by design, so a gate here would fail
+          # every time. What is under test is the reporting, not the score.
+          fail: "false"
+      - name: The outputs are there and agree with each other
+        shell: bash
+        env:
+          STATUS: ${{ steps.measured.outputs.status }}
+          TOTAL: ${{ steps.measured.outputs.total }}
+          KILLED: ${{ steps.measured.outputs.killed }}
+          SURVIVED: ${{ steps.measured.outputs.survived }}
+          TIMED_OUT: ${{ steps.measured.outputs.timed-out }}
+          SCORE: ${{ steps.measured.outputs.score }}
+          EXIT_CODE: ${{ steps.measured.outputs.exit-code }}
+          REPORT: ${{ steps.measured.outputs.report }}
+        run: |
+          set -euo pipefail
+          test "$STATUS" = completed
+          test -s "$REPORT"
+          test "$TOTAL" -gt 0
+          test "$SURVIVED" -gt 0
+          # The total the action reported is the total the document holds,
+          # which is the one number that proves the outputs were read from the
+          # report rather than scraped off the console.
+          jq -e --argjson t "$TOTAL" \
+            '.summary.total == $t' "$REPORT" > /dev/null
+          test $((KILLED + SURVIVED + TIMED_OUT)) -le "$TOTAL"
+          # A score is a number. An empty one means the run scored nothing,
+          # which a fixture with ten mutants did not do.
+          case "$SCORE" in
+            '' | *[!0-9.]*)
+              echo "::error::score is not a number: $SCORE"
+              exit 1
+              ;;
+          esac
+          # The exit code is an output whatever `fail` was set to, and a run
+          # with an unexpected survivor is a policy failure rather than a
+          # broken run.
+          test "$EXIT_CODE" = 0 || test "$EXIT_CODE" = 1
+          echo "action outputs: $STATUS $TOTAL/$KILLED/$SURVIVED score $SCORE"
+
+  # One required check instead of seven.
+  #
+  # Branch protection names its required checks by hand, in a repository setting
+  # nothing in this tree can see -- so a job added to this file is a job nobody
+  # waits for until somebody remembers to go and add it. This job needs every
+  # other one, so the setting names this and the list lives here, beside the
+  # jobs, where a pull request that adds one shows the reviewer both halves.
+  #
+  # `if: always()` and the explicit result check rather than a bare `needs:`,
+  # because a needed job that is *skipped* does not fail its dependants: the
+  # `coverage` job is skipped on every pull request by design, and a plain
+  # `needs:` would let a cancelled or skipped gate pass for the same reason.
+  # Skipped is accepted and anything that is not success or skipped is not.
+  #
+  # internal/testkit's TestTheAggregateJobWaitsForEveryOtherJob compares the
+  # list below with the jobs this file defines, which is the half that would
+  # otherwise go stale in exactly the way the setting does. One name per line
+  # because the list only grows, and a diff that adds a job should be a diff
+  # that adds a line.
+  ci-success:
+    needs:
+      - quality
+      - platform-tests
+      - race
+      - coverage
+      - artifacts
+      - dogfood
+      - action-smoke
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every gate succeeded or was skipped by design
+        shell: bash
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          passed='.value.result == "success" or .value.result == "skipped"'
+          report='to_entries | .[] | "\(.key): \(.value.result)"'
+          failed=$(printf '%s' "$RESULTS" |
+            jq -r "to_entries | map(select($passed | not)) | $report")
+          if [ -n "$failed" ]; then
+            echo "::error::gates that did not pass:"
+            printf '%s\n' "$failed"
+            exit 1
+          fi
+          printf '%s' "$RESULTS" | jq -r "$report"

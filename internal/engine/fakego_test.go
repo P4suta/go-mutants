@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/P4suta/go-mutants/internal/config"
+	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/testkit"
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
@@ -209,5 +210,111 @@ func TestBaselineFailureStopsTheRunWithTheOutputTail(t *testing.T) {
 	if got := outcome.ResolvedTestCommand; len(got) == 0 || got[0] != f.Bin() {
 		t.Errorf("ResolvedTestCommand = %q, want it to start with the located toolchain %q",
 			got, f.Bin())
+	}
+}
+
+// TestABaselineTheToolchainOnlyLookedUpSaysSo is the budget's own honesty
+// check, and the reason it is scripted is the reason it matters: a real
+// toolchain cannot be made to answer the *first* run of a fresh snapshot out of
+// its cache, because the copied files carry timestamps that cache has never
+// seen — and every run after the first it answers that way by default.
+//
+// So the ordinary shape of a `test.command` without `-count=1` is one real
+// measurement followed by cache lookups, which [budgetBaseline] now drops. The
+// shape this test produces is the one it cannot recover from: nothing measured
+// the suite at all, the budget is sized on a lookup, and the only honest thing
+// left to do is say so.
+func TestABaselineTheToolchainOnlyLookedUpSaysSo(t *testing.T) {
+	// No t.Parallel: the scripted toolchain is published with t.Setenv.
+	f, opts := fakeRun(t)
+	opts.Config.Test.BaselineRuns = 3
+
+	f.On("list", "-e").Stdout(scopeMarker + filepath.Join("snap", "only") + "\n")
+	f.On("build")
+	f.On("test").Stdout("ok  \tfixture.example/faked/only\t(cached)\n")
+
+	// The run does not survive discovery with a scripted toolchain, and it does
+	// not need to: warnings are published on every path out of a run, and the
+	// one under test is raised in the phase before.
+	outcome, _ := Run(t.Context(), opts)
+
+	if len(outcome.BaselineRuns) != 3 {
+		t.Fatalf("measured %d baseline runs, want 3", len(outcome.BaselineRuns))
+	}
+	warning, found := warningOf(outcome, CodeBaselineFromTestCache)
+	if !found {
+		t.Fatalf("a baseline of three cache lookups published %v, want a %s",
+			outcome.Warnings, CodeBaselineFromTestCache)
+	}
+	for _, want := range []string{"3 baseline runs", "cache", "-count=1"} {
+		if !strings.Contains(warning.Message, want) {
+			t.Errorf("the warning does not say %q:\n%s", want, warning.Message)
+		}
+	}
+}
+
+// warningOf finds a published warning by its code.
+func warningOf(outcome RunOutcome, code Code) (Warning, bool) {
+	for _, warning := range outcome.Warnings {
+		if warning.Code == string(code) {
+			return warning, true
+		}
+	}
+	return Warning{}, false
+}
+
+// TestEveryBaselineRunAfterTheFirstMeasuresTheSuite is what `baseline_runs`
+// has to mean.
+//
+// The setting asks for that many timed runs, and a plain `go test` gives one.
+// `go test` keeps a passing result and reprints it, and in a fresh snapshot the
+// first run misses the cache -- the copied files carry timestamps it has never
+// seen -- while every run after it hits. So three runs are one measurement and
+// two lookups, [budgetBaseline] drops the lookups, and the budget falls back to
+// the one run that is left: the run that compiled. A mutant run compiles
+// nothing, so that budget is several times the work it has to cover, and the
+// mutants it does not cover for are the ones that never return -- each paying
+// the whole of it, twice.
+//
+// So every run after the first is given `-count=1` through GOFLAGS. The first
+// is left exactly as the user wrote it, because it is the run that proves the
+// suite green and it is the compiling one either way; the rest exist to be
+// measured, and a lookup measures nothing. GOFLAGS rather than the command,
+// because the command is the user's -- and a `-count=1` written into
+// `test.command` costs the whole of coverage narrowing, the scope reader being
+// spelling-strict about flags on purpose.
+//
+// Nothing about a verdict moves: the cache never changes what a test reports,
+// only whether it is run.
+func TestEveryBaselineRunAfterTheFirstMeasuresTheSuite(t *testing.T) {
+	// No t.Parallel: the scripted toolchain is published with t.Setenv.
+	f, opts := fakeRun(t)
+	opts.Config.Test.BaselineRuns = 3
+
+	f.On("list", "-e").Stdout(scopeMarker + filepath.Join("snap", "only") + "\n")
+	f.On("build")
+	f.On("test").Stdout("ok  \tfixture.example/faked/only\t0.004s\n")
+
+	// The run does not survive discovery with a scripted toolchain, and it does
+	// not need to: the baseline is the phase before.
+	_, _ = Run(t.Context(), opts)
+
+	var suites []mutantkit.Call
+	for _, call := range f.Calls() {
+		if len(call.Argv) > 0 && call.Argv[0] == "test" {
+			suites = append(suites, call)
+		}
+	}
+	if len(suites) != 3 {
+		t.Fatalf("the baseline started %d suites, want 3: %v", len(suites), f.Calls())
+	}
+	if got := suites[0].Env["GOFLAGS"]; strings.Contains(got, gocmd.CountOnce) {
+		t.Errorf("the first baseline run was given GOFLAGS=%q; it is the user's command as written", got)
+	}
+	for i, call := range suites[1:] {
+		if got := call.Env["GOFLAGS"]; !strings.Contains(got, gocmd.CountOnce) {
+			t.Errorf("baseline run %d was given GOFLAGS=%q, want it to carry %s so that it measures the suite",
+				i+2, got, gocmd.CountOnce)
+		}
 	}
 }

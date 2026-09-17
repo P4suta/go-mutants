@@ -24,6 +24,28 @@ const (
 	// identities, and both can coexist in one cache.
 	IDDomain = "go-mutants-id-v1"
 
+	// IDDomainWorkspace is the domain separator for a mutant measured as part
+	// of a multi-module workspace, where [Identity.Path] is no longer a
+	// coordinate on its own.
+	//
+	// Two modules of one workspace can each hold an `app.go`, and each
+	// normalizes to `app.go` against its own module root. A recipe that hashed
+	// the path alone would mint one identity for two mutants; one that hashed a
+	// workspace-relative path instead would silently change the identity of
+	// every mutant of a module the moment somebody measured it from one
+	// directory up.
+	//
+	// So a second domain, and a tenth field. A workspace mutant's identity is
+	// derived here and nowhere near [IDDomain], which stays byte for byte what
+	// it was: v1 was frozen, and a frozen recipe that grew a field would not
+	// have been frozen. The consequence is stated rather than hidden -- a
+	// module measured alone and the same module measured in its workspace mint
+	// different identities, so neither the cache, nor a stored report, nor an
+	// expectation crosses between the two. That is not a defect in the scheme;
+	// it is the truthful answer to "what is the same mutant" when a
+	// module-relative path is the only coordinate there is.
+	IDDomainWorkspace = "go-mutants-workspace-id-v1"
+
 	// IDHexLength is the length of a full mutant ID in lowercase hex
 	// characters (SHA-256).
 	IDHexLength = 64
@@ -52,6 +74,10 @@ var (
 	ErrUnnormalizedPath = errors.New("mutation: source path is not normalized")
 	// ErrInvalidRuleName reports an empty or malformed rule name.
 	ErrInvalidRuleName = errors.New("mutation: rule name is invalid")
+	// ErrInvalidModulePath reports a module path that cannot be hashed into an
+	// identity: one carrying whitespace, an '@' -- the version separator, and a
+	// path with one is a request nobody made -- or a NUL byte.
+	ErrInvalidModulePath = errors.New("mutation: module path is invalid")
 	// ErrInvalidRuleVersion reports a rule version below 1.
 	ErrInvalidRuleVersion = errors.New("mutation: rule version must be at least 1")
 	// ErrInvalidDigest reports a digest that is not 64 lowercase hex digits.
@@ -91,6 +117,16 @@ type Identity struct {
 	// ReplacementDigest is the SHA-256 of the replacement bytes. For a
 	// deletion this is the digest of the empty string.
 	ReplacementDigest string
+	// ModulePath is the import path of the module [Path] is relative to, and
+	// is empty for every mutant of a run over a single module -- which is every
+	// run that is not a workspace run.
+	//
+	// Empty is not a value here, it is the absence of the question: a run over
+	// one module has one module-relative path per mutant and needs no second
+	// coordinate. When it is set the identity is minted under
+	// [IDDomainWorkspace] instead, with this as a tenth field; when it is not,
+	// the frozen nine-field recipe runs unchanged, byte for byte.
+	ModulePath string
 }
 
 // Digest returns the lowercase hex SHA-256 of b.
@@ -174,10 +210,25 @@ func (id Identity) Validate() error {
 			return fmt.Errorf("%w: %s digest %q", ErrInvalidDigest, d.field, d.value)
 		}
 	}
+	// A module path is checked only when there is one. It is an import path, so
+	// what it may not be is anything that would make the hashed field ambiguous
+	// or the identity unspellable: whitespace, an '@' -- which is how a module
+	// version is written, and a path carrying one is a request nobody made --
+	// or a NUL.
+	if id.ModulePath != "" && strings.ContainsAny(id.ModulePath, " \t\r\n@\x00") {
+		return fmt.Errorf("%w: %q contains whitespace, '@' or a NUL byte", ErrInvalidModulePath, id.ModulePath)
+	}
 	return nil
 }
 
 // ID computes the stable full mutant ID.
+//
+// There are two recipes and which one runs is decided by one field. A mutant of
+// a single-module run -- every run that is not a workspace run -- has no
+// [Identity.ModulePath] and gets the nine-field recipe below, which is frozen
+// and unchanged. A mutant of a workspace run has one, and gets the same nine
+// fields under [IDDomainWorkspace] with the module path appended as a tenth;
+// [IDDomainWorkspace] says why that is the only honest answer.
 //
 // The recipe, frozen as of v1: SHA-256 over the concatenation of nine
 // length-prefixed fields, in order
@@ -203,7 +254,7 @@ func (id Identity) ID() (string, error) {
 		return "", err
 	}
 	h := sha256.New()
-	fields := [9]string{
+	fields := []string{
 		IDDomain,
 		id.Path,
 		id.RuleName,
@@ -213,6 +264,15 @@ func (id Identity) ID() (string, error) {
 		id.SourceDigest,
 		id.OriginalDigest,
 		id.ReplacementDigest,
+	}
+	if id.ModulePath != "" {
+		// The second recipe: a different domain in the first field and the
+		// module path appended as a tenth. Appending rather than inserting is
+		// deliberate -- a reader comparing the two lists sees one difference at
+		// each end and none in the middle, and the nine fields a single-module
+		// identity hashes are hashed here in the same order.
+		fields[0] = IDDomainWorkspace
+		fields = append(fields, id.ModulePath)
 	}
 	for _, f := range fields {
 		if err := WriteLengthPrefixed(h, f); err != nil {

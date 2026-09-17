@@ -67,6 +67,16 @@ const (
 	// removal attempt, usually a file still locked by a test binary on
 	// Windows.
 	CodeCleanupFailed Code = "GOM7011"
+
+	// CodeRestoreFailed reports a [Snapshot.Restore] that could not put a file
+	// back: the source has gone, the destination cannot be removed, or the
+	// bytes that arrived are not the bytes the manifest recorded.
+	//
+	// The last of those is the one worth the code. Restore copies from the tree
+	// the snapshot was made of, so a digest that disagrees after the copy means
+	// *that* tree moved -- and a caller restoring a worker copy between mutants
+	// is relying on it not to.
+	CodeRestoreFailed Code = "GOM7012"
 )
 
 // An Error is every error this package returns, so a caller can always reach

@@ -173,11 +173,8 @@ func (g *guardResolver) effectFreeOrAbsent(expr ast.Expr) bool {
 // which computes a value of another type from one it is handed, and a builtin
 // from [effectFreeBuiltins].
 func (g *guardResolver) effectFreeCall(call *ast.CallExpr) bool {
-	if !g.isConversion(call) {
-		name, ok := g.builtinName(call)
-		if !ok || !effectFreeBuiltins[name] {
-			return false
-		}
+	if !g.isConversion(call) && !effectFreeBuiltins[g.builtinName(call)] {
+		return false
 	}
 	return g.argumentsAre(call, g.effectFree)
 }
@@ -234,11 +231,13 @@ func (g *guardResolver) panicFreeSelector(sel *ast.SelectorExpr) bool {
 	if !resolved {
 		// Not a selection: a qualified identifier, whose base names a package.
 		// The checker records nothing in Selections for it, so the base is
-		// asked what it is rather than assumed.
-		base, isIdent := sel.X.(*ast.Ident)
-		if !isIdent {
-			return false
-		}
+		// asked what it is rather than assumed -- and asked directly, because
+		// the shape of the base is a fact about the checker rather than about
+		// this expression. A selector left out of that table is a qualified
+		// identifier and its base is therefore an identifier, so a test of the
+		// shape could only ever answer one way. The lookup below is total: a
+		// map read with a nil key is a miss, and a miss is not a package.
+		base, _ := sel.X.(*ast.Ident)
 		_, isPackage := g.info.Uses[base].(*types.PkgName)
 		return isPackage
 	}
@@ -294,8 +293,7 @@ func (g *guardResolver) panicFreeCall(call *ast.CallExpr) bool {
 	if g.isConversion(call) {
 		return g.panicFreeConversion(call)
 	}
-	name, ok := g.builtinName(call)
-	if !ok || !panicFreeBuiltins[name] {
+	if !panicFreeBuiltins[g.builtinName(call)] {
 		return false
 	}
 	return g.argumentsAre(call, g.panicFree)
@@ -387,7 +385,13 @@ func (g *guardResolver) isConversion(call *ast.CallExpr) bool {
 	return g.isTypeExpr(ast.Unparen(call.Fun))
 }
 
-// builtinName names the predeclared function a call calls, or reports false.
+// builtinName names the predeclared function a call calls, and is the empty
+// string for a call of anything else.
+//
+// The empty string is the refusal rather than a flag beside it, because both
+// tables this feeds are keyed by name and neither holds an entry for "": a
+// second way to say "not a builtin" would be a boundary no call could put on
+// the wrong side of.
 //
 // The callee has to be spelled as a bare identifier. `(len)(s)` is legal Go and
 // is just as effect-free, and it is refused here anyway: the question this
@@ -396,22 +400,22 @@ func (g *guardResolver) isConversion(call *ast.CallExpr) bool {
 // far the parentheses go. A `len` the package shadowed with a function of its
 // own is not a [types.Builtin] and is refused by the same lookup, which is why
 // the name is taken from the object rather than from the source.
-func (g *guardResolver) builtinName(call *ast.CallExpr) (string, bool) {
+func (g *guardResolver) builtinName(call *ast.CallExpr) string {
 	if g.info == nil {
-		return "", false
+		return ""
 	}
 	ident, isIdent := call.Fun.(*ast.Ident)
 	if !isIdent {
-		return "", false
+		return ""
 	}
 	builtin, isBuiltin := g.info.Uses[ident].(*types.Builtin)
 	if !isBuiltin || builtin.Parent() != types.Universe {
 		// A builtin of package unsafe has no universe parent, and every one of
 		// them is out: they read or compute over memory the type system is
 		// deliberately not describing.
-		return "", false
+		return ""
 	}
-	return builtin.Name(), true
+	return builtin.Name()
 }
 
 // isTypeExpr reports whether an expression denotes a type rather than a value.
@@ -446,6 +450,44 @@ func (g *guardResolver) constantValue(expr ast.Expr) constant.Value {
 		return nil
 	}
 	return tv.Value
+}
+
+// introducesPanic reports whether applying one edit to an expression would put
+// an operation there that can panic where the original had none.
+//
+// It is the question the probe forms have to ask and cannot ask of the original
+// bytes, and the reason they have to ask it is that they evaluate *both*
+// readings. [guardResolver.panicFree] walks the expression the user wrote; the
+// mutated reading is a different expression, and an edit that swaps `*` for `/`
+// is the one in this registry that makes it a more dangerous one.
+//
+// The whole registry reduces to that one shape. `and-to-or` and `or-to-and`
+// change which operands are evaluated rather than what is done to them, which
+// is why panicFree is asked of the *whole* site and settles them. A shift's
+// count is untouched. `div-to-mul` and `rem-to-mul` remove the hazard rather
+// than add it. Float division yields an infinity rather than panicking, so only
+// the integer form matters. What is left is `/` and `%` arriving where they
+// were not, and the test is the one panicFreeBinary already applies to a
+// division the user wrote: the divisor has to be a constant the compiler
+// evaluated and found non-zero.
+//
+// An anchor that is not the binary expression the edit names is refused, which
+// costs a probe and never a mutant. It cannot happen for the rules that produce
+// these replacements, and "cannot happen" is the wrong thing to spell as "carry
+// on" in a function whose answer licenses skipping a test.
+func (g *guardResolver) introducesPanic(anchor ast.Node, replacement string) bool {
+	if replacement != "/" && replacement != "%" {
+		return false
+	}
+	binary, ok := anchor.(*ast.BinaryExpr)
+	if !ok {
+		return true
+	}
+	if floatingResult(g.typeOf(binary)) {
+		return false
+	}
+	divisor := g.constantValue(binary.Y)
+	return divisor == nil || constant.Sign(divisor) == 0
 }
 
 // comparesWithoutPanic reports whether `==` over a type is decided by the bits
@@ -485,4 +527,116 @@ func underlyingOf(t types.Type) types.Type {
 		return nil
 	}
 	return t.Underlying()
+}
+
+// inertContext reports whether the expressions the nearest enclosing statement
+// evaluates *alongside* this one hold nothing the language orders.
+//
+// # Why a probe has to ask this at all
+//
+// Both the boolean form and the value form put a **call** where an expression
+// stood, and a call is not an ordinary operand. Go orders function calls,
+// method calls, receive operations and binary logical operations within one
+// expression, assignment or return statement, left to right — and leaves the
+// reading of a plain variable beside them unordered. So replacing `n` with a
+// call in `return n, bump()` moves the read of n from "some time" to "before
+// bump()", and where bump writes n the two programs differ:
+//
+//	var n int
+//	func bump() int { n = 5; return 1 }
+//	func F() (int, int) { return n, bump() }
+//
+// gc really does evaluate the call first, so the original returns (5, 1) and
+// the probed tree would return (0, 1). A probe tree that is not the original
+// program has nothing to say about the original program.
+//
+// # Why the statement, and only its own expressions
+//
+// The ordering rule is written about the operands of one expression, assignment
+// or return statement, so the context is the nearest enclosing statement — and
+// only the expressions that statement evaluates itself. An `if`'s initialiser
+// is a statement of its own and runs to completion first, so nothing in it can
+// be reordered against the condition; a `case` clause's body is not evaluated
+// with its labels; a loop's body is not evaluated with its condition. Asking
+// about those would refuse nearly every site for a hazard that cannot arise.
+//
+// The site itself is among the expressions checked, which is deliberate rather
+// than redundant: both forms need their own site inert as well, for their own
+// reasons, so one question answers both.
+func (g *guardResolver) inertContext(expr ast.Expr) bool {
+	for node := ast.Node(expr); node != nil; node = g.parent[node] {
+		stmt, ok := node.(ast.Stmt)
+		if !ok {
+			continue
+		}
+		for _, operand := range statementOperands(stmt) {
+			if operand != nil && !g.effectFree(operand) {
+				return false
+			}
+		}
+		return true
+	}
+	// No enclosing statement: a package-level declaration's initialiser, whose
+	// ordering is the initialisation order and a different rule entirely.
+	// Discovery records those as `package-var-init` and never arrives here, so
+	// this is the fail-closed answer to a shape that should not exist.
+	return false
+}
+
+// statementOperands is every expression a statement evaluates itself, in source
+// order, and none of the expressions its nested statements evaluate.
+//
+// The distinction is the one [guardResolver.inertContext] rests on. A statement
+// that holds other statements — a block, an `if`, a loop, a clause — evaluates
+// its own expressions in one context and hands the rest their own, so an effect
+// inside a body is not an effect the condition is ordered against.
+//
+// A statement kind this build does not list contributes nothing, which is the
+// unsafe direction and is why the list is exhaustive over go/ast's statements
+// rather than a switch with a default. internal/discover's own tests walk every
+// statement kind Go has.
+func statementOperands(stmt ast.Stmt) []ast.Expr {
+	switch s := stmt.(type) {
+	case *ast.ExprStmt:
+		return []ast.Expr{s.X}
+	case *ast.AssignStmt:
+		return append(append([]ast.Expr{}, s.Lhs...), s.Rhs...)
+	case *ast.ReturnStmt:
+		return s.Results
+	case *ast.IncDecStmt:
+		return []ast.Expr{s.X}
+	case *ast.SendStmt:
+		return []ast.Expr{s.Chan, s.Value}
+	case *ast.GoStmt:
+		return []ast.Expr{s.Call}
+	case *ast.DeferStmt:
+		return []ast.Expr{s.Call}
+	case *ast.IfStmt:
+		return []ast.Expr{s.Cond}
+	case *ast.ForStmt:
+		return []ast.Expr{s.Cond}
+	case *ast.RangeStmt:
+		return []ast.Expr{s.Key, s.Value, s.X}
+	case *ast.SwitchStmt:
+		return []ast.Expr{s.Tag}
+	case *ast.TypeSwitchStmt:
+		return nil
+	case *ast.CaseClause:
+		return s.List
+	case *ast.SelectStmt, *ast.CommClause:
+		// A `select` evaluates nothing itself: every channel operation belongs
+		// to one of its clauses, and each clause's own statement is where the
+		// ordering question is asked.
+		return nil
+	case *ast.BlockStmt, *ast.DeclStmt, *ast.LabeledStmt, *ast.BranchStmt,
+		*ast.EmptyStmt, *ast.BadStmt:
+		// None of these evaluates an expression of its own. A declaration's
+		// initialisers are the one arguable case, and they are handled by the
+		// statement the walk reaches next: a DeclStmt's specs are not
+		// ast.Stmt, so a site inside one walks past this to the enclosing
+		// block, where there is nothing to be ordered against.
+		return nil
+	default:
+		return nil
+	}
 }

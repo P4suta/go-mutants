@@ -317,6 +317,40 @@ func TestTempDirectoryIsWhereTheRunSnapshotsAndSweeps(t *testing.T) {
 	}
 }
 
+// TestABaselineThatRanTwiceSizesTheBudgetOnTheSecondRun is the budget rule
+// under a command that asks for `-count=1` itself.
+//
+// Both runs run the tests, so both are observations — and of two observations
+// the first is the one that compiled, which a mutant run never does. The budget
+// takes the slowest of the rest. The engine would have arranged the same thing
+// through GOFLAGS; what this pins is that a command already carrying the flag
+// is not a different case.
+func TestABaselineThatRanTwiceSizesTheBudgetOnTheSecondRun(t *testing.T) {
+	t.Parallel()
+	opts := options(t, "simple")
+	opts.Config.Test.BaselineRuns = 2
+	opts.Config.Test.Command = []string{"go", "test", "-count=1", "./..."}
+
+	outcome, _, err := collect(t, t.Context(), opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(outcome.BaselineRuns) != 2 {
+		t.Fatalf("measured %d baseline runs, want 2", len(outcome.BaselineRuns))
+	}
+	if outcome.SlowestBaseline != outcome.BaselineRuns[1] {
+		t.Errorf("SlowestBaseline = %s, want %s, the run after the one that compiled (runs %v)",
+			outcome.SlowestBaseline, outcome.BaselineRuns[1], outcome.BaselineRuns)
+	}
+	if want := max(MinDerivedTimeout, TimeoutFactor*outcome.BaselineRuns[1]); outcome.Timeout != want {
+		t.Errorf("timeout = %s, want max(%s, 5 x %s) = %s",
+			outcome.Timeout, MinDerivedTimeout, outcome.BaselineRuns[1], want)
+	}
+	if _, found := warningOf(outcome, CodeBaselineFromTestCache); found {
+		t.Errorf("a baseline neither run of which was cached published %s", CodeBaselineFromTestCache)
+	}
+}
+
 func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 	t.Parallel()
 	opts := options(t, "simple")
@@ -343,12 +377,24 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 	// a second measurement: runner.Result.Duration is the outer, supervised
 	// time, and anything this test timed independently would be a different
 	// number.
-	// The budget is sized on the runs after the first: the first run of
-	// `go test` compiles, and a mutant run never does.
-	slowest := slices.Max(outcome.BaselineRuns[1:])
+	//
+	// The command is the configured default, `go test ./...`, which keeps a
+	// passing result and reprints it — and the second run is an observation
+	// anyway, because the engine gives every run after the first `-count=1`
+	// through GOFLAGS. That is what this assertion is: had the second run been
+	// answered out of the cache, budgetBaseline would have dropped it and sized
+	// the budget on the first, which is the run that compiled and the shape no
+	// mutant run has.
+	slowest := outcome.BaselineRuns[1]
 	if outcome.SlowestBaseline != slowest {
-		t.Errorf("SlowestBaseline = %s, want %s, the slowest of the runs after the first",
-			outcome.SlowestBaseline, slowest)
+		t.Errorf("SlowestBaseline = %s, want %s, the run after the one that compiled (runs %v); "+
+			"the first is what a cache lookup in the second would have left",
+			outcome.SlowestBaseline, slowest, outcome.BaselineRuns)
+	}
+	// And no warning, because both runs measured the suite. GOM4048 is for a
+	// baseline in which nothing did.
+	if _, found := warningOf(outcome, CodeBaselineFromTestCache); found {
+		t.Errorf("a baseline both of whose runs ran published %s", CodeBaselineFromTestCache)
 	}
 	want := max(MinDerivedTimeout, TimeoutFactor*slowest)
 	if outcome.Timeout != want {
@@ -1059,30 +1105,36 @@ func TestRejectableRunReportsWhatWillNotCompile(t *testing.T) {
 	}
 
 	summary := outcome.Report.Summary
-	if summary.Total != 16 {
-		t.Errorf("summary total = %d, want the 16 candidates that compile", summary.Total)
+	if summary.Total != 18 {
+		t.Errorf("summary total = %d, want the 18 candidates that compile", summary.Total)
 	}
 	// The rejected three are out of the score entirely: a mutant that cannot
-	// exist must never sit in a denominator. The sixteen that remain are all
+	// exist must never sit in a denominator. The eighteen that remain are all
 	// killed, which is the fixture's other claim about itself — a healthy
 	// mutant nothing killed would sit in the report as a survivor and read, at
 	// a glance, like a trap that slipped through.
 	if summary.ScorePercent == nil || *summary.ScorePercent != 100 {
-		t.Errorf("score = %v, want 100 over the sixteen that compile", summary.ScorePercent)
+		t.Errorf("score = %v, want 100 over the eighteen that compile", summary.ScorePercent)
 	}
-	if len(outcome.Report.Mutants) != 16 {
-		t.Errorf("the report holds %d executed mutants, want 16", len(outcome.Report.Mutants))
+	if len(outcome.Report.Mutants) != 18 {
+		t.Errorf("the report holds %d executed mutants, want 18", len(outcome.Report.Mutants))
 	}
 
 	validated := validatedOf(t, events)
-	if validated.Accepted != 16 || validated.Rejected != 3 {
-		t.Errorf("Validated = %+v, want 16 accepted and 3 rejected", validated)
+	if validated.Accepted != 18 || validated.Rejected != 3 {
+		t.Errorf("Validated = %+v, want 18 accepted and 3 rejected", validated)
 	}
 
 	// The control, by name. Every candidate in named.go has to be executed and
 	// killed, and none of them may appear among the rejections: a run that
 	// refused them again would still report three traps and a score of 100 over
 	// whatever was left, so the count assertions above would not notice.
+	//
+	// Six rather than four at this profile, and the two extra are the point of
+	// the file now. A named boolean *result* is carried by the statement form;
+	// a named boolean *condition* is carried by Form C', which writes the
+	// ordinary selector and converts it back. Both are shapes whose guard, not
+	// whose mutant, the compiler used to refuse.
 	for _, rejection := range outcome.Report.Rejected {
 		if rejection.Path == "named.go" {
 			t.Errorf("the named boolean candidate %s (%s) was rejected again: %s",
@@ -1105,8 +1157,8 @@ func TestRejectableRunReportsWhatWillNotCompile(t *testing.T) {
 			t.Errorf("the named boolean mutant %s (%s) was never executed", m.DisplayID, m.Rule)
 		}
 	}
-	if named != 4 {
-		t.Errorf("the report holds %d mutants in named.go, want the fixture's 4", named)
+	if named != 6 {
+		t.Errorf("the report holds %d mutants in named.go, want the fixture's 6", named)
 	}
 }
 
@@ -1208,8 +1260,8 @@ func TestMutantThatWasRejectedSaysSo(t *testing.T) {
 	}
 	// The catalogue is still whole, which is exactly why require_mutants stayed
 	// quiet and why the warning had to be the thing that spoke.
-	if summary := outcome.Report.Summary; summary.Total != 16 || summary.NotRun != 16 {
-		t.Errorf("summary = %+v, want the 16 that compile, all not-run", summary)
+	if summary := outcome.Report.Summary; summary.Total != 18 || summary.NotRun != 18 {
+		t.Errorf("summary = %+v, want the 18 that compile, all not-run", summary)
 	}
 	if score := outcome.Report.Summary.ScorePercent; score != nil {
 		t.Errorf("score = %v, want none: nothing was measured", *score)

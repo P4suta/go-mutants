@@ -63,11 +63,14 @@ func TestRunOneSelectsOnlyTheNamedTestsOfEachBinary(t *testing.T) {
 	if len(seen) != 2 {
 		t.Fatalf("started %d processes, want the two selected binaries: %v", len(seen), f.programs())
 	}
-	wantA := []string{"example.com/a.test", "-test.timeout=14s", `-test.run=^(TestOne|Test\.Two)$`, "-test.count=1"}
+	wantA := []string{
+		"example.com/a.test", "-test.timeout=14s", execute.FailFastFlag,
+		`-test.run=^(TestOne|Test\.Two)$`, "-test.count=1",
+	}
 	if !slices.Equal(seen[0].Argv, wantA) {
 		t.Errorf("argv for a = %q, want %q", seen[0].Argv, wantA)
 	}
-	wantC := []string{"example.com/c.test", "-test.timeout=14s", "-test.count=1"}
+	wantC := []string{"example.com/c.test", "-test.timeout=14s", execute.FailFastFlag, "-test.count=1"}
 	if !slices.Equal(seen[1].Argv, wantC) {
 		t.Errorf("argv for c = %q, want %q: no tests were named for it, so it runs whole", seen[1].Argv, wantC)
 	}

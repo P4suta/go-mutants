@@ -26,7 +26,7 @@ func measure(s string) (int, error) {
 // lines so that the guard has to write its own bytes on the first and the last
 // of them and nothing in between.
 func Accumulate(total int, steps []int) int {
-	for _, step := range steps {
+	__gm_n0, __gm_k0 := uint64(0), __gm.Limit[0]; for _, step := range steps { if __gm_n0++; __gm_n0 > __gm_k0 { __gm_k0 = __gm.Over(0, __gm_n0) };
 		if __gm.M[2] { total=total-step*2-1 } else { total = total +
 			step*2 -
 			1 }

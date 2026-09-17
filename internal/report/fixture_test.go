@@ -4,6 +4,7 @@
 package report_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -366,8 +367,12 @@ func fixtureOptions(t *testing.T) report.Options {
 			KilledBy:     c.killedBy,
 			Attempts:     c.attempts,
 			OutputTail:   c.tail,
-			Executions:   c.executions,
-			Cached:       c.cached,
+			// Cloned, because the table above is package-level: a caller that
+			// edits one row to state its own case would otherwise be editing
+			// every later caller's fixture, and two tests running in parallel
+			// would see each other's setup.
+			Executions: slices.Clone(c.executions),
+			Cached:     c.cached,
 		})
 	}
 

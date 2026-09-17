@@ -78,6 +78,11 @@ type Options struct {
 	// are enumerated.
 	SnapshotRoot string
 
+	// Workspace says that the snapshot is a `go.work` and its modules are to be
+	// resolved through it. It is false for every run that is not a workspace
+	// run. See [toolchainEnvFrom] for what it does and does not change.
+	Workspace bool
+
 	// Packages are the Go package patterns whose test binaries are compiled.
 	// Empty means [allPackages] — every package in the snapshot — which is what
 	// every caller got before a run could declare a narrower test scope.
@@ -138,6 +143,57 @@ type Options struct {
 	// from under itself.
 	ScratchDir string
 
+	// Trees are the per-worker copies of the instrumented tree, one per worker,
+	// or nil when every worker shares [Options.SnapshotRoot].
+	//
+	// It is what `--isolate` is made of, and the hazard it answers is the one
+	// the drift gate names: a test that writes into the package directory it
+	// runs in corrupts the tree every later mutant is measured against. A copy
+	// per worker makes the package directory per-worker too, which is the only
+	// place that hazard can be contained -- a temporary directory cannot help,
+	// because the write is to the package directory by construction.
+	//
+	// [Schedule] distributes these into [Options.Tree], one per worker, and a
+	// caller driving [RunOne] directly sets that field itself.
+	Trees []string
+
+	// Restore puts [Options.Tree] back the way it was, and is called after
+	// every *pass* a mutant makes -- not after every mutant.
+	//
+	// The distinction is the one thing about isolation that is easy to get
+	// wrong. A survivor is measured twice: once against the tests that cover it
+	// and once against the whole binary, which is [ADR 0010]'s confirmation.
+	// Those are two runs of the same binary in the same directory, so a suite
+	// that writes into it has written before the second begins -- and a restore
+	// that only happened between *mutants* would leave the confirmation
+	// measuring a tree the narrowed pass had edited. Restoring after every pass
+	// covers both, and leaves the tree clean for the next mutant as a
+	// consequence rather than as a second rule.
+	//
+	// A failure is wrapped in [ErrTreeNotRestored], which [Schedule] stops the
+	// whole run for: every mutant after it would be measured against a tree
+	// nobody can describe.
+	//
+	// [Schedule] fills this in per worker from [Options.Restores], exactly as
+	// it fills [Options.Tree] in from [Options.Trees]; a caller driving
+	// [RunOne] directly sets it itself.
+	//
+	// [ADR 0010]: https://github.com/P4suta/go-mutants/blob/main/docs/adr/0010-narrowing-to-tests-is-sound.md
+	Restore func() error
+
+	// Restores are the per-worker restores, one per worker and in the same
+	// order as [Options.Trees], or nil when there is nothing to put back.
+	Restores []func() error
+
+	// Tree is the copy of the instrumented tree *this* Options runs binaries
+	// in, or empty for [Options.SnapshotRoot] itself.
+	//
+	// A test binary is built once from the shared tree and is the same program
+	// wherever it runs; what a copy changes is the working directory, which is
+	// what a Go test resolves `testdata` and every relative write against. So
+	// this rebases each binary's directory and nothing else.
+	Tree string
+
 	// Env is the complete base environment for toolchain commands, coverage
 	// runs, and mutant test processes. Nil inherits the current process
 	// environment. The execution layer always removes GO_MUTANTS_ activation
@@ -184,6 +240,17 @@ type Options struct {
 	// is the same per-worker one every other part of a mutant run already
 	// depends on being writable.
 	CoverPkg string
+
+	// LoopLimits is the path the generated runtime reads its loop ceilings
+	// from, without the per-module suffix [instrument.LoopFileSuffix] adds.
+	// Empty leaves every ceiling at "no limit", which is the shape every run of
+	// an instrumented tree had before it could count -- bounded in time alone.
+	//
+	// It is set on a mutant run and on nothing else. A control and a probe pass
+	// run the original program, whose own counts are what the ceilings were
+	// derived from, so there is nothing for either of them to diverge from. See
+	// ADR 0013.
+	LoopLimits string
 
 	// Timeout bounds each *toolchain* command — one `go list`, one
 	// `go test -c` — and each [CollectCoverage] profiling run, and nothing
@@ -446,7 +513,7 @@ func listPackages(ctx context.Context, opts Options) ([]listedPackage, error) {
 	args := append([]string{"list", "-json=" + listFields}, opts.patterns()...)
 	spec := opts.Toolchain.Command(args...)
 	spec.Dir = opts.SnapshotRoot
-	spec.Env = toolchainEnvFrom(opts.Env, opts.Toolchain, "")
+	spec.Env = toolchainEnvFrom(opts.Env, opts.Toolchain, "", opts.Workspace)
 	spec.Timeout = opts.Timeout
 	spec.OutputLimit = listOutputLimit
 	spec.Trace = opts.Trace
@@ -575,7 +642,8 @@ func compile(ctx context.Context, opts Options, bin TestBinary) error {
 
 	spec := opts.Toolchain.Command(args...)
 	spec.Dir = opts.SnapshotRoot
-	spec.Env = gocmd.AppendGoflags(toolchainEnvFrom(opts.Env, opts.Toolchain, ""), gocmd.VetOff)
+	spec.Env = gocmd.AppendGoflags(
+		toolchainEnvFrom(opts.Env, opts.Toolchain, "", opts.Workspace), gocmd.VetOff)
 	spec.Timeout = opts.Timeout
 	spec.Trace = opts.Trace
 	spec.Kind = trace.ExecKindGoTestC

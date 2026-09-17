@@ -4,8 +4,14 @@
 package cli
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"testing"
+
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 // buildInfo returns a [debug.ReadBuildInfo] stand-in reporting version as the
@@ -141,4 +147,68 @@ func TestVersionIsTheDefaultInAnUnstampedBuild(t *testing.T) {
 		t.Errorf("Version = %q, want the unstamped default %q",
 			Version, defaultVersion)
 	}
+}
+
+// TestTheVersionFilesAgreeWithTheConstant pins the three files release-please
+// rewrites to each other, which nothing did.
+//
+// The same fact is spelt in three places: [defaultVersion] here, the `VERSION`
+// file, and `.release-please-manifest.json`. Two of them are what
+// `release-publish.yml` compares against the tag before it will publish, and
+// the third is what decides which version the first Release PR proposes. They
+// had disagreed -- `VERSION` said `0.0.0` while this constant said `0.1.0-dev`
+// -- and the way that was found was by reading the files, which is not a way
+// anything gets found twice.
+//
+// The manifest is the one with two legal states rather than one value, so it
+// is checked as a rule rather than as a string: before the first release it
+// records no release at all, and after one it records the version the other
+// two carry. Both are true statements about the same moment, and what this
+// refuses is the third state -- a manifest naming a version the tree does not
+// have, which is how a Release PR proposes a number nobody meant.
+func TestTheVersionFilesAgreeWithTheConstant(t *testing.T) {
+	t.Parallel()
+
+	root := testkit.Root(t)
+	version := strings.TrimSpace(readRepoFile(t, root, "VERSION"))
+	if version != defaultVersion {
+		t.Errorf("VERSION is %q and defaultVersion is %q;\n"+
+			"\trelease-publish.yml compares both with the release tag, so a build with these two "+
+			"cannot be published", version, defaultVersion)
+	}
+
+	var manifest map[string]string
+	if err := json.Unmarshal([]byte(readRepoFile(t, root, ".release-please-manifest.json")), &manifest); err != nil {
+		t.Fatalf("reading .release-please-manifest.json: %v", err)
+	}
+	switch released, recorded := manifest["."]; {
+	case len(manifest) == 0:
+		// Nothing released yet, which is what `initial-version` in
+		// release-please-config.json is for. Then the tree may not be calling
+		// itself a released version: a bare `0.1.0` with an empty manifest is
+		// two files disagreeing about whether `0.1.0` happened.
+		if !strings.Contains(version, "-") {
+			t.Errorf("VERSION is %q with an empty .release-please-manifest.json;\n"+
+				"\tthe manifest says nothing has been released, so the tree may not "+
+				"already be spelling a released version", version)
+		}
+	case recorded && released == version:
+		// A release happened and the tree carries it, which is the state
+		// release-please leaves behind when its pull request merges.
+	default:
+		t.Errorf(".release-please-manifest.json is %v while VERSION says %q;\n"+
+			"\tthe manifest is release-please's record of the last release, and a wrong one "+
+			"makes the next Release PR propose the wrong version", manifest, version)
+	}
+}
+
+// readRepoFile reads one file of the repository, as text.
+func readRepoFile(t *testing.T, root, name string) string {
+	t.Helper()
+
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+	if err != nil {
+		t.Fatalf("reading %s: %v", name, err)
+	}
+	return string(data)
 }

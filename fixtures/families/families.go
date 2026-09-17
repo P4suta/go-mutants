@@ -3,8 +3,8 @@
 
 // Package families holds one live candidate for every rule in the v1 catalogue.
 //
-// One module, one package, and twenty very small functions. Between them they
-// carry at least one mutant for each of the forty-two rules the canonical
+// One module, one package, and twenty-four very small functions. Between them
+// they carry at least one mutant for each of the forty-nine rules the canonical
 // registry names, which is what makes this the fixture an end-to-end run of the
 // whole catalogue is judged against: the other corpus modules each prove one
 // mechanism, and this one proves that every operator family reaches execution.
@@ -12,7 +12,7 @@
 // # Killed and survived are both deliberate
 //
 // Most functions here are pinned by a test that fails for every mutant of them.
-// A few are deliberately under-tested: the test calls them — so their mutants
+// Five are deliberately under-tested: the test calls them — so their mutants
 // are covered, and really executed — and then asserts something every mutant
 // also satisfies. Those survivors are as load-bearing as the kills. A run in
 // which everything died would be indistinguishable from a run whose tests are
@@ -39,4 +39,10 @@
 // has no condition to negate — or take a bound the tests never hand a
 // degenerate value to. [Steps] says which value that is; adding a zero row to
 // its test would re-arm the landmine.
+//
+// One loop needs more than that, and says so at length: a counted loop has
+// exactly one thing keeping it finite, and every edit to that one thing is a
+// loop that never ends. [Steps] is given a second bound so that no single edit
+// can remove both — which is the general answer, and the only one, for a
+// counted loop in a fixture that promises this.
 package families

@@ -5,16 +5,52 @@
   "description": "The lossless record of one mutation run. Everything the console, the HTML report, and the Stryker projection say is derived from this document; nothing is said anywhere that is not written down here.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["document_type", "schema_version", "tool_version", "run_id", "status", "started_at", "finished_at", "duration_ms", "workspace", "selection", "shard", "test", "coverage", "cache", "summary", "mutants", "rejected", "skips", "expectations", "warnings"],
-  "if": { "required": ["merge"] },
+  "required": [
+    "document_type",
+    "schema_version",
+    "tool_version",
+    "run_id",
+    "status",
+    "started_at",
+    "finished_at",
+    "duration_ms",
+    "workspace",
+    "selection",
+    "shard",
+    "test",
+    "coverage",
+    "cache",
+    "summary",
+    "mutants",
+    "rejected",
+    "skips",
+    "expectations",
+    "warnings"
+  ],
+  "if": {
+    "required": [
+      "merge"
+    ]
+  },
   "then": {
     "description": "A merged document is the union of a run that was split, so it describes no single shard. The two blocks are therefore exclusive: a document that named both would be claiming to be one shard and all of them at once.",
-    "properties": { "shard": { "type": "null" } }
+    "properties": {
+      "shard": {
+        "type": "null"
+      }
+    }
   },
   "properties": {
-    "document_type": { "const": "go-mutants/run-report" },
-    "schema_version": { "const": 1 },
-    "tool_version": { "type": "string", "minLength": 1 },
+    "document_type": {
+      "const": "go-mutants/run-report"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "tool_version": {
+      "type": "string",
+      "minLength": 1
+    },
     "run_id": {
       "description": "A UTC timestamp to the second and four random hex digits. It is also the name of the history file, so the shape is fixed rather than free text.",
       "type": "string",
@@ -22,31 +58,95 @@
     },
     "status": {
       "description": "completed: the run did everything it set out to do. interrupted: a signal ended it early and this is the partial record. failed: it stopped on an error, and the counts describe only what was established first.",
-      "enum": ["completed", "interrupted", "failed"]
+      "enum": [
+        "completed",
+        "interrupted",
+        "failed"
+      ]
     },
-    "started_at": { "$ref": "#/$defs/timestamp" },
-    "finished_at": { "$ref": "#/$defs/timestamp" },
-    "duration_ms": { "$ref": "#/$defs/milliseconds" },
-    "workspace": { "$ref": "#/$defs/workspace" },
-    "selection": { "$ref": "#/$defs/selection" },
-    "shard": { "$ref": "#/$defs/shard" },
-    "merge": { "$ref": "#/$defs/merge" },
-    "test": { "$ref": "#/$defs/test" },
-    "coverage": { "$ref": "#/$defs/coverage" },
-    "cache": { "$ref": "#/$defs/cache" },
-    "summary": { "$ref": "#/$defs/summary" },
-    "mutants": { "type": "array", "items": { "$ref": "#/$defs/mutant" } },
-    "rejected": { "type": "array", "items": { "$ref": "#/$defs/rejected" } },
-    "skips": { "type": "array", "items": { "$ref": "#/$defs/skip" } },
-    "expectations": { "type": "array", "items": { "$ref": "#/$defs/expectation" } },
-    "warnings": { "type": "array", "items": { "$ref": "#/$defs/warning" } },
-    "timing": { "$ref": "#/$defs/timing" },
-    "validation": { "$ref": "#/$defs/validation" }
+    "started_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "finished_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "duration_ms": {
+      "$ref": "#/$defs/milliseconds"
+    },
+    "workspace": {
+      "$ref": "#/$defs/workspace"
+    },
+    "selection": {
+      "$ref": "#/$defs/selection"
+    },
+    "shard": {
+      "$ref": "#/$defs/shard"
+    },
+    "merge": {
+      "$ref": "#/$defs/merge"
+    },
+    "test": {
+      "$ref": "#/$defs/test"
+    },
+    "coverage": {
+      "$ref": "#/$defs/coverage"
+    },
+    "cache": {
+      "$ref": "#/$defs/cache"
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "mutants": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/mutant"
+      }
+    },
+    "rejected": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/rejected"
+      }
+    },
+    "skips": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/skip"
+      }
+    },
+    "expectations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/expectation"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/warning"
+      }
+    },
+    "timing": {
+      "$ref": "#/$defs/timing"
+    },
+    "validation": {
+      "$ref": "#/$defs/validation"
+    }
   },
   "$defs": {
-    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "count": { "type": "integer", "minimum": 0 },
-    "milliseconds": { "type": "integer", "minimum": 0 },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "milliseconds": {
+      "type": "integer",
+      "minimum": 0
+    },
     "timestamp": {
       "description": "RFC 3339 in UTC. The trailing Z is required by the pattern rather than by \"format\", which validators are free to treat as an annotation.",
       "type": "string",
@@ -56,119 +156,274 @@
     "workspace": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["module_path", "go_version", "workspace_digest", "platform"],
+      "required": [
+        "module_path",
+        "go_version",
+        "workspace_digest",
+        "platform"
+      ],
       "properties": {
-        "module_path": { "type": "string", "minLength": 1 },
-        "go_version": { "type": "string", "minLength": 1 },
-        "workspace_digest": { "$ref": "#/$defs/digest" },
-        "platform": { "$ref": "#/$defs/platform" },
-        "snapshot": { "$ref": "#/$defs/snapshot" }
+        "module_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "go_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "platform": {
+          "$ref": "#/$defs/platform"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/snapshot"
+        }
       }
     },
     "platform": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["os", "arch"],
+      "required": [
+        "os",
+        "arch"
+      ],
       "properties": {
-        "os": { "type": "string", "minLength": 1 },
-        "arch": { "type": "string", "minLength": 1 }
+        "os": {
+          "type": "string",
+          "minLength": 1
+        },
+        "arch": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "selection": {
       "description": "What was asked for, as the user asked for it, and the arithmetic of what it produced: candidates = rejected + the length of mutants[], and selected is how many of those the run set out to execute.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "changed_ref", "profile", "operators", "include", "exclude", "candidates", "rejected", "selected"],
+      "required": [
+        "mode",
+        "changed_ref",
+        "profile",
+        "operators",
+        "include",
+        "exclude",
+        "candidates",
+        "rejected",
+        "selected"
+      ],
       "properties": {
         "mode": {
           "description": "all: every accepted mutant. mutant: the one --mutant named. changed: the mutants whose lines the git diff against changed_ref touches. shard: the mutants this shard owns, which a --changed shard narrows further. A merged document reports all, or changed when its shards were changed runs.",
-          "enum": ["all", "mutant", "changed", "shard"]
+          "enum": [
+            "all",
+            "mutant",
+            "changed",
+            "shard"
+          ]
         },
         "changed_ref": {
-          "description": "The git ref the changed-line set was taken against — the merge base of it and HEAD is what was diffed — or null for a run that did not narrow by the diff. It is independent of mode, because a shard of a changed run narrows by both.",
-          "type": ["string", "null"],
+          "description": "The git ref the changed-line set was taken against \u2014 the merge base of it and HEAD is what was diffed \u2014 or null for a run that did not narrow by the diff. It is independent of mode, because a shard of a changed run narrows by both.",
+          "type": [
+            "string",
+            "null"
+          ],
           "minLength": 1
         },
-        "profile": { "enum": ["balanced", "strong", "all"] },
-        "operators": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-        "include": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-        "exclude": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-        "candidates": { "$ref": "#/$defs/count" },
-        "rejected": { "$ref": "#/$defs/count" },
-        "selected": { "$ref": "#/$defs/count" }
+        "profile": {
+          "enum": [
+            "balanced",
+            "strong",
+            "all"
+          ]
+        },
+        "operators": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "include": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "candidates": {
+          "$ref": "#/$defs/count"
+        },
+        "rejected": {
+          "$ref": "#/$defs/count"
+        },
+        "selected": {
+          "$ref": "#/$defs/count"
+        }
       }
     },
     "shard": {
       "description": "Which shard of a split run this document is, or null when the run was not split. Every shard discovers and validates the whole catalogue and executes only the mutants assigned to it; the rest carry outcome not-run with not_run_reason other-shard. index is 1-based and never exceeds total. assignment names the function that decides which shard owns a mutant, so that a consumer can recompute the partition: id-hash-v1 is the first eight bytes of the SHA-256 of the full mutant id, read big-endian, modulo total, plus one. The null is admitted here rather than through a oneOf so that a shard block with a bad field is reported against that field, instead of as a failure to be null.",
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": false,
-      "required": ["index", "total", "assignment"],
+      "required": [
+        "index",
+        "total",
+        "assignment"
+      ],
       "properties": {
-        "index": { "type": "integer", "minimum": 1 },
-        "total": { "type": "integer", "minimum": 1 },
-        "assignment": { "const": "id-hash-v1" }
+        "index": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "assignment": {
+          "const": "id-hash-v1"
+        }
       }
     },
     "merge": {
-      "description": "Present only on a document `report merge` produced, and absent from every document a run wrote. shards is how many shard reports were merged into it, and they were proven congruent — one tool version, one workspace digest, one catalogue, one changed ref, and every index from 1 to shards exactly once — before anything was combined.",
+      "description": "Present only on a document `report merge` produced, and absent from every document a run wrote. shards is how many shard reports were merged into it, and they were proven congruent \u2014 one tool version, one workspace digest, one catalogue, one changed ref, and every index from 1 to shards exactly once \u2014 before anything was combined.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["shards"],
+      "required": [
+        "shards"
+      ],
       "properties": {
-        "shards": { "type": "integer", "minimum": 1 }
+        "shards": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "test": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["command", "baseline", "timeout_ms", "timeout_source"],
+      "required": [
+        "command",
+        "baseline",
+        "timeout_ms",
+        "timeout_source"
+      ],
       "properties": {
         "command": {
           "description": "The argv vector, as written. It is executed directly and never through a shell, so it is an array and never a string.",
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
-        "baseline": { "$ref": "#/$defs/baseline" },
-        "timeout_ms": { "$ref": "#/$defs/milliseconds" },
-        "timeout_source": { "enum": ["explicit", "derived"] },
+        "baseline": {
+          "$ref": "#/$defs/baseline"
+        },
+        "timeout_ms": {
+          "$ref": "#/$defs/milliseconds"
+        },
+        "timeout_source": {
+          "enum": [
+            "explicit",
+            "derived"
+          ]
+        },
         "memory_bytes": {
           "description": "The per-mutant memory bound this run applied, in bytes. Optional, and written together with memory_source: a document from before the bound existed has neither, and a run that bounded nothing writes no number, which is what a memory_source of `unavailable` says in words. A configured bound is recorded even on a platform that cannot enforce it, in which case the run's warnings say it was not held to.",
           "$ref": "#/$defs/count"
         },
         "memory_source": {
           "description": "Where memory_bytes came from: `explicit` for a configured `test.memory` or `--memory`, `derived` for max(1GiB, largest baseline peak x 4), and `unavailable` for a run with no bound at all. Optional, and written together with memory_bytes.",
-          "enum": ["explicit", "derived", "unavailable"]
+          "enum": [
+            "explicit",
+            "derived",
+            "unavailable"
+          ]
         },
-        "toolchain": { "$ref": "#/$defs/toolchain" },
+        "toolchain": {
+          "$ref": "#/$defs/toolchain"
+        },
         "resolved_command": {
           "description": "The argv that was really started: `command` with the located toolchain's absolute path in place of a bare `go`, and identical to it for any other program. Optional, and absent from a merged document, which has one per shard.",
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
       "allOf": [
         {
-          "if": { "required": ["memory_source"], "properties": { "memory_source": { "enum": ["explicit", "derived"] } } },
+          "if": {
+            "required": [
+              "memory_source"
+            ],
+            "properties": {
+              "memory_source": {
+                "enum": [
+                  "explicit",
+                  "derived"
+                ]
+              }
+            }
+          },
           "then": {
             "description": "A bound that came from somewhere is a bound with a number: `derived` or `explicit` with no memory_bytes beside it is a budget nobody could check a mutant's memory_exceeded against.",
-            "required": ["memory_bytes"],
-            "properties": { "memory_bytes": { "minimum": 1 } }
+            "required": [
+              "memory_bytes"
+            ],
+            "properties": {
+              "memory_bytes": {
+                "minimum": 1
+              }
+            }
           }
         },
         {
-          "if": { "required": ["memory_source"], "properties": { "memory_source": { "const": "unavailable" } } },
+          "if": {
+            "required": [
+              "memory_source"
+            ],
+            "properties": {
+              "memory_source": {
+                "const": "unavailable"
+              }
+            }
+          },
           "then": {
             "description": "A run with no bound has no number to report, so `unavailable` beside a memory_bytes would say there was none and here it is.",
-            "not": { "required": ["memory_bytes"] }
+            "not": {
+              "required": [
+                "memory_bytes"
+              ]
+            }
           }
         },
         {
-          "if": { "required": ["memory_bytes"] },
+          "if": {
+            "required": [
+              "memory_bytes"
+            ]
+          },
           "then": {
             "description": "The two keys are one fact written twice and are written together: a number with nothing saying where it came from is a budget of unknown provenance.",
-            "required": ["memory_source"]
+            "required": [
+              "memory_source"
+            ]
           }
         }
       ]
@@ -177,28 +432,53 @@
       "description": "Every unmutated observation, not just the summary: runs equals the length of durations_ms, and slowest_ms is the largest of them, or 0 when there are none.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["runs", "durations_ms", "slowest_ms"],
+      "required": [
+        "runs",
+        "durations_ms",
+        "slowest_ms"
+      ],
       "properties": {
-        "runs": { "$ref": "#/$defs/count" },
-        "durations_ms": { "type": "array", "items": { "$ref": "#/$defs/milliseconds" } },
-        "slowest_ms": { "$ref": "#/$defs/milliseconds" }
+        "runs": {
+          "$ref": "#/$defs/count"
+        },
+        "durations_ms": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/milliseconds"
+          }
+        },
+        "slowest_ms": {
+          "$ref": "#/$defs/milliseconds"
+        }
       }
     },
     "coverage": {
-      "description": "How coverage narrowed the run. off: every selected mutant was executed against every test binary, which is what a custom test.command and a failed coverage pass both fall back to. package: each test binary was profiled once, and every mutant was executed only against the binaries whose profile reaches its lines. test: every test of every test binary was profiled on its own, and every mutant was executed only against the tests whose profile reaches its lines, each binary started with those tests selected. binaries and mutants_uncovered are present exactly in package and test mode — an off run states no number rather than a zero it never measured — tests exactly in test mode, and mutants_uncovered equals the number of entries in mutants[] with uncovered true.",
+      "description": "How coverage narrowed the run. off: every selected mutant was executed against every test binary, which is what a custom test.command and a failed coverage pass both fall back to. package: each test binary was profiled once, and every mutant was executed only against the binaries whose profile reaches its lines. test: every test of every test binary was profiled on its own, and every mutant was executed only against the tests whose profile reaches its lines, each binary started with those tests selected. binaries and mutants_uncovered are present exactly in package and test mode \u2014 an off run states no number rather than a zero it never measured \u2014 tests exactly in test mode, and mutants_uncovered equals the number of entries in mutants[] with uncovered true.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode"],
+      "required": [
+        "mode"
+      ],
       "properties": {
-        "mode": { "enum": ["off", "package", "test"] },
-        "binaries": { "$ref": "#/$defs/count" },
+        "mode": {
+          "enum": [
+            "off",
+            "package",
+            "test"
+          ]
+        },
+        "binaries": {
+          "$ref": "#/$defs/count"
+        },
         "tests": {
           "description": "How many tests the coverage pass profiled on their own, summed over the binaries.",
           "$ref": "#/$defs/count"
         },
-        "mutants_uncovered": { "$ref": "#/$defs/count" },
+        "mutants_uncovered": {
+          "$ref": "#/$defs/count"
+        },
         "unavailable_reason": {
-          "description": "The whole failure that made this run give up coverage-instrumented test binaries — the coded message, and the compiler's own diagnostics under it. Absent from every run that did not fall back, which is nearly all of them, and from a merged document.",
+          "description": "The whole failure that made this run give up coverage-instrumented test binaries \u2014 the coded message, and the compiler's own diagnostics under it. Absent from every run that did not fall back, which is nearly all of them, and from a merged document.",
           "type": "string",
           "minLength": 1
         },
@@ -209,15 +489,56 @@
       },
       "allOf": [
         {
-          "if": { "required": ["mode"], "properties": { "mode": { "const": "package" } } },
-          "then": { "required": ["binaries", "mutants_uncovered"], "properties": { "tests": false } }
+          "if": {
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "const": "package"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "binaries",
+              "mutants_uncovered"
+            ],
+            "properties": {
+              "tests": false
+            }
+          }
         },
         {
-          "if": { "required": ["mode"], "properties": { "mode": { "const": "test" } } },
-          "then": { "required": ["binaries", "tests", "mutants_uncovered"] }
+          "if": {
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "const": "test"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "binaries",
+              "tests",
+              "mutants_uncovered"
+            ]
+          }
         },
         {
-          "if": { "required": ["mode"], "properties": { "mode": { "const": "off" } } },
+          "if": {
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "const": "off"
+              }
+            }
+          },
           "then": {
             "properties": {
               "binaries": false,
@@ -229,27 +550,55 @@
       ]
     },
     "cache": {
-      "description": "What the outcome cache did. mode is what the run did rather than what was configured: cache.mode auto resolves to on or off before any mutant runs — off for a test command go-mutants cannot reason about, off again when the cache directory cannot be opened — and a warning says which. hits were adopted from the cache and never executed, misses were looked up, not found, and executed, and writes is how many of those misses produced an outcome worth storing, so writes never exceeds misses. hits equals the number of entries in mutants[] with cached true, and every count is zero when the mode is off — which is what makes a cache that was off and a cache that was empty different statements.",
+      "description": "What the outcome cache did. mode is what the run did rather than what was configured: cache.mode auto resolves to on or off before any mutant runs \u2014 off for a test command go-mutants cannot reason about, off again when the cache directory cannot be opened \u2014 and a warning says which. hits were adopted from the cache and never executed, misses were looked up, not found, and executed, and writes is how many of those misses produced an outcome worth storing, so writes never exceeds misses. hits equals the number of entries in mutants[] with cached true, and every count is zero when the mode is off \u2014 which is what makes a cache that was off and a cache that was empty different statements.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "hits", "misses", "writes"],
+      "required": [
+        "mode",
+        "hits",
+        "misses",
+        "writes"
+      ],
       "properties": {
-        "mode": { "enum": ["off", "on"] },
-        "hits": { "$ref": "#/$defs/count" },
-        "misses": { "$ref": "#/$defs/count" },
-        "writes": { "$ref": "#/$defs/count" }
+        "mode": {
+          "enum": [
+            "off",
+            "on"
+          ]
+        },
+        "hits": {
+          "$ref": "#/$defs/count"
+        },
+        "misses": {
+          "$ref": "#/$defs/count"
+        },
+        "writes": {
+          "$ref": "#/$defs/count"
+        }
       },
       "if": {
         "type": "object",
-        "required": ["mode"],
-        "properties": { "mode": { "const": "off" } }
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "const": "off"
+          }
+        }
       },
       "then": {
         "description": "A cache nobody consulted has no hits, no misses, and nothing stored.",
         "properties": {
-          "hits": { "const": 0 },
-          "misses": { "const": 0 },
-          "writes": { "const": 0 }
+          "hits": {
+            "const": 0
+          },
+          "misses": {
+            "const": 0
+          },
+          "writes": {
+            "const": 0
+          }
         }
       }
     },
@@ -257,73 +606,213 @@
       "description": "The counts cover every mutant in mutants[], so total equals its length. score_percent is detections over detections plus unexpected survivors, where an unexpected survivor is a survivor with no fulfilled expectation; it is null exactly when that denominator is zero.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["total", "killed", "survived", "timed_out", "inconclusive", "errored", "not_run", "score_percent", "policy"],
+      "required": [
+        "total",
+        "killed",
+        "survived",
+        "timed_out",
+        "inconclusive",
+        "errored",
+        "not_run",
+        "score_percent",
+        "policy"
+      ],
       "properties": {
-        "total": { "$ref": "#/$defs/count" },
-        "killed": { "$ref": "#/$defs/count" },
-        "survived": { "$ref": "#/$defs/count" },
-        "timed_out": { "$ref": "#/$defs/count" },
-        "inconclusive": { "$ref": "#/$defs/count" },
-        "errored": { "$ref": "#/$defs/count" },
-        "not_run": { "$ref": "#/$defs/count" },
-        "score_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
-        "policy": { "$ref": "#/$defs/policy" }
+        "total": {
+          "$ref": "#/$defs/count"
+        },
+        "killed": {
+          "$ref": "#/$defs/count"
+        },
+        "survived": {
+          "$ref": "#/$defs/count"
+        },
+        "timed_out": {
+          "$ref": "#/$defs/count"
+        },
+        "inconclusive": {
+          "$ref": "#/$defs/count"
+        },
+        "errored": {
+          "$ref": "#/$defs/count"
+        },
+        "not_run": {
+          "$ref": "#/$defs/count"
+        },
+        "score_percent": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "policy": {
+          "$ref": "#/$defs/policy"
+        }
       }
     },
     "policy": {
       "description": "The gates as configured, and the first reason the run failed one of them. failure is null when nothing failed; every gate is recomputable from the counts above, so a run that failed two gates at once has not lost the second.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["strict", "minimum_score", "require_mutants", "failure"],
+      "required": [
+        "strict",
+        "minimum_score",
+        "require_mutants",
+        "failure"
+      ],
       "properties": {
-        "strict": { "type": "boolean" },
-        "minimum_score": { "type": "number", "minimum": 0, "maximum": 100 },
-        "require_mutants": { "type": "boolean" },
-        "failure": { "type": ["string", "null"], "minLength": 1 }
+        "strict": {
+          "type": "boolean"
+        },
+        "minimum_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "require_mutants": {
+          "type": "boolean"
+        },
+        "failure": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
       }
     },
     "mutant": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "display_id", "path", "package", "family", "rule", "rule_version", "line", "column", "start_byte", "end_byte", "original", "replacement", "outcome", "not_run_reason", "duration_ms", "killed_by", "attempts", "output_tail", "covering_test_packages", "uncovered", "cached"],
+      "required": [
+        "id",
+        "display_id",
+        "path",
+        "package",
+        "family",
+        "rule",
+        "rule_version",
+        "line",
+        "column",
+        "start_byte",
+        "end_byte",
+        "original",
+        "replacement",
+        "outcome",
+        "not_run_reason",
+        "duration_ms",
+        "killed_by",
+        "attempts",
+        "output_tail",
+        "covering_test_packages",
+        "uncovered",
+        "cached"
+      ],
       "if": {
         "type": "object",
-        "required": ["outcome"],
-        "properties": { "outcome": { "const": "not-run" } }
+        "required": [
+          "outcome"
+        ],
+        "properties": {
+          "outcome": {
+            "const": "not-run"
+          }
+        }
       },
       "then": {
         "description": "A mutant that was not executed always says why. There is no fourth reason: a mutant nothing selected, a mutant another shard owns, and a mutant a signal cut the run short of are the whole of it.",
-        "properties": { "not_run_reason": { "type": "string" } }
+        "properties": {
+          "not_run_reason": {
+            "type": "string"
+          }
+        }
       },
       "else": {
         "description": "Every other outcome is a measurement, so there is no reason for not having made one.",
-        "properties": { "not_run_reason": { "type": "null" } }
+        "properties": {
+          "not_run_reason": {
+            "type": "null"
+          }
+        }
       },
       "properties": {
-        "id": { "$ref": "#/$defs/digest" },
-        "display_id": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
-        "path": { "type": "string", "minLength": 1 },
-        "package": { "type": "string", "minLength": 1 },
-        "family": { "type": "string", "minLength": 1 },
-        "rule": { "type": "string", "minLength": 1 },
-        "rule_version": { "type": "integer", "minimum": 1 },
-        "line": { "type": "integer", "minimum": 1 },
-        "column": { "type": "integer", "minimum": 1 },
-        "start_byte": { "$ref": "#/$defs/count" },
-        "end_byte": { "$ref": "#/$defs/count" },
-        "original": { "type": "string" },
-        "replacement": { "type": "string" },
-        "branch": { "$ref": "#/$defs/branch" },
-        "outcome": { "$ref": "#/$defs/outcome" },
-        "not_run_reason": {
-          "description": "Why a not-run mutant was not run, and null for every mutant that was. out-of-selection: the run narrowed itself and this mutant was outside — --mutant named another, or --changed found no edited line on it. other-shard: --shard assigned it to a different shard, which is the one that measured it. interrupted: it was selected and a signal ended the run first.",
-          "type": ["string", "null"],
-          "enum": [null, "interrupted", "out-of-selection", "other-shard"]
+        "id": {
+          "$ref": "#/$defs/digest"
         },
-        "duration_ms": { "$ref": "#/$defs/milliseconds" },
+        "display_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{20}$"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "package": {
+          "type": "string",
+          "minLength": 1
+        },
+        "family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rule": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rule_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "start_byte": {
+          "$ref": "#/$defs/count"
+        },
+        "end_byte": {
+          "$ref": "#/$defs/count"
+        },
+        "original": {
+          "type": "string"
+        },
+        "replacement": {
+          "type": "string"
+        },
+        "branch": {
+          "$ref": "#/$defs/branch"
+        },
+        "outcome": {
+          "$ref": "#/$defs/outcome"
+        },
+        "not_run_reason": {
+          "description": "Why a not-run mutant was not run, and null for every mutant that was. out-of-selection: the run narrowed itself and this mutant was outside \u2014 --mutant named another, or --changed found no edited line on it. other-shard: --shard assigned it to a different shard, which is the one that measured it. interrupted: it was selected and a signal ended the run first.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            null,
+            "interrupted",
+            "out-of-selection",
+            "other-shard"
+          ]
+        },
+        "duration_ms": {
+          "$ref": "#/$defs/milliseconds"
+        },
         "killed_by": {
-          "description": "The test binary that detected the mutant — the one that failed, or the one it hung — when the harness could name it. Null for an outcome that detected nothing, and null for a detection whose output named no binary.",
-          "type": ["string", "null"],
+          "description": "The test binary that detected the mutant \u2014 the one that failed, or the one it hung \u2014 when the harness could name it. Null for an outcome that detected nothing, and null for a detection whose output named no binary.",
+          "type": [
+            "string",
+            "null"
+          ],
           "minLength": 1
         },
         "attempts": {
@@ -335,196 +824,431 @@
           "type": "boolean"
         },
         "peak_memory_bytes": {
-          "description": "The highest this mutant was observed to hold: the maximum over its execution rows for a mutant this run executed, and what the measuring run recorded for a cached one. Optional, and absent — rather than zero — where the platform could not measure one.",
+          "description": "The highest this mutant was observed to hold: the maximum over its execution rows for a mutant this run executed, and what the measuring run recorded for a cached one. Optional, and absent \u2014 rather than zero \u2014 where the platform could not measure one.",
           "$ref": "#/$defs/count"
         },
-        "executions": {
-          "description": "One row per pass this run made over the test binaries for this mutant, in attempt order, so there are exactly `attempts` of them for a mutant this run executed. It is present and empty for a cached, uncovered or not-run mutant — each of which was settled without a process being started, and the cached one keeps the attempt count of the run that did measure it. The whole key is optional: a document an older build wrote does not have it, and a merged document drops it, because a worker number and a duration describe one machine.",
-          "type": "array",
-          "items": { "$ref": "#/$defs/execution" }
+        "diverged": {
+          "description": "A counted loop is what settled this mutant rather than the deadline: a loop of the instrumented tree went past the ceiling this run derived for it from what the original program did under the same tests. It restates what an execution row says, for memory_exceeded's reason. Optional, and only ever true beside an outcome of `timed-out`.",
+          "type": "boolean"
         },
-        "output_tail": { "type": ["string", "null"], "minLength": 1 },
-        "covering_test_packages": {
-          "description": "The import paths of the test binaries whose coverage profile reaches this mutant's lines, sorted. Empty is legal and means two different things: with coverage.mode off nobody asked, and with mode package or test nothing covers it — in which case uncovered is true.",
+        "executions": {
+          "description": "One row per pass this run made over the test binaries for this mutant, in attempt order, so there are exactly `attempts` of them for a mutant this run executed. It is present and empty for a cached, uncovered or not-run mutant \u2014 each of which was settled without a process being started, and the cached one keeps the attempt count of the run that did measure it. The whole key is optional: a document an older build wrote does not have it, and a merged document drops it, because a worker number and a duration describe one machine.",
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "$ref": "#/$defs/execution"
+          }
+        },
+        "output_tail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "covering_test_packages": {
+          "description": "The import paths of the test binaries whose coverage profile reaches this mutant's lines, sorted. Empty is legal and means two different things: with coverage.mode off nobody asked, and with mode package or test nothing covers it \u2014 in which case uncovered is true.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "covering_tests": {
           "description": "The tests whose own coverage profile reaches this mutant's lines, sorted by package and then by name. Written only by a run whose coverage.mode is test and only when there are any: an uncovered mutant has none to name, and every other mode never asked.",
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/test_ref" }
+          "items": {
+            "$ref": "#/$defs/test_ref"
+          }
         },
         "uncovered": {
           "description": "The run established that no test binary reaches this mutant's lines and did not execute it. Such a mutant is always survived with attempts 0: no test runs the line, so no test could have caught the edit. False whenever coverage.mode is off.",
           "type": "boolean"
         },
+        "unobserved": {
+          "description": "Whether the run established that no test binary could *observe* this mutant and therefore did not execute it. Such a mutant is a survivor with zero attempts, exactly as an uncovered one is, and the two are never both true: coverage settles a mutant nothing reaches before a probe is asked whether anything could see it. The pair is what a reader needs to tell two remedies apart -- an uncovered mutant's lines are never run, an unobserved one's are run and running them changes nothing any test looks at. Absent on every run that did not probe.",
+          "type": "boolean"
+        },
         "cached": {
-          "description": "This outcome was adopted from the outcome cache rather than measured by this run, so duration_ms, attempts, killed_by and output_tail are the ones the run that measured it recorded. It is only ever true of killed, survived and timed-out — the cache stores no other outcome — never of an uncovered mutant, and never in a run whose cache.mode is off.",
+          "description": "This outcome was adopted from the outcome cache rather than measured by this run, so duration_ms, attempts, killed_by and output_tail are the ones the run that measured it recorded. It is only ever true of killed, survived and timed-out \u2014 the cache stores no other outcome \u2014 never of an uncovered mutant, and never in a run whose cache.mode is off.",
           "type": "boolean"
         }
       },
       "allOf": [
         {
-          "if": { "required": ["memory_exceeded"], "properties": { "memory_exceeded": { "const": true } } },
+          "if": {
+            "required": [
+              "memory_exceeded"
+            ],
+            "properties": {
+              "memory_exceeded": {
+                "const": true
+              }
+            }
+          },
           "then": {
             "description": "A mutant the bound settled is killed, for the reason an execution row that says so is: the outcome vocabulary is frozen and a bound is not a new kind of verdict.",
-            "properties": { "outcome": { "const": "killed" } }
+            "properties": {
+              "outcome": {
+                "const": "killed"
+              }
+            }
           }
         }
       ]
     },
     "outcome": {
-      "description": "timed-out is a confirmed timeout — it timed out, was retried serially, and timed out again — and counts as a detection. A single timeout that did not reproduce is inconclusive. An execution row is one observation rather than a verdict, so it is never inconclusive.",
-      "enum": ["killed", "survived", "timed-out", "inconclusive", "errored", "not-run"]
+      "description": "timed-out is a confirmed timeout \u2014 it timed out, was retried serially, and timed out again \u2014 and counts as a detection. A single timeout that did not reproduce is inconclusive. An execution row is one observation rather than a verdict, so it is never inconclusive.",
+      "enum": [
+        "killed",
+        "survived",
+        "timed-out",
+        "inconclusive",
+        "errored",
+        "not-run"
+      ]
     },
     "observation": {
-      "description": "What one pass over the test binaries saw. It is the mutant outcomes minus the two that are judgements about several passes rather than observations of one: inconclusive is what a timeout and a retry that disagree come to, and not-run is what a mutant nobody measured is — neither is a thing a pass can observe, and a row claiming either would be a verdict wearing an observation's clothes.",
-      "enum": ["killed", "survived", "timed-out", "errored"]
+      "description": "What one pass over the test binaries saw. It is the mutant outcomes minus the two that are judgements about several passes rather than observations of one: inconclusive is what a timeout and a retry that disagree come to, and not-run is what a mutant nobody measured is \u2014 neither is a thing a pass can observe, and a row claiming either would be a verdict wearing an observation's clothes.",
+      "enum": [
+        "killed",
+        "survived",
+        "timed-out",
+        "errored"
+      ]
     },
     "test_ref": {
       "description": "One test of one test binary: the import path of the package the binary was built from, and the top-level test name as -test.list prints it.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["package", "name"],
+      "required": [
+        "package",
+        "name"
+      ],
       "properties": {
-        "package": { "type": "string", "minLength": 1 },
-        "name": { "type": "string", "minLength": 1 }
+        "package": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "execution": {
       "description": "One pass over the test binaries with one mutant active. attempt counts from one and matches the row's position; worker is the scheduler slot that made the pass, counting from zero, and the serial timeout retry is worker 0. binaries stops where the pass stopped: a mutant killed by the second of three binaries was measured against two, and naming all three would describe a measurement nobody made. killed_by is absent for a pass that detected nothing.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["attempt", "worker", "outcome", "duration_ms", "binaries"],
+      "required": [
+        "attempt",
+        "worker",
+        "outcome",
+        "duration_ms",
+        "binaries"
+      ],
       "properties": {
-        "attempt": { "type": "integer", "minimum": 1 },
-        "worker": { "$ref": "#/$defs/count" },
-        "outcome": { "$ref": "#/$defs/observation" },
-        "killed_by": { "type": "string", "minLength": 1 },
-        "duration_ms": { "$ref": "#/$defs/milliseconds" },
-        "binaries": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "worker": {
+          "$ref": "#/$defs/count"
+        },
+        "outcome": {
+          "$ref": "#/$defs/observation"
+        },
+        "killed_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "duration_ms": {
+          "$ref": "#/$defs/milliseconds"
+        },
+        "binaries": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
         "tests": {
           "description": "The tests this pass was narrowed to, sorted by package and then by name: the binary in binaries was started with exactly these selected. Absent when every binary ran whole, which is every pass of a run whose coverage.mode is not test.",
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/test_ref" }
+          "items": {
+            "$ref": "#/$defs/test_ref"
+          }
         },
         "memory_exceeded": {
           "description": "This pass was stopped by the run's per-mutant memory bound rather than by a test failing or by the deadline. It is why a row can say `killed` and name a binary that reported no failure: the outcome vocabulary is frozen, so the fact that tells this kill apart from an assertion's travels beside the outcome. Both this and peak_memory_bytes are optional, and a document written before the bound existed carries neither.",
           "type": "boolean"
         },
         "peak_memory_bytes": {
-          "description": "The highest the pass was observed to hold, as the maximum over every binary it started rather than the deciding binary's: a pass's cost is the worst moment it put the machine through. It is resident memory on Unix and committed charge on Windows; the two are close but not the same quantity, and neither is converted into the other, because a conversion between things the kernels measure differently would be a number go-mutants invented. Recorded for every pass and not only the bounded ones, and absent — rather than zero — where the platform could not measure one.",
+          "description": "The highest the pass was observed to hold, as the maximum over every binary it started rather than the deciding binary's: a pass's cost is the worst moment it put the machine through. It is resident memory on Unix and committed charge on Windows; the two are close but not the same quantity, and neither is converted into the other, because a conversion between things the kernels measure differently would be a number go-mutants invented. Recorded for every pass and not only the bounded ones, and absent \u2014 rather than zero \u2014 where the platform could not measure one.",
           "$ref": "#/$defs/count"
+        },
+        "diverged": {
+          "description": "This pass ended itself because a counted loop of the tree went past the ceiling this run derived for it from what the original program did under the same tests. It is why a row can say `timed-out` after one attempt and a handful of milliseconds: a timeout is measured twice before it is believed, and a divergence is two counts taken in one tree that say nothing about the machine. Optional, and a document written before the counters existed carries none.",
+          "type": "boolean"
         }
       },
       "allOf": [
         {
-          "if": { "required": ["memory_exceeded"], "properties": { "memory_exceeded": { "const": true } } },
+          "if": {
+            "required": [
+              "memory_exceeded"
+            ],
+            "properties": {
+              "memory_exceeded": {
+                "const": true
+              }
+            }
+          },
           "then": {
             "description": "`memory_exceeded` is what tells a killed row apart from an assertion's, so beside any other outcome it would describe a pass that both was and was not stopped by the supervisor: a survivor finished, a timeout was killed by the deadline instead, and an errored pass never reached a verdict.",
-            "properties": { "outcome": { "const": "killed" } }
+            "properties": {
+              "outcome": {
+                "const": "killed"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "diverged"
+            ],
+            "properties": {
+              "diverged": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "description": "`diverged` is the counted half of \"this mutant does not return\", so beside any other outcome it would describe a pass that ended itself and also finished: a loop that passed its ceiling ends the process, which is the one thing a survivor, a kill and an errored pass all did not do.",
+            "properties": {
+              "outcome": {
+                "const": "timed-out"
+              }
+            }
           }
         }
       ]
     },
     "timing": {
-      "description": "Where this run's wall-clock time went, phase by phase and stage by stage, in the order the spans closed — which for the engine's linear pipeline is the order they opened, so a consumer can draw a timeline without sorting it. It answers \"why was this slow\" for a reader who has the report and no recording, and it says the same thing the trace's phase-end and stage events say, in the same words. The phases do not add up to duration_ms: a run is more than its phases. The whole block is optional, and absent from a merged document, which is several runs on several machines.",
+      "description": "Where this run's wall-clock time went, phase by phase and stage by stage, in the order the spans closed \u2014 which for the engine's linear pipeline is the order they opened, so a consumer can draw a timeline without sorting it. It answers \"why was this slow\" for a reader who has the report and no recording, and it says the same thing the trace's phase-end and stage events say, in the same words. The phases do not add up to duration_ms: a run is more than its phases. The whole block is optional, and absent from a merged document, which is several runs on several machines.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["phases", "stages"],
+      "required": [
+        "phases",
+        "stages"
+      ],
       "properties": {
-        "phases": { "type": "array", "items": { "$ref": "#/$defs/phase_timing" } },
-        "stages": { "type": "array", "items": { "$ref": "#/$defs/stage_timing" } }
+        "phases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/phase_timing"
+          }
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/stage_timing"
+          }
+        }
       }
     },
     "phase_timing": {
       "description": "How long one phase took. The names are the engine's phases: discover, baseline, mutate, report.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "duration_ms"],
+      "required": [
+        "name",
+        "duration_ms"
+      ],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "duration_ms": { "$ref": "#/$defs/milliseconds" }
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "duration_ms": {
+          "$ref": "#/$defs/milliseconds"
+        }
       }
     },
     "stage_timing": {
-      "description": "How long one step inside a phase took, and what became of it. The phase is on every row because a stage name is unique only within its phase — `build` happens in the baseline and again in the report — so a consumer keying a timeline by name alone would add two unrelated numbers together. result is the trace's own vocabulary, so a reader holding both documents is not reconciling two accounts; a failed stage is not by itself a failed run.",
+      "description": "How long one step inside a phase took, and what became of it. The phase is on every row because a stage name is unique only within its phase \u2014 `build` happens in the baseline and again in the report \u2014 so a consumer keying a timeline by name alone would add two unrelated numbers together. result is the trace's own vocabulary, so a reader holding both documents is not reconciling two accounts; a failed stage is not by itself a failed run.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["phase", "name", "duration_ms", "result"],
+      "required": [
+        "phase",
+        "name",
+        "duration_ms",
+        "result"
+      ],
       "properties": {
-        "phase": { "type": "string", "minLength": 1 },
-        "name": { "type": "string", "minLength": 1 },
-        "duration_ms": { "$ref": "#/$defs/milliseconds" },
-        "result": { "enum": ["succeeded", "failed", "skipped"] }
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "duration_ms": {
+          "$ref": "#/$defs/milliseconds"
+        },
+        "result": {
+          "enum": [
+            "succeeded",
+            "failed",
+            "skipped"
+          ]
+        }
       }
     },
     "validation": {
       "description": "What proving which catalogued mutants compile cost this run. One build means the whole catalogue compiled on the first try, which is the ordinary case; anything more is a bisection, and is where a slow run's minutes went. Optional, and absent from a merged document.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["builds"],
+      "required": [
+        "builds"
+      ],
       "properties": {
-        "builds": { "$ref": "#/$defs/count" }
+        "builds": {
+          "$ref": "#/$defs/count"
+        }
       }
     },
     "snapshot": {
       "description": "What the disposable copy of the workspace turned out to be. Neither field is about the code, which is why neither is in workspace_digest: a run whose copy could not take the tree's own derived name pays for a cold Go build cache, and that is a fact about the machine's temporary directory. stable_dir is that name, and it is what lets two runs of one workspace share a build cache. Optional, and absent from a merged document.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["stable_dir", "files"],
+      "required": [
+        "stable_dir",
+        "files"
+      ],
       "properties": {
-        "stable_dir": { "type": "boolean" },
-        "files": { "$ref": "#/$defs/count" }
+        "stable_dir": {
+          "type": "boolean"
+        },
+        "files": {
+          "$ref": "#/$defs/count"
+        }
       }
     },
     "toolchain": {
-      "description": "The Go toolchain that ran the tests, which is not workspace.go_version: that is the `go` directive of the module under test, and this is the executable that compiled and ran it — under a toolchain manager the two can disagree. go_bin is the resolved absolute path, so a later invocation cannot be re-resolved into a different toolchain by a changed PATH, and version is what `go version` printed, verbatim. Optional, and absent from a merged document.",
+      "description": "The Go toolchain that ran the tests, which is not workspace.go_version: that is the `go` directive of the module under test, and this is the executable that compiled and ran it \u2014 under a toolchain manager the two can disagree. go_bin is the resolved absolute path, so a later invocation cannot be re-resolved into a different toolchain by a changed PATH, and version is what `go version` printed, verbatim. Optional, and absent from a merged document.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["go_bin", "version"],
+      "required": [
+        "go_bin",
+        "version"
+      ],
       "properties": {
-        "go_bin": { "type": "string", "minLength": 1 },
-        "version": { "type": "string", "minLength": 1 }
+        "go_bin": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "branch": {
-      "description": "Present only when go-mutants proved this edit can only narrow the condition of an if or a for. body_start is the body's opening brace and body_end its closing brace, as 1-based lines and 1-based byte columns of the pristine file — the coordinates `go test -coverprofile` reports statement blocks in. A test during which no statement of that body executed cannot distinguish the mutant from the original program. direction names the lemma the span came from and is diagnostic; the promise is about the span alone, so a consumer must not branch on it.",
+      "description": "Present only when go-mutants proved this edit can only narrow the condition of an if or a for. body_start is the body's opening brace and body_end its closing brace, as 1-based lines and 1-based byte columns of the pristine file \u2014 the coordinates `go test -coverprofile` reports statement blocks in. A test during which no statement of that body executed cannot distinguish the mutant from the original program. direction names the lemma the span came from and is diagnostic; the promise is about the span alone, so a consumer must not branch on it.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["direction", "body_start_line", "body_start_column", "body_end_line", "body_end_column"],
+      "required": [
+        "direction",
+        "body_start_line",
+        "body_start_column",
+        "body_end_line",
+        "body_end_column"
+      ],
       "properties": {
-        "direction": { "enum": ["decreasing"] },
-        "body_start_line": { "type": "integer", "minimum": 1 },
-        "body_start_column": { "type": "integer", "minimum": 1 },
-        "body_end_line": { "type": "integer", "minimum": 1 },
-        "body_end_column": { "type": "integer", "minimum": 1 }
+        "direction": {
+          "enum": [
+            "decreasing"
+          ]
+        },
+        "body_start_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "body_start_column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "body_end_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "body_end_column": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "rejected": {
       "description": "A catalogued mutant that validation refused: the instrumented snapshot did not compile with it spliced in, and the delta-debugging pass isolated it. It was never executed and is not counted in the summary.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "display_id", "path", "line", "column", "rule", "diagnostic"],
+      "required": [
+        "id",
+        "display_id",
+        "path",
+        "line",
+        "column",
+        "rule",
+        "diagnostic"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/digest" },
-        "display_id": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
-        "path": { "type": "string", "minLength": 1 },
-        "line": { "type": "integer", "minimum": 1 },
-        "column": { "type": "integer", "minimum": 1 },
-        "rule": { "type": "string", "minLength": 1 },
-        "diagnostic": { "type": "string", "minLength": 1 }
+        "id": {
+          "$ref": "#/$defs/digest"
+        },
+        "display_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{20}$"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "rule": {
+          "type": "string",
+          "minLength": 1
+        },
+        "diagnostic": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "skip": {
       "description": "One recorded reason a site was never turned into a candidate, aggregated per file. Count is the number of suppressed candidates, or 1 for a reason that removed the whole file.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["path", "reason", "count"],
+      "required": [
+        "path",
+        "reason",
+        "count"
+      ],
       "properties": {
-        "path": { "type": "string", "minLength": 1 },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
         "reason": {
           "description": "The identifiers documented in docs/operators.md. The last three are emitted by instrumentation rather than by discovery.",
           "enum": [
@@ -541,27 +1265,55 @@
             "unnameable-decl-type"
           ]
         },
-        "count": { "type": "integer", "minimum": 1 }
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "expectation": {
-      "description": "One row of the [[mutation.expect]] ledger, checked against this run. fulfilled: the mutant survived, as predicted. stale: the id is not in this catalogue any more. unfulfilled: everything else — join mutants[] and rejected[] by id to see whether the tests caught it, which is the ledger lying, or whether it was simply never measured.",
+      "description": "One row of the [[mutation.expect]] ledger, checked against this run. fulfilled: the mutant survived, as predicted. stale: the id is not in this catalogue any more. unfulfilled: everything else \u2014 join mutants[] and rejected[] by id to see whether the tests caught it, which is the ledger lying, or whether it was simply never measured.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "reason", "state"],
+      "required": [
+        "id",
+        "reason",
+        "state"
+      ],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "reason": { "type": "string", "minLength": 1 },
-        "state": { "enum": ["fulfilled", "unfulfilled", "stale"] }
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "enum": [
+            "fulfilled",
+            "unfulfilled",
+            "stale"
+          ]
+        }
       }
     },
     "warning": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["code", "message"],
+      "required": [
+        "code",
+        "message"
+      ],
       "properties": {
-        "code": { "type": "string", "pattern": "^GOM[0-9]{4}$" },
-        "message": { "type": "string", "minLength": 1 }
+        "code": {
+          "type": "string",
+          "pattern": "^GOM[0-9]{4}$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     }
   }

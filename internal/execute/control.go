@@ -234,7 +234,7 @@ func RunControl(ctx context.Context, opts Options, c ControlRun, bins []TestBina
 
 		logPath := logs.path(i)
 		spec, result := startTarget(ctx, opts, trace.ExecKindControlRun, bin.ImportPath,
-			bin, env, c.Timeout, c.MemoryLimit, c.Args, c.Tests[bin.ImportPath], logPath, c.OutputLimit)
+			bin, env, c.Timeout, c.MemoryLimit, c.Args, c.Tests[bin.ImportPath], logPath, c.OutputLimit, true)
 		last = result
 		attempt.Duration += result.Duration
 		attempt.PeakMemory = max(attempt.PeakMemory, result.PeakMemory)

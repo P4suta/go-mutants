@@ -124,6 +124,16 @@ const (
 	ruleReturnErrToNil = "return-err-to-nil"
 	ruleNilErrorBranch = "nil-error-branch"
 
+	ruleReturnEmptySlice = "return-empty-slice"
+	ruleReturnEmptyMap   = "return-empty-map"
+
+	ruleConditionToTrue      = "condition-to-true"
+	ruleConditionToFalse     = "condition-to-false"
+	ruleLoopConditionToFalse = "loop-condition-to-false"
+
+	ruleDropBreakLabel    = "drop-break-label"
+	ruleDropContinueLabel = "drop-continue-label"
+
 	ruleDeleteCallStatement = "delete-call-statement"
 	ruleDeleteAssignment    = "delete-assignment"
 	ruleDeleteIncDec        = "delete-incdec"
@@ -141,6 +151,13 @@ var positionalRules = []string{
 	ruleReturnNil,
 	ruleReturnErrToNil,
 	ruleNilErrorBranch,
+	ruleReturnEmptySlice,
+	ruleReturnEmptyMap,
+	ruleConditionToTrue,
+	ruleConditionToFalse,
+	ruleLoopConditionToFalse,
+	ruleDropBreakLabel,
+	ruleDropContinueLabel,
 	ruleDeleteCallStatement,
 	ruleDeleteAssignment,
 	ruleDeleteIncDec,

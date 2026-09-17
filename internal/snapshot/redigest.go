@@ -4,6 +4,8 @@
 package snapshot
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -134,4 +136,110 @@ func (s *Snapshot) Redigest() ([]Drift, error) {
 	}
 	slices.SortFunc(drifts, func(a, b Drift) int { return strings.Compare(a.RelPath, b.RelPath) })
 	return drifts, nil
+}
+
+// Restore puts the snapshot back the way [Create] left it, by copying from the
+// tree it was made of.
+//
+// It is [Snapshot.Redigest] with an answer instead of a report: every changed
+// or removed file is copied again from [Snapshot.SourceRoot], every added file
+// is deleted, and the drifts it found are returned so a caller can say what it
+// undid. A snapshot that has not drifted is not touched at all.
+//
+// # What it is for
+//
+// One thing, and the design of the whole isolation feature rests on it: a
+// worker's private copy of an instrumented tree has to be identical before
+// every mutant it runs. Without that, mutant *k* is measured against whatever
+// mutant *k-1*'s tests wrote, which is the same corruption the shared-snapshot
+// drift gate exists to catch, moved into a place nobody is watching. Copying
+// the whole tree again between mutants would be correct and unaffordable;
+// copying back only what moved is the same answer at the cost of one walk.
+//
+// # What it does not restore
+//
+// A directory that was created and left empty. The manifest lists regular
+// files and nothing else -- [Redigest] says why -- so an empty directory is
+// invisible to both, and a test that creates one and asks whether it exists
+// would see it on its second mutant. That is a narrower gap than it sounds
+// and it is the manifest's gap rather than this method's: a directory holding
+// a file is restored, because the file is.
+//
+// Permissions and modification times are the copy's, not the original's,
+// exactly as they are for a fresh [Create].
+//
+// # The postcondition
+//
+// Every file it copies is digested as it is written and compared with what the
+// manifest recorded. A disagreement is [CodeRestoreFailed] rather than a
+// silent success, because the only way to reach it is for the *source* tree to
+// have changed -- and a caller restoring from a tree it believes is frozen has
+// to be told that it is not.
+func (s *Snapshot) Restore() ([]Drift, error) {
+	drifts, err := s.Redigest()
+	if err != nil {
+		return nil, err
+	}
+	for _, change := range drifts {
+		if err := s.restoreOne(change); err != nil {
+			return nil, err
+		}
+	}
+	return drifts, nil
+}
+
+// restoreOne undoes one drift.
+func (s *Snapshot) restoreOne(change Drift) error {
+	dest := filepath.Join(s.Root, filepath.FromSlash(change.RelPath))
+	// Removed first in every case, including the changed one: copyFile opens
+	// its destination O_EXCL on purpose, and that refusal is worth keeping for
+	// the walk that uses it.
+	if err := os.RemoveAll(ExtendedPath(dest)); err != nil {
+		return &Error{
+			Code:    CodeRestoreFailed,
+			Path:    change.RelPath,
+			Message: "the drifted file could not be removed before being restored",
+			Err:     err,
+		}
+	}
+	if change.Kind == DriftAdded {
+		return nil
+	}
+
+	src := filepath.Join(s.SourceRoot, filepath.FromSlash(change.RelPath))
+	info, err := os.Stat(ExtendedPath(src))
+	if err != nil {
+		return &Error{
+			Code:    CodeRestoreFailed,
+			Path:    change.RelPath,
+			Message: "the tree this snapshot was made of no longer holds the file",
+			Err:     err,
+		}
+	}
+	if mkErr := os.MkdirAll(filepath.Dir(ExtendedPath(dest)), 0o755); mkErr != nil {
+		return &Error{
+			Code:    CodeRestoreFailed,
+			Path:    change.RelPath,
+			Message: "the directory holding the restored file could not be created",
+			Err:     mkErr,
+		}
+	}
+	_, digest, err := copyFile(src, dest, info.Mode(), info.ModTime())
+	if err != nil {
+		return &Error{
+			Code:    CodeRestoreFailed,
+			Path:    change.RelPath,
+			Message: "the file could not be copied back",
+			Err:     err,
+		}
+	}
+	if digest != change.WantSHA256 {
+		return &Error{
+			Code: CodeRestoreFailed,
+			Path: change.RelPath,
+			Message: "the restored file digests " + digest + " and the manifest recorded " +
+				change.WantSHA256 + ", so the tree this snapshot was made of has itself changed",
+		}
+	}
+	return nil
 }

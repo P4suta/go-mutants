@@ -49,3 +49,24 @@ func Ready(level int) Flag {
 func Always() Flag {
 	return true
 }
+
+// Gate returns a level or nothing, depending on a flag.
+//
+// The condition is the one site in this corpus that needs Form C'. `f` has type
+// `Flag`, so there is no exactly-`bool` expression anywhere around it for Form
+// C to select, and an `if` condition is not a statement that either statement
+// form covers. What Form C' writes is the ordinary selector with a conversion
+// at each end — `Flag(__gm.M[i] && bool(<mutated>) || … && bool(f))` — and both
+// directions are conversions between a defined type and its underlying type,
+// which are always legal.
+//
+// It is a *condition* rather than a returned value on purpose. The two
+// functions above are reached through the statement form, and a fixture holding
+// only those would leave "Form C' composes a program that compiles" as a claim
+// in a changelog rather than as a mutant that is built, run and killed.
+func Gate(f Flag, level int) int {
+	if f {
+		return level
+	}
+	return 0
+}

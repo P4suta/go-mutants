@@ -62,6 +62,21 @@ type hintOptions struct {
 	// function declares is, by construction, spelled in the file that declares
 	// it — so the fixture says which of its statements stands for one.
 	unprobed []string
+	// unprobedSites lists the boolean expressions discovery would refuse to
+	// measure in place, spelled exactly as the fixture writes them. The form
+	// evaluates both readings of a site, so it needs the whole expression to be
+	// free of effects and of anything that can panic -- which syntax cannot
+	// show either, since a call is only an effect when it is one.
+	unprobedSites []string
+	// valueTypes gives the spelled type of each expression the value probe form
+	// measures, keyed by the expression exactly as the fixture writes it. A
+	// fixture that names none has no value sites, which is how every fixture
+	// written before that form existed keeps the bytes it had.
+	//
+	// It is stated rather than derived for [hintOptions.declared]'s reason: the
+	// type is what the closure writes in front of itself, and there is no
+	// honest way to guess it from the syntax.
+	valueTypes map[string]string
 }
 
 // returnValueRules are the six rules whose candidates carry a probe hint. They
@@ -199,13 +214,95 @@ func (d *hintDeriver) guardFor(span mutation.Span, rule string) discover.Guard {
 		d.t.Fatalf("%s: no node covers %s", d.path, span)
 	}
 	guard, ok := d.formC(anchor)
-	if !ok {
+	if ok {
+		// A Form C site is a boolean probe site, which is discovery's own rule:
+		// the helper takes the universe bool and that is exactly what Form C
+		// requires. What syntax cannot show is a site with an effect or a
+		// possible panic in it, and [hintOptions.unprobedSites] is how a
+		// fixture states one.
+		guard.Probe = d.boolSite(guard)
+	} else {
 		if guard, ok = d.statementSite(anchor); !ok {
 			d.t.Fatalf("%s: no guard form covers the edit at %s (%q)", d.path, span, d.text(anchor))
 		}
 	}
-	guard.Return = d.returnSite(anchor, span, rule)
+	if guard.Probe == nil {
+		guard.Probe = d.valueSite(anchor)
+	}
+	if guard.Probe == nil && deletionRules[rule] {
+		guard.Probe = d.reachSite(guard)
+	}
+	// The return form replaces whatever the guard chose and never the other way
+	// round, exactly as it does in discovery: it compares the value the
+	// function would really have returned, which is the stronger evidence.
+	if site := d.returnSite(anchor, span, rule); site != nil {
+		guard.Probe = site
+	}
 	return guard
+}
+
+// deletionRules are the rules whose candidates fall back to reachability. They
+// are restated here for [returnValueRules]'s reason: this file is the fixtures'
+// own statement of what discovery produces.
+var deletionRules = map[string]bool{
+	"delete-call-statement": true,
+	"delete-assignment":     true,
+	"delete-incdec":         true,
+}
+
+// reachSite derives the probe hint of a deleted statement, which is the guard's
+// own site and nothing else.
+func (d *hintDeriver) reachSite(guard discover.Guard) *discover.ProbeSite {
+	d.t.Helper()
+
+	if guard.Form != discover.GuardFormS {
+		return nil
+	}
+	return &discover.ProbeSite{Form: discover.ProbeFormReach, Span: guard.SiteSpan}
+}
+
+// valueSite derives the probe hint of the nearest expression around the edit
+// that the fixture has given a type for.
+//
+// The walk is discovery's own -- outward from the edit until an expression
+// answers -- and what answers here is [hintOptions.valueTypes] rather than a
+// type checker. A fixture that names no expression has no value sites.
+func (d *hintDeriver) valueSite(anchor ast.Node) *discover.ProbeSite {
+	d.t.Helper()
+
+	if len(d.opts.valueTypes) == 0 {
+		return nil
+	}
+	for node := anchor; node != nil; node = d.parent[node] {
+		expr, ok := node.(ast.Expr)
+		if !ok {
+			return nil
+		}
+		spelled, named := d.opts.valueTypes[d.text(expr)]
+		if !named {
+			continue
+		}
+		return &discover.ProbeSite{
+			Form:  discover.ProbeFormValue,
+			Span:  d.span(expr),
+			Types: []string{spelled},
+		}
+	}
+	return nil
+}
+
+// boolSite derives the probe hint of a Form C site, or nothing for one the
+// fixture has declared unprobeable.
+func (d *hintDeriver) boolSite(guard discover.Guard) *discover.ProbeSite {
+	d.t.Helper()
+
+	text := string(d.src[guard.SiteSpan.StartByte:guard.SiteSpan.EndByte])
+	for _, refused := range d.opts.unprobedSites {
+		if text == refused {
+			return nil
+		}
+	}
+	return &discover.ProbeSite{Form: discover.ProbeFormBool, Span: guard.SiteSpan}
 }
 
 // returnSite derives the probe hint of a return-value candidate: the statement
@@ -217,7 +314,7 @@ func (d *hintDeriver) guardFor(span mutation.Span, rule string) discover.Guard {
 // spelled in the file that declares it, so the bytes of the signature *are* the
 // spelling. What syntax cannot show is a refusal, and [hintOptions.unprobed] is
 // how a fixture states one.
-func (d *hintDeriver) returnSite(anchor ast.Node, span mutation.Span, rule string) *discover.ReturnSite {
+func (d *hintDeriver) returnSite(anchor ast.Node, span mutation.Span, rule string) *discover.ProbeSite {
 	d.t.Helper()
 
 	if !returnValueRules[rule] {
@@ -239,7 +336,7 @@ func (d *hintDeriver) returnSite(anchor ast.Node, span mutation.Span, rule strin
 	}
 	for i, value := range stmt.Results {
 		if d.span(value).Contains(span) {
-			return &discover.ReturnSite{Span: d.span(stmt), Types: results, Index: i}
+			return &discover.ProbeSite{Form: discover.ProbeFormReturn, Span: d.span(stmt), Types: results, Index: i}
 		}
 	}
 	d.t.Fatalf("%s: the %s candidate at %s is in no result of %q", d.path, rule, span, d.text(stmt))

@@ -7,7 +7,9 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
@@ -30,20 +32,76 @@ type guardResolver struct {
 	// empty value means the import is plain and the name is the package's own,
 	// which is only knowable from the [types.Package] at qualification time.
 	imports map[string]string
+	// siblings maps an import path some *other* file of this package imports to
+	// the name to prefer for it. It is what import completion may draw on, and
+	// imports.go argues at length why that set and no wider one.
+	siblings map[string]string
+	// added records the name each completed path has been given in this file,
+	// so that two rewrites of one file never bind one package twice under two
+	// names. It grows as the file is walked and is never reset.
+	added map[string]string
+	// taken is every name a completion may not bind: the file's own
+	// identifiers, the names its imports already bind, and the package block,
+	// which a file-scoped import may not collide with even across files.
+	taken map[string]bool
 }
 
 // newGuardResolver indexes one file.
-func newGuardResolver(file *ast.File, info *types.Info, pkg *types.Package, tokFile *token.File) *guardResolver {
+//
+// siblings is the import index of the package's other files, and may be nil for
+// a package of one file — a file with no siblings has nothing to complete from,
+// which is a smaller statement than "completion is off".
+func newGuardResolver(
+	file *ast.File, info *types.Info, pkg *types.Package, tokFile *token.File, siblings map[string]string,
+) *guardResolver {
 	g := &guardResolver{
-		info:    info,
-		pkg:     pkg,
-		tokFile: tokFile,
-		parent:  make(map[ast.Node]ast.Node),
-		imports: make(map[string]string),
+		info:     info,
+		pkg:      pkg,
+		tokFile:  tokFile,
+		parent:   make(map[ast.Node]ast.Node),
+		imports:  make(map[string]string),
+		siblings: siblings,
+		added:    make(map[string]string),
+		taken:    make(map[string]bool),
 	}
 	g.indexParents(file)
 	g.indexImports(file)
+	g.indexTakenNames(file)
 	return g
+}
+
+// indexTakenNames gathers every identifier a completion may not bind.
+//
+// Three scopes, and each of them can be wrong in a different way. Every
+// identifier in the file counts, because a local variable sharing the name
+// would shadow the import for exactly the statements a guard sits in. Every
+// name an existing import binds counts, including the implicit one of a plain
+// import, which no identifier node spells. And every name the package block
+// binds counts, which is not shadowing at all: Go forbids one name appearing in
+// a file block and in the package block of the same package, so a `var carrier`
+// in a sibling file makes `import carrier "…"` here a hard error.
+//
+// internal/instrument does the same three scopes for the runtime alias, by
+// reading the directory; here the package block arrives free, because the type
+// checker has already built it.
+func (g *guardResolver) indexTakenNames(file *ast.File) {
+	ast.Inspect(file, func(node ast.Node) bool {
+		if ident, ok := node.(*ast.Ident); ok {
+			g.taken[ident.Name] = true
+		}
+		return true
+	})
+	for importPath, local := range g.imports {
+		if local == "" {
+			local = defaultLocal(importPath)
+		}
+		g.taken[local] = true
+	}
+	if g.pkg != nil && g.pkg.Scope() != nil {
+		for _, name := range g.pkg.Scope().Names() {
+			g.taken[name] = true
+		}
+	}
 }
 
 // indexParents records every node's owner in one walk.
@@ -99,27 +157,263 @@ func (g *guardResolver) indexImports(file *ast.File) {
 }
 
 // span is the byte range of a node in the file being indexed.
-func (g *guardResolver) span(node ast.Node) (mutation.Span, bool) {
-	start := g.tokFile.Offset(node.Pos())
-	end := g.tokFile.Offset(node.End())
-	if start < 0 || end < start {
-		return mutation.Span{}, false
+//
+// It cannot fail, and the second answer it used to give was a branch no node
+// could take. [token.File.Offset] clamps a position into the file's own bounds
+// rather than answering outside them, so a start is never negative and an end
+// never precedes its start; and the only span [mutation.Span.Validate] refuses
+// is a reversed one. Three refusals for a shape the positions cannot have is
+// three boundaries no test could put anything on the wrong side of.
+func (g *guardResolver) span(node ast.Node) mutation.Span {
+	return mutation.Span{
+		StartByte: uint32(g.tokFile.Offset(node.Pos())),
+		EndByte:   uint32(g.tokFile.Offset(node.End())),
 	}
-	span, err := mutation.NewSpan(uint32(start), uint32(end))
-	if err != nil {
-		return mutation.Span{}, false
-	}
-	return span, true
 }
 
 // guardFor computes the rewrite site for an edit anchored at one node,
-// reporting false when none of the three forms can express it. Every false is
+// reporting false when no form can express it. Every false is
 // a [SkipUnnameableDeclType] skip; see [Guard] for the full list of them.
 func (g *guardResolver) guardFor(anchor ast.Node) (Guard, bool) {
+	guard, ok := g.chooseForm(anchor)
+	if !ok {
+		return Guard{}, false
+	}
+	// A Form C site has already been offered the boolean probe form, which is
+	// cheaper and stronger where it applies: it needs no type written out and
+	// no temporary. Everything else is asked for the value form, which is the
+	// same question one step further from the edit -- what is the nearest
+	// expression around it whose value can be compared at all.
+	if guard.Probe == nil {
+		guard.Probe = g.valueProbe(anchor)
+	}
+	return guard, true
+}
+
+// chooseForm is the guard-form staircase itself: each form is tried after the
+// ones before it, so a site an earlier form covers is covered by exactly that
+// form.
+func (g *guardResolver) chooseForm(anchor ast.Node) (Guard, bool) {
 	if site, ok := g.formCSite(anchor); ok {
 		return site, true
 	}
-	return g.statementSite(anchor)
+	if site, ok := g.statementSite(anchor); ok {
+		return site, true
+	}
+	if site, ok := g.formCPrimeSite(anchor); ok {
+		return site, true
+	}
+	return g.formESite(anchor)
+}
+
+// formESite looks outward for the nearest expression this file can spell the
+// type of.
+//
+// It is the last form and the least demanding one, which is why it is last: a
+// site any earlier form covers is covered by that form, and this adds the
+// positions none of them reach. A `switch` tag, a `range` clause and a type
+// switch guard are expressions with no statement around them a guard can stand
+// in; the initialiser of a `:=` in an `if` or `for` header is an expression
+// whose statement declares, which Form F cannot move into a closure and Form D
+// has nowhere to hoist to.
+//
+// The walk is [guardResolver.formCSite]'s, and the two conditions are the ones
+// the closure needs. The expression has to be a *value* -- a type in a type
+// switch case and a package name in a qualified identifier are expressions to
+// go/ast and neither is something a function can return. And its type has to be
+// spellable, because the closure's result type is written out; that is the last
+// refusal `unnameable-decl-type` is left naming.
+func (g *guardResolver) formESite(anchor ast.Node) (Guard, bool) {
+	for node := anchor; node != nil; node = g.parent[node] {
+		expr, ok := node.(ast.Expr)
+		if !ok {
+			return Guard{}, false
+		}
+		if !g.wrappableValue(expr) {
+			continue
+		}
+		span := g.span(expr)
+		spelled, needs, ok := g.typeString(g.info.Types[expr].Type)
+		if !ok {
+			// A type this file cannot name, which is not the end of the search:
+			// an expression around this one may have a type it can. The walk
+			// continues for the same reason Form C's does when it meets a
+			// non-boolean expression -- the site is the nearest *usable*
+			// ancestor, not the nearest one.
+			continue
+		}
+		return Guard{Form: GuardFormE, SiteSpan: span, SiteType: spelled, Imports: needs}, true
+	}
+	return Guard{}, false
+}
+
+// valueProbe looks outward for the nearest expression whose value a probe could
+// compare, and returns the hint when it finds one.
+//
+// The rewrite is the closure the guard's own Form E is:
+//
+//	func() T { var p T = (ORIG); if p != (MUT) { __gm.Infect(i) }; return p }()
+//
+// and the walk is Form E's walk, with three conditions added on top of its two.
+// Standing where the expression stood is what makes the shape work at all: the
+// value is produced in the site's own context, so the compiler settles the type
+// exactly as it settled the original's, and nothing has to be hoisted to a
+// statement that may not exist -- a `switch` tag and a `for` post statement
+// have no room for one.
+//
+// The three conditions, in the order they can fail:
+//
+//   - **The value is comparable without panicking.** `p != MUT` is the whole
+//     measurement, and it has to be legal and total: a slice, a map and a
+//     function are not comparable at all, and two interfaces holding an
+//     incomparable dynamic type panic where a mutant would not. The rule is the
+//     one effects.go already applies to an `==` the user wrote.
+//   - **The value is not floating-point or complex.** `-0.0 != 0` is false while
+//     the two are distinguishable, so such a site would report "never differed"
+//     for a mutant a test really can kill. It is the return form's rule, and
+//     for the return form's reason.
+//   - **The site's whole statement is inert.** Both readings are evaluated, so
+//     an effect anywhere would happen more than once, and a panic in the
+//     mutated reading would be a divergence the comparison is never reached to
+//     record. The question reaches past the site to everything its statement
+//     evaluates beside it, because the rewrite puts a *call* where an
+//     expression stood: [guardResolver.inertContext] has the argument.
+//
+// A refusal walks outward rather than stopping, exactly as the guard forms'
+// walks do: an expression *around* this one may be comparable, or inert, where
+// this one is not.
+func (g *guardResolver) valueProbe(anchor ast.Node) *ProbeSite {
+	for node := anchor; node != nil; node = g.parent[node] {
+		expr, ok := node.(ast.Expr)
+		if !ok {
+			return nil
+		}
+		if !g.wrappableValue(expr) {
+			continue
+		}
+		declared := g.info.Types[expr].Type
+		if !comparesWithoutPanic(declared) || floatingResult(declared) {
+			continue
+		}
+		if !g.inertContext(expr) || !g.panicFree(expr) {
+			continue
+		}
+		span := g.span(expr)
+		spelled, needs, ok := g.typeString(declared)
+		if !ok {
+			continue
+		}
+		return &ProbeSite{
+			Form:    ProbeFormValue,
+			Span:    span,
+			Types:   []string{spelled},
+			Imports: needs,
+		}
+	}
+	return nil
+}
+
+// reachProbe is the fallback for a site with no value at all: the statement is
+// left exactly as it is and the call goes in front of it.
+//
+// It needs none of the other forms' conditions and that is not an oversight.
+// Those forms evaluate a second reading of something, which is why they ask
+// about effects, about panics and about ordering; this evaluates nothing extra.
+// The call is a statement of its own and statements are already sequenced, so
+// nothing in the language's ordering rules applies to it.
+//
+// What it does need is somewhere to put the block, and the guard has already
+// found one. The shape is Form S's -- a block where a statement stood -- so a
+// Form S guard is exactly the condition: [statementGuard] hands that form out
+// only for a statement [FormSStatement] accepts, which is the list of
+// statements a block may be wrapped around without scoping a declaration away
+// or moving a `fallthrough` off the end of its clause.
+func (g *guardResolver) reachProbe(guard Guard) *ProbeSite {
+	if guard.Form != GuardFormS {
+		return nil
+	}
+	return &ProbeSite{Form: ProbeFormReach, Span: guard.SiteSpan}
+}
+
+// wrappableValue reports whether an expression is a value of a type a closure
+// could return, and sits where a call of that type is legal Go.
+//
+// "Value" is the load-bearing word and go/types answers it: `case int:` in a
+// type switch records a *type* rather than a value, `fmt` in `fmt.Println`
+// records a package, and `len` records a builtin. None of the three is
+// something a function can return, and all three are ast.Expr.
+//
+// Untyped constants need no special case, and that is worth saying because it
+// looks as though they would. The checker records the type an expression
+// *settled on*, so the `1` of `var x float64 = 1` records `float64` and the
+// closure returns a float64; a constant in a context that keeps it untyped is
+// in a constant declaration, which discovery suppresses whole before any of
+// this is asked.
+func (g *guardResolver) wrappableValue(expr ast.Expr) bool {
+	if g.info == nil {
+		return false
+	}
+	tv, ok := g.info.Types[expr]
+	if !ok || !tv.IsValue() || tv.Type == nil {
+		return false
+	}
+	return g.wrappablePosition(expr)
+}
+
+// formCPrimeSite looks outward for the nearest expression that is boolean
+// underneath and whose type this file can spell.
+//
+// It is [guardResolver.formCSite]'s fallback and shares its whole shape: the
+// same outward walk, the same stop at the first ancestor that is not an
+// expression, the same [guardResolver.wrappablePosition]. What differs is the
+// type gate -- bool *underneath* rather than exactly the universe bool -- and
+// that the site has to carry the type, because the selector the instrumenter
+// writes is untyped and has to be converted back.
+//
+// The order matters and is the reason this is a separate function rather than
+// a loosened gate in formCSite. Run last, it can only add sites: anything Form
+// C or one of the statement forms already covered is still covered by the form
+// that covered it, byte for byte and identity for identity.
+func (g *guardResolver) formCPrimeSite(anchor ast.Node) (Guard, bool) {
+	for node := anchor; node != nil; node = g.parent[node] {
+		expr, ok := node.(ast.Expr)
+		if !ok {
+			return Guard{}, false
+		}
+		if !g.wrappableNamedBool(expr) {
+			continue
+		}
+		span := g.span(expr)
+		spelled, needs, ok := g.typeString(g.info.Types[expr].Type)
+		if !ok {
+			// A boolean type this file cannot name. The same refusal Form D
+			// makes about a declared type, for the same reason: go-mutants
+			// knows what it would write and cannot say it in Go.
+			return Guard{}, false
+		}
+		return Guard{Form: GuardFormCPrime, SiteSpan: span, SiteType: spelled, Imports: needs}, true
+	}
+	return Guard{}, false
+}
+
+// wrappableNamedBool reports whether an expression is boolean underneath but
+// not the universe bool, and sits where a conversion around it is legal Go.
+//
+// The universe bool is excluded rather than merely unnecessary: an expression
+// of that type is a Form C site, and letting this form claim one would change
+// which form an existing candidate uses, which is a change to the bytes of the
+// instrumented tree for no gain at all.
+func (g *guardResolver) wrappableNamedBool(expr ast.Expr) bool {
+	if g.info == nil {
+		return false
+	}
+	tv, ok := g.info.Types[expr]
+	if !ok || !tv.IsValue() || isUniverseBool(tv.Type) || !isBoolClassed(tv.Type) {
+		return false
+	}
+	// A conversion is an expression, so every position that accepts a
+	// parenthesised expression of the site's own type accepts one.
+	return g.wrappablePosition(expr)
 }
 
 // formCSite looks outward for the nearest bool-valued expression that may be
@@ -138,13 +432,47 @@ func (g *guardResolver) formCSite(anchor ast.Node) (Guard, bool) {
 		if !g.wrappableBool(expr) {
 			continue
 		}
-		span, ok := g.span(expr)
-		if !ok {
-			return Guard{}, false
-		}
-		return Guard{Form: GuardFormC, SiteSpan: span}, true
+		span := g.span(expr)
+		return Guard{Form: GuardFormC, SiteSpan: span, Probe: g.boolProbe(expr, span)}, true
 	}
 	return Guard{}, false
+}
+
+// boolProbe decides whether a Form C site may also be measured in place, and
+// returns the hint when it may.
+//
+// The rewrite is `__gm.Differs(i, (ORIG), (MUT))`: both sides are evaluated,
+// the original's value is what the expression yields, and the call records
+// whether the two ever disagreed. What that costs is a second evaluation of the
+// site, so the conditions are asked of the **whole expression** rather than of
+// the operand the mutant replaces — and that is the difference from
+// [ProbeFormReturn], where the mutant *skips* an operand and only that operand
+// has to be inert.
+//
+// Two reasons the whole of it, and the second is the one that would be missed.
+// An effect anywhere in the site would happen twice, so the probe tree would
+// not be the original program. And the mutant may evaluate operands the
+// original short-circuits past: `x != nil && x.ok` under `and-to-or` becomes
+// `x != nil || x.ok`, which reads through a nil pointer the original never
+// touched. Asking [guardResolver.panicFree] of the whole expression settles
+// both, because it walks every operand — and refuses that one, since a field
+// reached through a pointer is a dereference.
+//
+// The effect question is asked of the whole *statement* rather than of the site
+// alone, and [guardResolver.inertContext] argues why: the rewrite puts a call
+// where an expression stood, and a call is ordered against the other calls of
+// its statement where a plain operand is not.
+//
+// Exactly the universe bool is what makes the helper possible at all: it takes
+// and returns `bool`, so it is one non-generic function, and a named boolean
+// type could not be passed to it. That is the shape internal/instrument's own
+// doc.go rejects helper forms for in general — untyped constants, shifts, named
+// types — and none of those reach here.
+func (g *guardResolver) boolProbe(expr ast.Expr, span mutation.Span) *ProbeSite {
+	if !g.inertContext(expr) || !g.panicFree(expr) {
+		return nil
+	}
+	return &ProbeSite{Form: ProbeFormBool, Span: span}
 }
 
 // wrappableBool reports whether an expression is exactly the universe bool and
@@ -232,12 +560,91 @@ func (g *guardResolver) statementSite(anchor ast.Node) (Guard, bool) {
 			return Guard{}, false
 		case ast.Stmt:
 			if !g.blockIsLegalFor(n) {
-				return Guard{}, false
+				return g.closureSite(n)
 			}
 			return g.statementGuard(n)
 		}
 	}
 	return Guard{}, false
+}
+
+// closureSite decides whether a statement a block cannot replace may be
+// replaced by a call instead.
+//
+// This is Form F, and it is what the initialiser and post slots were always
+// waiting for. Those slots hold a *simple* statement -- an expression
+// statement, a send, an `++`/`--`, an assignment, or a short declaration -- and
+// a block is not one of them, which is the whole of why `for i := 0; i < n; if
+// __gm.M[3] { … }` does not parse. A call is an expression, an expression alone
+// is an expression statement, and an expression statement is simple. So the
+// guard goes inside a closure and the closure is called where the statement
+// was.
+//
+// Two questions have to agree for that to be sound, and they are asked apart
+// because they are about different things. [FormFStatement] asks whether the
+// *statement* survives being moved into a function body, which is a question
+// about `return`, `defer` and the branch statements. simpleStmtSlot asks
+// whether the *slot* accepts a call, which is a question about the grammar: a
+// type switch guard is not a simple statement at all, and a communication
+// clause has to be a send or a receive, which a call is neither.
+func (g *guardResolver) closureSite(stmt ast.Stmt) (Guard, bool) {
+	if !FormFStatement(stmt) || !g.simpleStmtSlot(stmt) {
+		return Guard{}, false
+	}
+	span := g.span(stmt)
+	return Guard{Form: GuardFormF, SiteSpan: span}, true
+}
+
+// simpleStmtSlot reports whether a statement sits in a slot that holds a simple
+// statement, which is where a call is legal and a block is not.
+func (g *guardResolver) simpleStmtSlot(stmt ast.Stmt) bool {
+	switch parent := g.parent[stmt].(type) {
+	case *ast.ForStmt:
+		return parent.Init == stmt || parent.Post == stmt
+	case *ast.IfStmt:
+		return parent.Init == stmt
+	case *ast.SwitchStmt:
+		return parent.Init == stmt
+	case *ast.TypeSwitchStmt:
+		// The initialiser only. The Assign is the type switch guard, which is
+		// its own production and not a simple statement.
+		return parent.Init == stmt
+	default:
+		return false
+	}
+}
+
+// FormFStatement reports whether a statement is one Form F may move into a
+// closure.
+//
+// It is [FormSStatement]'s list minus three kinds, and each exclusion is a
+// different fact rather than caution:
+//
+//   - a `return` inside the closure returns from the *closure*, so the
+//     enclosing function would fall through instead;
+//   - a `defer` fires when the closure returns, which is immediately, rather
+//     than when the enclosing function does;
+//   - a `break`, `continue` or `goto` cannot cross a function boundary and
+//     would not compile.
+//
+// A `go` is the one that would be safe and is excluded anyway, because none of
+// the four can appear in a slot this form reaches -- the grammar there holds a
+// simple statement, and `return`, `defer` and `go` are not simple ones -- so
+// the list is exactly the four that can, and a fifth entry nothing could use
+// would be an arm nobody could reach.
+//
+// It is exported for [FormSStatement]'s reason: internal/instrument asks the
+// same question again, independently, and a test in that package holds the two
+// implementations to each other over every statement kind Go has.
+func FormFStatement(stmt ast.Stmt) bool {
+	switch s := stmt.(type) {
+	case *ast.ExprStmt, *ast.SendStmt, *ast.IncDecStmt:
+		return true
+	case *ast.AssignStmt:
+		return s.Tok != token.DEFINE
+	default:
+		return false
+	}
 }
 
 // blockIsLegalFor reports whether a statement may be replaced by an `if`
@@ -265,6 +672,45 @@ func (g *guardResolver) blockIsLegalFor(stmt ast.Stmt) bool {
 	}
 }
 
+// FormSStatement reports whether a statement is one Form S may bury in a block.
+//
+// The list is short for one reason: every statement here declares nothing, so
+// wrapping it in `if … { … } else { … }` changes no scope and the code after it
+// goes on compiling. A `:=` and a `var` do declare, which is what Form D exists
+// for.
+//
+// `defer` and `go` are in the list and are wrapped whole, statement and all,
+// rather than having their call rewritten in place. Both are function-scoped
+// rather than block-scoped: a `defer` inside the guard's block still runs when
+// the enclosing *function* returns, and a `go` still starts its goroutine, so
+// the block the guard adds changes nothing about when either fires.
+//
+// It is exported because internal/instrument asks the same question of the same
+// statement and must go on asking it independently — a hint naming a statement
+// that package cannot wrap has to be refused there rather than trusted — and
+// two implementations of one list can disagree. They are held to each other by
+// a test in that package, over a table of every statement kind Go has. Sharing
+// the *answer* would be the wrong fix: the second check is the fail-closed one,
+// and a check that calls the thing it is checking is not a check.
+func FormSStatement(stmt ast.Stmt) bool {
+	switch s := stmt.(type) {
+	case *ast.ExprStmt, *ast.ReturnStmt, *ast.IncDecStmt, *ast.SendStmt, *ast.DeferStmt, *ast.GoStmt:
+		return true
+	case *ast.AssignStmt:
+		return s.Tok != token.DEFINE
+	case *ast.BranchStmt:
+		// `break`, `continue` and `goto` declare nothing and bind to the
+		// nearest enclosing construct of their own kind, and an `if` is not one
+		// -- so burying any of them in the guard's block changes neither scope
+		// nor target. `fallthrough` is the exception and is a syntactic one: it
+		// has to be the final statement of a case clause, and a statement
+		// inside an `if` block is not that.
+		return s.Tok != token.FALLTHROUGH
+	default:
+		return false
+	}
+}
+
 // statementGuard classifies one statement into Form S or Form D.
 //
 // The division is exactly "does this statement declare anything": Form S buries
@@ -273,28 +719,25 @@ func (g *guardResolver) blockIsLegalFor(stmt ast.Stmt) bool {
 // declarations back out. A compound assignment (`x += 1`) declares nothing and
 // is Form S; `x := 1` and `var x = 1` declare and are Form D.
 func (g *guardResolver) statementGuard(stmt ast.Stmt) (Guard, bool) {
-	span, ok := g.span(stmt)
-	if !ok {
-		return Guard{}, false
+	span := g.span(stmt)
+	if FormSStatement(stmt) {
+		return Guard{Form: GuardFormS, SiteSpan: span}, true
 	}
 	switch s := stmt.(type) {
-	case *ast.ExprStmt, *ast.ReturnStmt, *ast.IncDecStmt, *ast.SendStmt, *ast.DeferStmt, *ast.GoStmt:
-		return Guard{Form: GuardFormS, SiteSpan: span}, true
 	case *ast.AssignStmt:
-		if s.Tok != token.DEFINE {
-			return Guard{Form: GuardFormS, SiteSpan: span}, true
-		}
-		declared, ok := g.defineTypes(s)
+		// Not Form S, so it declares: the only assignment [FormSStatement]
+		// refuses is a `:=`.
+		declared, needs, ok := g.defineTypes(s)
 		if !ok {
 			return Guard{}, false
 		}
-		return Guard{Form: GuardFormD, SiteSpan: span, DeclTypes: declared}, true
+		return Guard{Form: GuardFormD, SiteSpan: span, DeclTypes: declared, Imports: needs}, true
 	case *ast.DeclStmt:
-		declared, ok := g.declTypes(s)
+		declared, needs, ok := g.declTypes(s)
 		if !ok {
 			return Guard{}, false
 		}
-		return Guard{Form: GuardFormD, SiteSpan: span, DeclTypes: declared}, true
+		return Guard{Form: GuardFormD, SiteSpan: span, DeclTypes: declared, Imports: needs}, true
 	default:
 		return Guard{}, false
 	}
@@ -314,13 +757,13 @@ func (g *guardResolver) statementGuard(stmt ast.Stmt) (Guard, bool) {
 // The names are collected before any of them is typed because
 // [guardResolver.rebindsOwnInitialiser] has to see the whole left-hand side at
 // once; see it for what a partial view would let through.
-func (g *guardResolver) defineTypes(assign *ast.AssignStmt) ([]DeclType, bool) {
+func (g *guardResolver) defineTypes(assign *ast.AssignStmt) ([]DeclType, []Completion, bool) {
 	idents := make([]*ast.Ident, 0, len(assign.Lhs))
 	names := make(map[string]bool, len(assign.Lhs))
 	for _, lhs := range assign.Lhs {
 		ident, ok := lhs.(*ast.Ident)
 		if !ok {
-			return nil, false
+			return nil, nil, false
 		}
 		if ident.Name == "_" {
 			continue
@@ -329,18 +772,20 @@ func (g *guardResolver) defineTypes(assign *ast.AssignStmt) ([]DeclType, bool) {
 		names[ident.Name] = true
 	}
 	if g.rebindsOwnInitialiser(names, assign.Rhs) {
-		return nil, false
+		return nil, nil, false
 	}
 
 	out := make([]DeclType, 0, len(idents))
+	var needs []Completion
 	for _, ident := range idents {
-		declared, ok := g.declTypeOf(ident)
+		declared, completed, ok := g.declTypeOf(ident)
 		if !ok {
-			return nil, false
+			return nil, nil, false
 		}
 		out = append(out, declared)
+		needs = MergeCompletions(needs, completed)
 	}
-	return out, true
+	return out, needs, true
 }
 
 // declTypes names what a `var` declaration inside a function body declares.
@@ -356,10 +801,10 @@ func (g *guardResolver) defineTypes(assign *ast.AssignStmt) ([]DeclType, bool) {
 // initialiser in it against every name it declares, and a spec that no
 // candidate sits in can still hold the line break that
 // [guardResolver.cutIsLineFree] refuses.
-func (g *guardResolver) declTypes(decl *ast.DeclStmt) ([]DeclType, bool) {
+func (g *guardResolver) declTypes(decl *ast.DeclStmt) ([]DeclType, []Completion, bool) {
 	gen, ok := decl.Decl.(*ast.GenDecl)
 	if !ok || gen.Tok != token.VAR {
-		return nil, false
+		return nil, nil, false
 	}
 	specs := make([]*ast.ValueSpec, 0, len(gen.Specs))
 	names := make(map[string]bool)
@@ -367,10 +812,10 @@ func (g *guardResolver) declTypes(decl *ast.DeclStmt) ([]DeclType, bool) {
 	for _, spec := range gen.Specs {
 		value, ok := spec.(*ast.ValueSpec)
 		if !ok {
-			return nil, false
+			return nil, nil, false
 		}
 		if !g.cutIsLineFree(value) {
-			return nil, false
+			return nil, nil, false
 		}
 		specs = append(specs, value)
 		values = append(values, value.Values...)
@@ -382,23 +827,25 @@ func (g *guardResolver) declTypes(decl *ast.DeclStmt) ([]DeclType, bool) {
 		}
 	}
 	if g.rebindsOwnInitialiser(names, values) {
-		return nil, false
+		return nil, nil, false
 	}
 
 	var out []DeclType
+	var needs []Completion
 	for _, value := range specs {
 		for _, name := range value.Names {
 			if name.Name == "_" {
 				continue
 			}
-			declared, ok := g.declTypeOf(name)
+			declared, completed, ok := g.declTypeOf(name)
 			if !ok {
-				return nil, false
+				return nil, nil, false
 			}
 			out = append(out, declared)
+			needs = MergeCompletions(needs, completed)
 		}
 	}
-	return out, true
+	return out, needs, true
 }
 
 // cutIsLineFree reports whether the bytes internal/instrument has to remove
@@ -546,7 +993,7 @@ func (g *guardResolver) fieldKeyed(lit *ast.CompositeLit) bool {
 // the probe may stand in for.
 //
 // The result types come from the enclosing function's signature rather than
-// from the operands, for the reason [ReturnSite] gives: the declared type is the
+// from the operands, for the reason [ProbeSite] gives: the declared type is the
 // conversion the `return` performs, and it is the conversion the mutant's
 // constant would have gone through too. [guardResolver.typeString] is what
 // spells them — the same machinery Form D's declarations go through, so a type
@@ -559,34 +1006,33 @@ func (g *guardResolver) fieldKeyed(lit *ast.CompositeLit) bool {
 // the compiler does not use. effects.go argues both. The per-result conditions
 // are [guardResolver.probesResult]'s.
 //
-// [ReturnSite.Index] is left at zero: the caller fills it in per result through
-// [ReturnSite.at], so that every candidate of one statement shares one site.
-func (g *guardResolver) returnSite(stmt *ast.ReturnStmt, results *types.Tuple) *ReturnSite {
+// [ProbeSite.Index] is left at zero: the caller fills it in per result through
+// [ProbeSite.at], so that every candidate of one statement shares one site.
+func (g *guardResolver) probeSite(stmt *ast.ReturnStmt, results *types.Tuple) *ProbeSite {
 	if stmt == nil || results == nil || results.Len() != len(stmt.Results) {
 		return nil
 	}
-	span, ok := g.span(stmt)
-	if !ok {
-		return nil
-	}
+	span := g.span(stmt)
 	for _, value := range stmt.Results {
 		if !g.effectFree(value) {
 			return nil
 		}
 	}
 	spelled := make([]string, 0, results.Len())
+	var needs []Completion
 	for i := range results.Len() {
 		declared := results.At(i).Type()
 		if mentionsTypeParam(declared, make(map[types.Type]bool)) {
 			return nil
 		}
-		rendered, spellable := g.typeString(declared)
+		rendered, completed, spellable := g.typeString(declared)
 		if !spellable {
 			return nil
 		}
 		spelled = append(spelled, rendered)
+		needs = MergeCompletions(needs, completed)
 	}
-	return &ReturnSite{Span: span, Types: spelled}
+	return &ProbeSite{Form: ProbeFormReturn, Span: span, Types: spelled, Imports: needs}
 }
 
 // probesResult reports whether the probe may stand in for the mutant at one
@@ -681,21 +1127,21 @@ func mentionsTypeParam(t types.Type, seen map[types.Type]bool) bool {
 
 // declTypeOf renders the type of one declared identifier as this file may
 // spell it.
-func (g *guardResolver) declTypeOf(ident *ast.Ident) (DeclType, bool) {
+func (g *guardResolver) declTypeOf(ident *ast.Ident) (DeclType, []Completion, bool) {
 	if g.info == nil {
-		return DeclType{}, false
+		return DeclType{}, nil, false
 	}
 	obj := g.info.Defs[ident]
 	if obj == nil {
 		// Not a definition: the identifier redeclares something declared
 		// earlier, or the checker recorded nothing for it.
-		return DeclType{}, false
+		return DeclType{}, nil, false
 	}
-	rendered, ok := g.typeString(obj.Type())
+	rendered, needs, ok := g.typeString(obj.Type())
 	if !ok {
-		return DeclType{}, false
+		return DeclType{}, nil, false
 	}
-	return DeclType{Name: ident.Name, Type: rendered}, true
+	return DeclType{Name: ident.Name, Type: rendered}, needs, true
 }
 
 // typeString renders a type as source this file could hold, or reports false.
@@ -707,26 +1153,32 @@ func (g *guardResolver) declTypeOf(ident *ast.Ident) (DeclType, bool) {
 // by printing the full import path. And a type may be perfectly qualifiable and
 // still unwritable, because it names something unexported in another package;
 // [nameable] walks the type for those.
-func (g *guardResolver) typeString(t types.Type) (string, bool) {
+func (g *guardResolver) typeString(t types.Type) (string, []Completion, bool) {
 	if t == nil {
-		return "", false
+		return "", nil, false
 	}
 	reachable := true
+	var completed []Completion
 	qualifier := func(p *types.Package) string {
-		name, ok := g.qualify(p)
+		name, completion, ok := g.qualify(p)
 		if !ok {
 			reachable = false
+			return ""
+		}
+		if completion != nil && !slices.Contains(completed, *completion) {
+			completed = append(completed, *completion)
 		}
 		return name
 	}
 	rendered := types.TypeString(t, qualifier)
 	if !reachable || rendered == "" {
-		return "", false
+		return "", nil, false
 	}
 	if !g.nameable(t, make(map[types.Type]bool)) {
-		return "", false
+		return "", nil, false
 	}
-	return rendered, true
+	slices.SortFunc(completed, func(a, b Completion) int { return strings.Compare(a.Path, b.Path) })
+	return rendered, completed, true
 }
 
 // qualify is the [types.Qualifier] the declared types are rendered with.
@@ -734,20 +1186,77 @@ func (g *guardResolver) typeString(t types.Type) (string, bool) {
 // The package under test renders unqualified, which is the whole reason this is
 // not [types.RelativeTo] over some other package: a local type written as
 // `mini.Buffer` into a file of package mini does not compile. Everything else
-// has to be reachable by a name the file already binds; discovery never adds an
-// import to make a type spellable.
-func (g *guardResolver) qualify(p *types.Package) (string, bool) {
+// has to be reachable by a name the file binds — or by one a *sibling* file
+// binds, which this file may then be given; imports.go argues why that and no
+// wider set.
+//
+// The second return is the import the answer depends on, and is nil whenever
+// the file could already spell it. A caller that cannot carry an import must
+// therefore not merely ignore it: a rendered type whose completion is dropped
+// is a type spelled with a name nothing binds.
+func (g *guardResolver) qualify(p *types.Package) (string, *Completion, bool) {
 	if p == nil || p == g.pkg {
-		return "", true
+		return "", nil, true
 	}
-	local, imported := g.imports[p.Path()]
-	if !imported {
-		return "", false
+	if local, imported := g.imports[p.Path()]; imported {
+		if local == "" {
+			return p.Name(), nil, true
+		}
+		return local, nil, true
 	}
-	if local == "" {
-		return p.Name(), true
+	return g.complete(p)
+}
+
+// complete gives this file a name for a package a sibling file imports.
+//
+// The name is chosen once per path per file and remembered, so that every
+// rewrite of one file agrees about what the package is called — two names for
+// one package would be two imports, and the second would be a redeclaration.
+//
+// A preferred name already bound in this file is bumped rather than refused.
+// Refusing would make the completion depend on whether some unrelated local
+// variable happened to share a package's name, which is a rule nobody could
+// predict; bumping is what internal/instrument already does for the runtime
+// alias, for the same reason.
+func (g *guardResolver) complete(p *types.Package) (string, *Completion, bool) {
+	importPath := p.Path()
+	if chosen, done := g.added[importPath]; done {
+		return chosen, &Completion{Path: importPath, Local: chosen}, true
 	}
-	return local, true
+	preferred, sibling := g.siblings[importPath]
+	if !sibling {
+		return "", nil, false
+	}
+	if preferred == "" {
+		preferred = p.Name()
+	}
+	if preferred == "" {
+		preferred = defaultLocal(importPath)
+	}
+	chosen := g.freeName(preferred)
+	g.added[importPath] = chosen
+	g.taken[chosen] = true
+	return chosen, &Completion{Path: importPath, Local: chosen}, true
+}
+
+// freeName is preferred, or preferred with the lowest number past 1 appended
+// that nothing in this file binds.
+//
+// The counter is bounded because an unbounded search over a set that only grows
+// is a loop whose termination depends on the data. A file binding `x`, `x2` …
+// `x64` is not one this tool needs to rewrite, and stopping is better than
+// spinning.
+func (g *guardResolver) freeName(preferred string) string {
+	if !g.taken[preferred] {
+		return preferred
+	}
+	for n := 2; n < 64; n++ {
+		candidate := preferred + strconv.Itoa(n)
+		if !g.taken[candidate] {
+			return candidate
+		}
+	}
+	return preferred
 }
 
 // nameable reports whether every part of a type can be written in this file.
@@ -863,6 +1372,27 @@ func (g *guardResolver) nameableObj(obj *types.TypeName) bool {
 	if !obj.Exported() {
 		return false
 	}
-	_, ok := g.qualify(pkg)
-	return ok
+	return g.reachable(pkg)
+}
+
+// reachable reports whether a package can be named in this file, without
+// deciding what to call it.
+//
+// [guardResolver.qualify] would answer the same question and *choose a name* on
+// the way, which is a side effect a check should not have: a type refused a
+// moment later by [guardResolver.nameable] would leave a package reserved under
+// a name nothing ever writes. The reservation is harmless and deterministic,
+// and making the check pure is cheaper than explaining it.
+func (g *guardResolver) reachable(p *types.Package) bool {
+	if p == nil || p == g.pkg {
+		return true
+	}
+	if _, imported := g.imports[p.Path()]; imported {
+		return true
+	}
+	if _, done := g.added[p.Path()]; done {
+		return true
+	}
+	_, sibling := g.siblings[p.Path()]
+	return sibling
 }

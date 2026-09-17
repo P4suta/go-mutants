@@ -6,6 +6,7 @@ package discover
 import (
 	"context"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 // carries away from this phase and the first that is allowed to be absent.
 //
 // [Guard] answers "how does the instrumenter write this mutant into the mutant
-// tree". [ReturnSite] answers a different question for a different tree: how
+// tree". [ProbeSite] answers a different question for a different tree: how
 // does it write, into the probe tree, the test that says whether this mutant's
 // value would have differed here. The answer needs the declared result type of
 // every value the statement returns — not the type of the expression, the type
@@ -94,7 +95,7 @@ func candidateWithOriginal(t *testing.T, candidates []Located, rule, original st
 	return found[0]
 }
 
-// TestReturnSiteNamesEveryResultTypeOfTheStatement is the hint's central claim:
+// TestProbeSiteNamesEveryResultTypeOfTheStatement is the hint's central claim:
 // the probe has to declare a temporary for *every* value the statement returns,
 // not only the one being mutated, because the rewrite evaluates the operands
 // once each and hands them all to one `return`.
@@ -102,7 +103,7 @@ func candidateWithOriginal(t *testing.T, candidates []Located, rule, original st
 // Two candidates of one statement is also the case where the hint has to say
 // two different things about the same bytes: they share a span and a type list
 // and differ only in which result the edit replaces.
-func TestReturnSiteNamesEveryResultTypeOfTheStatement(t *testing.T) {
+func TestProbeSiteNamesEveryResultTypeOfTheStatement(t *testing.T) {
 	candidates, src := discoverProbeModule(t, `package sample
 
 // Measure reports the length of s and whatever measuring it went wrong with.
@@ -126,8 +127,8 @@ func measure(s string) (int, error) { return 0, nil }
 		{ruleReturnErrToNil, "err", 1},
 	} {
 		t.Run(c.rule, func(t *testing.T) {
-			got := candidateWithOriginal(t, candidates, c.rule, c.original).Guard.Return
-			want := &ReturnSite{Span: stmt, Types: []string{"int", "error"}, Index: c.index}
+			got := candidateWithOriginal(t, candidates, c.rule, c.original).Guard.Probe
+			want := &ProbeSite{Form: ProbeFormReturn, Span: stmt, Types: []string{"int", "error"}, Index: c.index}
 			if !reflect.DeepEqual(got, want) {
 				t.Errorf("return site = %+v, want %+v", got, want)
 			}
@@ -135,7 +136,7 @@ func measure(s string) (int, error) { return 0, nil }
 	}
 }
 
-// TestReturnSiteSpellsTheDeclaredResultTypeNotTheOperands pins the type the
+// TestProbeSiteSpellsTheDeclaredResultTypeNotTheOperands pins the type the
 // hint carries.
 //
 // The rewrite declares `var r0 T = E0`, and T has to be the *result* type: that
@@ -147,8 +148,8 @@ func measure(s string) (int, error) { return 0, nil }
 //
 // The float case that used to stand here is gone on purpose: a floating-point
 // result is refused outright now, and
-// [TestReturnSiteRefusesAFloatingResult] is where it is stated.
-func TestReturnSiteSpellsTheDeclaredResultTypeNotTheOperands(t *testing.T) {
+// [TestProbeSiteRefusesAFloatingResult] is where it is stated.
+func TestProbeSiteSpellsTheDeclaredResultTypeNotTheOperands(t *testing.T) {
 	candidates, src := discoverProbeModule(t, `package sample
 
 // Level is a named integer type, spelled as this file spells it.
@@ -184,13 +185,13 @@ func Count() (n Level) { return 1 }
 // returnSiteInside returns the one return site of a candidate whose statement
 // lies inside a snippet of the fixture, which is how two candidates of one rule
 // in one file are told apart.
-func returnSiteInside(t *testing.T, candidates []Located, src, snippet string) *ReturnSite {
+func returnSiteInside(t *testing.T, candidates []Located, src, snippet string) *ProbeSite {
 	t.Helper()
 
 	region := spanOf(t, src, snippet)
-	var found []*ReturnSite
+	var found []*ProbeSite
 	for _, c := range candidates {
-		site := c.Guard.Return
+		site := c.Guard.Probe
 		if site != nil && region.Contains(site.Span) {
 			found = append(found, site)
 		}
@@ -201,19 +202,27 @@ func returnSiteInside(t *testing.T, candidates []Located, src, snippet string) *
 	return found[0]
 }
 
-// TestReturnSiteIsNilWhenAResultTypeCannotBeSpelled covers the refusal that
+// TestProbeSiteIsNilWhenAResultTypeCannotBeSpelled covers the refusal that
 // keeps the hint honest.
 //
 // The rewrite writes the result types into the file it rewrites, so a type that
-// file cannot name is a probe that cannot be written. Both halves of the
-// existing spelling machinery are exercised, because they fail for unrelated
-// reasons: a dot import binds a package's contents rather than the package, so
-// the qualifier has no name for it, and `unsafe.Pointer` is a basic type that
-// still needs an import, which is why it is refused whatever the file imports.
+// file cannot name is a probe that cannot be written. What is left of that
+// refusal is `unsafe.Pointer`: a basic type that still needs an import, and one
+// no import makes writable, so it is refused whatever the file holds.
+//
+// A dot-imported type used to be here beside it and is not any more. It was the
+// *qualifier* half of the refusal — a dot import binds a package's contents
+// rather than the package, so there was no name to write — and that is exactly
+// what import completion supplies; [TestADotImportedResultTypeIsNowSpellable]
+// is the same fixture asserting the other answer.
 //
 // A refused hint costs the probe and never the mutant: every candidate here is
-// still catalogued, still mutated, and still guarded in the mutant tree.
-func TestReturnSiteIsNilWhenAResultTypeCannotBeSpelled(t *testing.T) {
+// still catalogued, still mutated, and still guarded in the mutant tree. Nor
+// does it cost the *measurement*, any more, and that is the second thing
+// asserted below: the value form measures the operand rather than the
+// statement, so a result type nothing can spell no longer takes the mutant
+// beside it down with it.
+func TestProbeSiteIsNilWhenAResultTypeCannotBeSpelled(t *testing.T) {
 	for _, c := range []struct {
 		name   string
 		source string
@@ -221,22 +230,6 @@ func TestReturnSiteIsNilWhenAResultTypeCannotBeSpelled(t *testing.T) {
 		rule   string
 		bytes  string
 	}{{
-		name: "a dot-imported result type",
-		source: `package sample
-
-import . "example.com/probe/kinds"
-
-// Pair returns a value of a type this file imports without naming.
-func Pair(a int) (int, Kind) { return a, Zero }
-`,
-		extra: map[string]string{
-			"kinds/kinds.go": "// Package kinds holds the type sample cannot name.\npackage kinds\n\n" +
-				"// Kind is a named integer type.\ntype Kind int\n\n" +
-				"// Zero is the kind that is nothing.\nconst Zero Kind = 0\n",
-		},
-		rule:  ruleReturnZeroNumeric,
-		bytes: "a",
-	}, {
 		name: "an unsafe pointer result",
 		source: `package sample
 
@@ -251,9 +244,15 @@ func Ptr(p unsafe.Pointer) (int, unsafe.Pointer) { return 1, p }
 		t.Run(c.name, func(t *testing.T) {
 			candidates, _ := discoverProbeModule(t, c.source, c.extra)
 			got := candidateWithOriginal(t, candidates, c.rule, c.bytes)
-			if got.Guard.Return != nil {
-				t.Errorf("return site = %+v, want none: the file cannot spell every result type",
-					got.Guard.Return)
+			site := got.Guard.Probe
+			if site != nil && site.Form == ProbeFormReturn {
+				t.Errorf("return site = %+v, want none: the file cannot spell every result type", site)
+			}
+			// The operand the mutant replaces is an `int`, which the value form
+			// can spell and compare, so the candidate is measured after all --
+			// at the expression rather than at the statement.
+			if site == nil || site.Form != ProbeFormValue {
+				t.Errorf("probe site = %+v, want the value form over the operand", site)
 			}
 			if got.Guard.Form == "" {
 				t.Error("the candidate lost its guard form as well, so the refusal cost the mutant and not only the probe")
@@ -262,16 +261,60 @@ func Ptr(p unsafe.Pointer) (int, unsafe.Pointer) { return 1, p }
 	}
 }
 
-// TestReturnSiteIsNilForATypeParameterResult refuses the shape the compiler
+// TestADotImportedResultTypeIsNowSpellable is the other half of the refusal
+// above, and the smallest observable consequence of import completion.
+//
+// A dot import brings a package's contents into the file's own scope and binds
+// no name for the package itself, so there was nothing to qualify `Kind` with
+// and the probe could not be written. The package is imported all the same —
+// the edge is in the graph — so a completion may give this file a name for it,
+// and the hint that was refused is now a hint that names the import it needs.
+func TestADotImportedResultTypeIsNowSpellable(t *testing.T) {
+	candidates, _ := discoverProbeModule(t, `package sample
+
+import . "example.com/probe/kinds"
+
+// Pair returns a value of a type this file imports without naming.
+func Pair(a int) (int, Kind) { return a, Zero }
+`, map[string]string{
+		"kinds/kinds.go": "// Package kinds holds the type sample could not name.\npackage kinds\n\n" +
+			"// Kind is a named integer type.\ntype Kind int\n\n" +
+			"// Zero is the kind that is nothing.\nconst Zero Kind = 0\n",
+	})
+	got := candidateWithOriginal(t, candidates, ruleReturnZeroNumeric, "a")
+	site := got.Guard.Probe
+	if site == nil {
+		t.Fatal("the return site is still refused, so the dot import was not completed")
+	}
+	if len(site.Types) != 2 || site.Types[1] != "kinds.Kind" {
+		t.Errorf("Types = %q, want the second result spelled against the completed import", site.Types)
+	}
+	want := []Completion{{Path: "example.com/probe/kinds", Local: "kinds"}}
+	if !slices.Equal(site.Imports, want) {
+		t.Errorf("Imports = %+v, want %+v", site.Imports, want)
+	}
+	// The import belongs to the probe tree and not to the mutant tree: the
+	// guard here is a statement form, which writes no type at all, and an
+	// import the mutant tree carried unused would not compile.
+	if len(got.Guard.Imports) != 0 {
+		t.Errorf("Guard.Imports = %+v, and the mutant tree's rewrite spells no type", got.Guard.Imports)
+	}
+}
+
+// TestTheReturnFormRefusesATypeParameterResult refuses the shape the compiler
 // might refuse.
 //
-// The probe compares a temporary against a constant, and a value of a type
-// parameter's type need not be comparable with one: the constraint decides, and
-// this phase does not reason about constraints. The bisection would find such a
-// site and drop that one mutant's probe, which is exactly the mechanism that
-// exists for the cases nobody foresaw — spending a build on a case that is
-// foreseen is not what it is for.
-func TestReturnSiteIsNilForATypeParameterResult(t *testing.T) {
+// The return form declares a temporary per result and compares one against a
+// constant, and a value of a type parameter's type need not be comparable with
+// one: the constraint decides, and this phase does not reason about
+// constraints. The bisection would find such a site and drop that one mutant's
+// probe, which is exactly the mechanism that exists for the cases nobody
+// foresaw — spending a build on a case that is foreseen is not what it is for.
+//
+// The value form is not refused, and the contrast is the reason it exists. It
+// declares one temporary, of the *operand's* own type, and the operand here is
+// an `int`: the type parameter is the result beside it and is never named.
+func TestTheReturnFormRefusesATypeParameterResult(t *testing.T) {
 	candidates, _ := discoverProbeModule(t, `package sample
 
 // Pair returns its own arguments, one of them of a type parameter's type.
@@ -279,8 +322,15 @@ func Pair[T any](a int, t T) (int, T) { return a, t }
 `, nil)
 
 	got := candidateWithOriginal(t, candidates, ruleReturnZeroNumeric, "a")
-	if got.Guard.Return != nil {
-		t.Errorf("return site = %+v, want none: one result is a type parameter", got.Guard.Return)
+	site := got.Guard.Probe
+	if site != nil && site.Form == ProbeFormReturn {
+		t.Errorf("return site = %+v, want none: one result is a type parameter", site)
+	}
+	if site == nil || site.Form != ProbeFormValue {
+		t.Errorf("probe site = %+v, want the value form over the int operand", site)
+	}
+	if len(site.Types) != 1 || site.Types[0] != "int" {
+		t.Errorf("Types = %q, want the operand's own type", site.Types)
 	}
 }
 
@@ -310,7 +360,7 @@ func describe(candidates []Located) []string {
 	return out
 }
 
-// TestReturnSiteRefusesAStatementWithAnEffectfulOperand is the first of the
+// TestProbeSiteRefusesAStatementWithAnEffectfulOperand is the first of the
 // three conditions the hint rests on, and the only one that is a property of the
 // whole statement rather than of one result.
 //
@@ -330,7 +380,7 @@ func describe(candidates []Located) []string {
 // the probe's execution is the original's. So the refusal is stated over every
 // candidate of the statement, including the ones whose own operand is a plain
 // identifier.
-func TestReturnSiteRefusesAStatementWithAnEffectfulOperand(t *testing.T) {
+func TestProbeSiteRefusesAStatementWithAnEffectfulOperand(t *testing.T) {
 	for _, c := range []struct {
 		name   string
 		source string
@@ -368,7 +418,7 @@ func Take(n int, ch chan int) (int, int) { return n, <-ch }
 func Grow(s []int, x int) []int { return append(s, x) }
 `,
 		stmt: "return append(s, x)",
-		want: []string{"return-nil append(s, x)"},
+		want: []string{"return-nil append(s, x)", "return-empty-slice append(s, x)"},
 	}, {
 		name: "a call beside the mutated operand",
 		source: `package sample
@@ -401,9 +451,9 @@ func Read(c counter) (int, error) { return c.Load(), nil }
 				t.Fatalf("the statement catalogues %v, want %v", got, c.want)
 			}
 			for _, got := range inside {
-				if got.Guard.Return != nil {
+				if got.Guard.Probe != nil {
 					t.Errorf("%s over %q carries the return site %+v, want none: an operand of its statement has effects",
-						got.Rule.Name, got.Original, got.Guard.Return)
+						got.Rule.Name, got.Original, got.Guard.Probe)
 				}
 				if got.Guard.Form == "" {
 					t.Errorf("%s over %q lost its guard form as well, so the refusal cost the mutant and not only the probe",
@@ -414,7 +464,7 @@ func Read(c counter) (int, error) { return c.Load(), nil }
 	}
 }
 
-// TestReturnSiteRefusesTheResultWhoseOperandCanPanic is the second condition,
+// TestProbeSiteRefusesTheResultWhoseOperandCanPanic is the second condition,
 // and the first that is decided per result.
 //
 // If the probed operand panics, the mutant that replaced it with a constant does
@@ -428,7 +478,7 @@ func Read(c counter) (int, error) { return c.Load(), nil }
 // error keeps its hint. That is the claim in both directions at once: the
 // statement is effect-free, so it was not refused for the reason above, and the
 // operand that cannot panic is still probed while the one that can is not.
-func TestReturnSiteRefusesTheResultWhoseOperandCanPanic(t *testing.T) {
+func TestProbeSiteRefusesTheResultWhoseOperandCanPanic(t *testing.T) {
 	for _, c := range []struct {
 		name   string
 		source string
@@ -547,15 +597,15 @@ func Keyed(k any, err error) (map[any]int, error) { return map[any]int{k: 1}, er
 			candidates, src := discoverProbeModule(t, c.source, nil)
 
 			got := candidateWithOriginal(t, candidates, c.rule, c.bytes)
-			if got.Guard.Return != nil {
-				t.Errorf("return site = %+v, want none: evaluating %s can panic", got.Guard.Return, c.bytes)
+			if got.Guard.Probe != nil {
+				t.Errorf("return site = %+v, want none: evaluating %s can panic", got.Guard.Probe, c.bytes)
 			}
 			if got.Guard.Form == "" {
 				t.Error("the candidate lost its guard form as well, so the refusal cost the mutant and not only the probe")
 			}
 
-			sibling := candidateWithOriginal(t, candidates, ruleReturnErrToNil, "err").Guard.Return
-			want := &ReturnSite{Span: spanOf(t, src, c.stmt), Types: c.types, Index: 1}
+			sibling := candidateWithOriginal(t, candidates, ruleReturnErrToNil, "err").Guard.Probe
+			want := &ProbeSite{Form: ProbeFormReturn, Span: spanOf(t, src, c.stmt), Types: c.types, Index: 1}
 			if !reflect.DeepEqual(sibling, want) {
 				t.Errorf("the error beside it carries %+v, want %+v: one refused result does not refuse the statement",
 					sibling, want)
@@ -564,7 +614,7 @@ func Keyed(k any, err error) (map[any]int, error) { return map[any]int{k: 1}, er
 	}
 }
 
-// TestReturnSiteAcceptsEveryEffectFreeShape is the other half of the two
+// TestProbeSiteAcceptsEveryEffectFreeShape is the other half of the two
 // grammars: what a probed operand is still allowed to be.
 //
 // The rules are refusals, and a refusal is only as good as what it leaves
@@ -574,7 +624,7 @@ func Keyed(k any, err error) (map[any]int, error) { return map[any]int{k: 1}, er
 // with an operator that cannot fail. Between them they are what the measured
 // return-value survivors are actually made of, which is why the sound rule costs
 // the layer nothing it could have discharged.
-func TestReturnSiteAcceptsEveryEffectFreeShape(t *testing.T) {
+func TestProbeSiteAcceptsEveryEffectFreeShape(t *testing.T) {
 	candidates, src := discoverProbeModule(t, `package sample
 
 import "time"
@@ -668,8 +718,8 @@ func Both(ok, found bool) bool { return ok && found }
 		{"a logical conjunction", ruleReturnTrue, "ok && found", "return ok && found", []string{"bool"}, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got := candidateWithOriginal(t, candidates, c.rule, c.bytes).Guard.Return
-			want := &ReturnSite{Span: spanOf(t, src, c.stmt), Types: c.types, Index: c.index}
+			got := candidateWithOriginal(t, candidates, c.rule, c.bytes).Guard.Probe
+			want := &ProbeSite{Form: ProbeFormReturn, Span: spanOf(t, src, c.stmt), Types: c.types, Index: c.index}
 			if !reflect.DeepEqual(got, want) {
 				t.Errorf("return site = %+v, want %+v", got, want)
 			}
@@ -677,7 +727,7 @@ func Both(ok, found bool) bool { return ok && found }
 	}
 }
 
-// TestReturnSiteRefusesAFloatingResult is the third condition, and the one that
+// TestProbeSiteRefusesAFloatingResult is the third condition, and the one that
 // is about the comparison rather than about the operand.
 //
 // `-0.0 != 0` is false. A `return-zero-numeric` mutant at a float result whose
@@ -690,7 +740,7 @@ func Both(ok, found bool) bool { return ok && found }
 // Complex results go with them, for the same reason in two dimensions, and the
 // int beside one keeps its hint: the refusal is about the result being compared,
 // not about the statement it sits in.
-func TestReturnSiteRefusesAFloatingResult(t *testing.T) {
+func TestProbeSiteRefusesAFloatingResult(t *testing.T) {
 	candidates, src := discoverProbeModule(t, `package sample
 
 // Half returns a float, whose negative zero compares equal to zero.
@@ -709,8 +759,8 @@ func Wave(n int, z complex128) (int, complex128) { return n, z }
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got := candidateWithOriginal(t, candidates, ruleReturnZeroNumeric, c.bytes)
-			if got.Guard.Return != nil {
-				t.Errorf("return site = %+v, want none: -0.0 != 0 is false", got.Guard.Return)
+			if got.Guard.Probe != nil {
+				t.Errorf("return site = %+v, want none: -0.0 != 0 is false", got.Guard.Probe)
 			}
 			if got.Guard.Form == "" {
 				t.Error("the candidate lost its guard form as well, so the refusal cost the mutant and not only the probe")
@@ -719,22 +769,27 @@ func Wave(n int, z complex128) (int, complex128) { return n, z }
 	}
 
 	t.Run("the integer beside a complex result", func(t *testing.T) {
-		got := candidateWithOriginal(t, candidates, ruleReturnZeroNumeric, "n").Guard.Return
-		want := &ReturnSite{Span: spanOf(t, src, "return n, z"), Types: []string{"int", "complex128"}, Index: 0}
+		got := candidateWithOriginal(t, candidates, ruleReturnZeroNumeric, "n").Guard.Probe
+		want := &ProbeSite{Form: ProbeFormReturn, Span: spanOf(t, src, "return n, z"), Types: []string{"int", "complex128"}, Index: 0}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("return site = %+v, want %+v", got, want)
 		}
 	})
 }
 
-// TestReturnSiteIsAbsentForOtherRules keeps the hint to the family it describes.
+// TestTheReturnFormIsKeptToTheFamilyItDescribes is what the form field is for.
 //
-// The rewrite it drives replaces a returned value with a constant and tests
+// The return rewrite replaces a returned value with a constant and tests
 // whether the value differs. That is a statement about the return-value rules
 // and about nothing else: an operator swap inside the same statement changes a
-// value the hint says nothing about, and a probe built from this hint for it
-// would report an infection for the wrong mutant.
-func TestReturnSiteIsAbsentForOtherRules(t *testing.T) {
+// value that hint says nothing about, and a probe built from it for that mutant
+// would report an infection for the wrong one.
+//
+// The swap is not unprobed, and that is the point of asserting all three
+// together: it gets the *boolean* form, which measures the comparison where it
+// stands rather than the value the function returns. One statement, two forms,
+// and each candidate carries the one that speaks for it.
+func TestTheReturnFormIsKeptToTheFamilyItDescribes(t *testing.T) {
 	candidates, src := discoverProbeModule(t, `package sample
 
 // Above reports whether a exceeds b.
@@ -744,11 +799,11 @@ func Above(a, b int) bool { return a > b }
 	stmt := spanOf(t, src, "return a > b")
 	for _, c := range []struct {
 		rule string
-		want *ReturnSite
+		want *ProbeSite
 	}{
-		{ruleReturnTrue, &ReturnSite{Span: stmt, Types: []string{"bool"}, Index: 0}},
-		{ruleReturnFalse, &ReturnSite{Span: stmt, Types: []string{"bool"}, Index: 0}},
-		{"gt-to-ge", nil},
+		{ruleReturnTrue, &ProbeSite{Form: ProbeFormReturn, Span: stmt, Types: []string{"bool"}, Index: 0}},
+		{ruleReturnFalse, &ProbeSite{Form: ProbeFormReturn, Span: stmt, Types: []string{"bool"}, Index: 0}},
+		{"gt-to-ge", &ProbeSite{Form: ProbeFormBool, Span: spanOf(t, src, "a > b")}},
 	} {
 		t.Run(c.rule, func(t *testing.T) {
 			var got Located
@@ -758,17 +813,17 @@ func Above(a, b int) bool { return a > b }
 			default:
 				got = candidateWithOriginal(t, candidates, c.rule, "a > b")
 			}
-			if !reflect.DeepEqual(got.Guard.Return, c.want) {
-				t.Errorf("return site = %+v, want %+v", got.Guard.Return, c.want)
+			if !reflect.DeepEqual(got.Guard.Probe, c.want) {
+				t.Errorf("probe site = %+v, want %+v", got.Guard.Probe, c.want)
 			}
 		})
 	}
 }
 
-// TestReturnSiteDoesNotDisturbTheMutantSide is the compatibility claim in the
+// TestProbeSiteDoesNotDisturbTheMutantSide is the compatibility claim in the
 // smallest form that can hold it: the hint rides beside the guard, and the
 // guard is what it was.
-func TestReturnSiteDoesNotDisturbTheMutantSide(t *testing.T) {
+func TestProbeSiteDoesNotDisturbTheMutantSide(t *testing.T) {
 	candidates, src := discoverProbeModule(t, `package sample
 
 // Above reports whether a exceeds b.

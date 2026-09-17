@@ -115,6 +115,16 @@ const (
 	// is a licence not to run a test, so a log that cannot be read whole yields
 	// nothing rather than the part of itself that still parses.
 	CodeInfectionLog Code = "GOM7330"
+	// CodeLoopCensus reports a loop census [ReadLoopCensus] will not read, or a
+	// limit table that could not be written: an empty file, a line that is
+	// neither this tree's header nor a site and a count, a site outside the
+	// tree's own, a count that is not a decimal uint64, or a last line the
+	// process that wrote it never finished. It also reports a negative loop
+	// count, which is the caller's own bug. A census is what every ceiling is
+	// derived from, and a ceiling that is too low reports a mutant that
+	// terminates as one that does not, so a census that cannot be read whole
+	// yields nothing rather than the part of itself that still parses.
+	CodeLoopCensus Code = "GOM7331"
 )
 
 // String returns the code as it is printed.
@@ -143,6 +153,7 @@ var codes = []Code{
 	CodeWriteFailed,
 	CodeMissingGuard,
 	CodeInfectionLog,
+	CodeLoopCensus,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric

@@ -25,10 +25,23 @@ const (
 	// resolved, or is not a directory. It is a caller mistake rather than a
 	// fact about the tree under test.
 	CodeSnapshotRoot Code = "GOM4101"
-	// CodeWorkspace reports a `go.work` file at the snapshot root. Multi-module
-	// workspaces are not supported in v1: one module path, one set of
-	// module-relative identities, one baseline. Saying so is the honest answer;
-	// mutating the first module and quietly ignoring the rest is not.
+	// CodeWorkspace reports a `go.work` at the snapshot root that this run
+	// cannot proceed on, which is every workspace and some of them twice over.
+	//
+	// A single-module discovery cannot measure one: its mutants have no module
+	// to be relative to and its modules have no one baseline. A workspace is
+	// measured by [DiscoverWorkspace] instead, which is one pass per module
+	// over one catalogue -- see ADR 0012 -- so this is the answer to "you have
+	// pointed the wrong entry point at this tree", not to "this is not
+	// supported".
+	//
+	// Before that refusal is reached, [DetectWorkspace] reads the file, and the
+	// same code reports a workspace nothing could measure whatever this build
+	// supported: one that does not parse, uses no module, names a directory
+	// that holds no go.mod or declares no module path, joins two modules
+	// spelling one module path, or reaches outside the snapshot with a `use` or
+	// a filesystem `replace`. One code, because it names one condition -- a
+	// `go.work` this run cannot proceed on -- and the message says which.
 	//
 	// A workspace file outside the snapshot is neither reported nor obeyed. The
 	// loader runs with GOWORK=off, so a snapshot that happens to sit below

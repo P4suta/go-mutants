@@ -91,6 +91,44 @@ func isUniverseBool(t types.Type) bool {
 // would be spliced into a function returning an int. What the constraint is
 // made of does not help either: a parameter constrained to `*T | []T` still
 // cannot be handed a plain `nil`, because `nil` needs a single type to be.
+// isEmptiable reports whether a type has a neutral value that is not nil, and
+// which of the two it is.
+//
+// Slices and maps, and nothing else. The line is: a type is in when it has two
+// distinct neutral values that the standard library treats differently and that
+// `len()` cannot separate. `x == nil` is true of one and false of the other;
+// `encoding/json` writes `null` for one and `[]` or `{}` for the other; and
+// `len(x) == 0` is true of both, which is the assertion a suite routinely makes
+// and which therefore cannot tell them apart.
+//
+// A string has no nil, so `""` is its only neutral and return-empty-string
+// already offers it. An array or a struct has `T{}`, which is its *zero* value
+// rather than a second neutral. A channel's `make(chan T)` is not neutral at
+// all: a nil channel makes a select case unselectable and an unbuffered one
+// blocks, so the dominant outcome would be a hang. A pointer's `new(T)` would
+// allocate and would *mask* a nil dereference rather than expose one. A
+// function's would need the whole signature rendered.
+//
+// The type parameter is refused before the underlying type is consulted, for
+// isNillable's reason: a parameter's underlying type is its constraint, and an
+// unwary reading would offer a slice literal for a function returning an int.
+func isEmptiable(t types.Type) (slice, mapped bool) {
+	if t == nil {
+		return false, false
+	}
+	if _, isParam := types.Unalias(t).(*types.TypeParam); isParam {
+		return false, false
+	}
+	switch t.Underlying().(type) {
+	case *types.Slice:
+		return true, false
+	case *types.Map:
+		return false, true
+	default:
+		return false, false
+	}
+}
+
 func isNillable(t types.Type) bool {
 	if t == nil {
 		return false
@@ -128,11 +166,16 @@ func isExactlyError(t types.Type) bool {
 
 // implementsError reports whether a type satisfies the error interface, which
 // is what `err != nil` has to be asking about for `nil-error-branch` to apply.
+//
+// Only the absent type is refused before the question is put. go/types
+// dereferences what it is given, so a nil type is a crash rather than an
+// answer; the invalid type and the type of an untyped `nil` are ordinary
+// arguments to it and already answer false. Naming those two as well would be a
+// second spelling of a rule the call below already applies, and one no type
+// could tell from its opposite -- a `&&` in place of either `||` would select
+// the same branch on every type there is.
 func implementsError(t types.Type) bool {
-	if t == nil || t == types.Typ[types.UntypedNil] || t == types.Typ[types.Invalid] {
-		return false
-	}
-	return types.Implements(t, errorInterface)
+	return t != nil && types.Implements(t, errorInterface)
 }
 
 // typeOf returns the type the checker recorded for an expression, or nil.

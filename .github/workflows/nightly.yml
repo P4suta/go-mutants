@@ -50,6 +50,48 @@ jobs:
           # thing as its input.
           - target: FuzzFlatten
             package: ./internal/instrument
+          # The four readers of somebody else's bytes. Each parses output from a
+          # program go-mutants does not control and cannot pin -- a git release,
+          # a toolchain release, a file a user passed on the command line -- so
+          # each has to refuse rather than crash on anything it does not
+          # recognise.
+          - target: FuzzParseTextfmt
+            package: ./internal/coverage
+          - target: FuzzParseDiff
+            package: ./internal/gitdiff
+          - target: FuzzValidate
+            package: ./internal/schemas
+          # And the two invariants nothing writes down: that a mutant identity
+          # is injective, which every cache key and every expectation row rests
+          # on, and that the interval forest accounts for every site exactly
+          # once, which is what stops a mutant being silently never written.
+          - target: FuzzMutantIdentity
+            package: ./internal/mutation
+          - target: FuzzBuild
+            package: ./internal/interval
+          # Four more readers of somebody else's bytes. The first two are the
+          # toolchain's own output -- what `go version` printed before anything
+          # else ran, and what the compiler printed about a snapshot that will
+          # not build, which is what decides who is blamed for it. The third is
+          # a recording this tool wrote and may not have finished writing, read
+          # after the fact by `trace summary`, `trace diff` and `explain`. The
+          # fourth is a document a CI matrix published, read back by
+          # `report merge` with a strict decoder.
+          - target: FuzzParseVersion
+            package: ./internal/gocmd
+          - target: FuzzParseDiagnostics
+            package: ./internal/validate
+          - target: FuzzReadRecording
+            package: ./trace
+          - target: FuzzParseDocument
+            package: ./internal/report
+          # And the two values a person types: a shard specification on a
+          # command line, and a flag in a `test.command` that a safety check has
+          # to recognise exactly as the test binary will.
+          - target: FuzzParseShardSpec
+            package: ./internal/report
+          - target: FuzzMatchAgreesWithTheFlagPackage
+            package: ./internal/testflag
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -163,7 +205,7 @@ jobs:
       - name: Property suites, deepened and repeated
         run: >-
           mise exec -- go test -count=5 -timeout=40m
-          ./internal/instrument/... ./internal/interval/...
+          ./internal/glob/... ./internal/instrument/... ./internal/interval/...
           ./internal/mutation/...
       # The same gate as CI's platform-tests job, and for the same reason: the
       # corpus is an input, and a suite that wrote where it reads cannot be
@@ -296,6 +338,32 @@ jobs:
   # It is a report, so a failure here is a thing to read rather than a thing to
   # block on -- but the upload runs `if: always()` regardless, since a benchmark
   # that panicked halfway still wrote the lines before it.
+  # The audit the pull-request gate cannot afford.
+  #
+  # `dogfood-audit` re-derives the run report from the recording beside it,
+  # without importing a line of the code that wrote either. It answers a
+  # different question from dogfood's -- not whether the tests catch a mutant,
+  # but whether the document saying so agrees with the account of what ran --
+  # and a report is written by the run it describes, so until two documents are
+  # read separately the run is its own only witness.
+  #
+  # Here rather than in ci.yml because it was measured: the recording costs
+  # about a third again on the full scope, which is not a price for every push
+  # to pay for a question nobody asks every push. mise.toml carries the numbers.
+  dogfood-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        # The integration tier and the audit both read git.
+        with:
+          fetch-depth: 0
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
+        with:
+          install: true
+          cache: true
+      - run: mise run dogfood-audit
+
   bench:
     runs-on: ubuntu-latest
     timeout-minutes: 30

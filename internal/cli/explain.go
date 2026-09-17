@@ -170,6 +170,10 @@ func (e *explainer) skips(rows []skipRow) {
 // One row is one suppressed *candidate*, so a position that two rules both
 // proposed an edit at is printed twice. That is what keeps the rows summing to
 // the count above them, and it is true: two edits really were declined there.
+// Each row names its rule, which is what makes the repetition readable -- a
+// named boolean condition is refused by three rules at one coordinate, and
+// three identical lines would look like a counting bug rather than like three
+// refusals.
 func (e *explainer) skipSites(rows []skipRow, sites []discover.SkipSite) {
 	e.skipSection(rows, "", func(reason string) {
 		for _, site := range sites {
@@ -188,9 +192,35 @@ func (e *explainer) skipSites(rows []skipRow, sites []discover.SkipSite) {
 // would have been. The bare path says exactly that.
 func siteLocation(site discover.SkipSite) string {
 	if site.Line == 0 {
+		// A whole-file reason, which no rule proposed anything under: the bare
+		// path, and no rule name to append.
 		return site.Path
 	}
-	return site.Path + ":" + strconv.Itoa(site.Line) + ":" + strconv.Itoa(site.Column)
+	where := site.Path + ":" + strconv.Itoa(site.Line) + ":" + strconv.Itoa(site.Column)
+	if site.Rule == "" {
+		return where
+	}
+	return where + " " + site.Rule
+}
+
+// siteLocationOf is the same coordinate, read back out of a gathered account.
+//
+// Two spellings of one rule, and the duplication is deliberate: the listing
+// under `list --explain` renders discovery's own sites, and `explain` renders a
+// document that has already been built — so one of them takes a
+// [discover.SkipSite] and the other takes what was gathered from it. What they
+// must not do is disagree, which is why they are written beside each other.
+func siteLocationOf(site accountSkipSite) string {
+	if site.Line == nil {
+		// A whole-file reason, which no rule proposed anything under: the bare
+		// path, and no rule name to append.
+		return site.Path
+	}
+	where := site.Path + ":" + strconv.Itoa(*site.Line) + ":" + strconv.Itoa(*site.Column)
+	if site.Rule == nil {
+		return where
+	}
+	return where + " " + *site.Rule
 }
 
 // skipSection writes the heading and one block per reason, with the rows of a

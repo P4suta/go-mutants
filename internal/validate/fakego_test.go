@@ -13,6 +13,7 @@
 package validate_test
 
 import (
+	"context"
 	"errors"
 	"os"
 	"slices"
@@ -77,7 +78,7 @@ func TestPristineBuildFailureIsNotMutantInducedAndKeepsTheCompilersWords(t *test
 	_, err = validate.Validate(t.Context(), validate.Options{
 		Snap:         snap,
 		Catalog:      emptyCatalog(t),
-		ModulePath:   modulePath,
+		Modules:      []validate.Module{{Dir: ".", Path: modulePath}},
 		Toolchain:    gocmd.Toolchain{GoBin: f.Bin()},
 		Env:          f.Env(testkit.Compose(t, testkit.Scratch(t))),
 		BuildTimeout: time.Minute,
@@ -120,5 +121,124 @@ func TestPristineBuildFailureIsNotMutantInducedAndKeepsTheCompilersWords(t *test
 		if !testkit.SamePath(call.Dir, snap.Root) {
 			t.Errorf("the build ran in %q, want the snapshot root %q", call.Dir, snap.Root)
 		}
+	}
+}
+
+// TestABuildThatRunsOutOfTimeIsNotABuildThatSaidNo is the second of the four
+// answers one build can give, and the one no released toolchain can be asked
+// for.
+//
+// A build that did not finish has said nothing about any mutant. Reading it as
+// a red build would send the search bisecting a file over a verdict the
+// compiler never reached, and reading it as green would accept a catalogue
+// nobody compiled -- so it is an error with a code of its own, and the code
+// says what a user can do about it.
+func TestABuildThatRunsOutOfTimeIsNotABuildThatSaidNo(t *testing.T) {
+	t.Parallel()
+
+	const modulePath = "fixture.example/slow"
+	module := testkit.NewModule(t).Module(modulePath)
+	module.Source("only.go", "package only\n\nfunc Only() int { return 1 }\n")
+
+	snap, err := snapshot.Create(module.Root(), snapshot.Options{DestParent: testkit.Scratch(t)})
+	if err != nil {
+		t.Fatalf("snapshotting the synthesized module: %v", err)
+	}
+	t.Cleanup(func() {
+		if cleanupErr := snap.Cleanup(); cleanupErr != nil {
+			t.Errorf("removing the snapshot: %v", cleanupErr)
+		}
+	})
+
+	f := mutantkit.FakeGo(t)
+	// Ten times the bound below, which is enough for the supervisor to be what
+	// ends it and short enough that a build nobody bounded still ends: an edit
+	// that dropped the bound would otherwise leave this test waiting out a
+	// whole per-mutant timeout in this repository's own gate, twice.
+	f.On("build").Sleep(2 * time.Second)
+
+	_, err = validate.Validate(t.Context(), validate.Options{
+		Snap:         snap,
+		Catalog:      emptyCatalog(t),
+		Modules:      []validate.Module{{Dir: ".", Path: modulePath}},
+		Toolchain:    gocmd.Toolchain{GoBin: f.Bin()},
+		Env:          f.Env(testkit.Compose(t, testkit.Scratch(t))),
+		BuildTimeout: 200 * time.Millisecond,
+	})
+	if code := validate.CodeOf(err); code != validate.CodeBuildTimedOut {
+		t.Fatalf("CodeOf(err) = %q (err %v), want %q", code, err, validate.CodeBuildTimedOut)
+	}
+	var failure *validate.Error
+	if !errors.As(err, &failure) {
+		t.Fatalf("err = %v, want a *validate.Error", err)
+	}
+	if !failure.TimedOut {
+		t.Error("the failure does not report that it was the clock that ended the build")
+	}
+	if !strings.Contains(failure.Message, "200ms") {
+		t.Errorf("the failure %q does not name the bound it exceeded", failure.Message)
+	}
+	// And the command is named, because a user asked to look at a build needs
+	// to be able to run it.
+	if failure.Invocation == nil {
+		t.Error("the failure names no command to reproduce")
+	}
+}
+
+// TestACancelledRunIsNotABrokenBuild is the third answer, and the one that is
+// indistinguishable from the others unless the context is asked.
+//
+// A cancelled run comes back from the runner as an unavailable exit status with
+// no error and no timeout, which reads exactly like a compiler that refused. The
+// context is what tells them apart, and a run somebody stopped has to say so
+// rather than blame the tree.
+func TestACancelledRunIsNotABrokenBuild(t *testing.T) {
+	t.Parallel()
+
+	const modulePath = "fixture.example/cancelled"
+	module := testkit.NewModule(t).Module(modulePath)
+	module.Source("only.go", "package only\n\nfunc Only() int { return 1 }\n")
+
+	snap, err := snapshot.Create(module.Root(), snapshot.Options{DestParent: testkit.Scratch(t)})
+	if err != nil {
+		t.Fatalf("snapshotting the synthesized module: %v", err)
+	}
+	t.Cleanup(func() {
+		if cleanupErr := snap.Cleanup(); cleanupErr != nil {
+			t.Errorf("removing the snapshot: %v", cleanupErr)
+		}
+	})
+
+	f := mutantkit.FakeGo(t)
+	// Long enough that the cancellation below is what ends it, and short enough
+	// that a build nobody cancelled still ends; see the test above.
+	f.On("build").Sleep(2 * time.Second)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err = validate.Validate(ctx, validate.Options{
+		Snap:         snap,
+		Catalog:      emptyCatalog(t),
+		Modules:      []validate.Module{{Dir: ".", Path: modulePath}},
+		Toolchain:    gocmd.Toolchain{GoBin: f.Bin()},
+		Env:          f.Env(testkit.Compose(t, testkit.Scratch(t))),
+		BuildTimeout: time.Minute,
+	})
+	if code := validate.CodeOf(err); code != validate.CodeInterrupted {
+		t.Fatalf("CodeOf(err) = %q (err %v), want %q", code, err, validate.CodeInterrupted)
+	}
+	var failure *validate.Error
+	if !errors.As(err, &failure) {
+		t.Fatalf("err = %v, want a *validate.Error", err)
+	}
+	if failure.TimedOut {
+		t.Error("an interrupted run was reported as one the clock ended")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("context.Canceled is not reachable through the failure: %v", err)
 	}
 }

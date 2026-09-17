@@ -5,6 +5,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -33,6 +34,7 @@ var bundleFiles = []string{
 	doctorFileName,
 	environmentFileName,
 	errorFileName,
+	manifestFileName,
 	preservedPathsFileName,
 	trace.FileName,
 }
@@ -181,9 +183,41 @@ func TestAFailedRunWritesTheBundleUnderTheReportDirectory(t *testing.T) {
 		t.Errorf("%s is not this workspace's diagnosis:\n%s", doctorFileName, doctor)
 	}
 
+	// The manifest is the one file in the bundle a program reads. It says what
+	// the bundle holds and what the run was, so a CI job that uploads a
+	// directory of text files can also say which failure it uploaded.
+	manifest := readBundleFile(t, directory, manifestFileName)
+	if err := schemas.Validate(schemas.DiagnosticsV1, []byte(manifest)); err != nil {
+		t.Errorf("%s does not satisfy %s: %v\n%s", manifestFileName, schemas.DiagnosticsV1, err, manifest)
+	}
+	var described diagnosticsManifest
+	if err := json.Unmarshal([]byte(manifest), &described); err != nil {
+		t.Fatalf("%s does not decode: %v\n%s", manifestFileName, err, manifest)
+	}
+	var named []string
+	for _, file := range described.Files {
+		named = append(named, file.Name)
+	}
+	if got := entriesOf(t, directory); !slices.Equal(sorted(named), sorted(got)) {
+		t.Errorf("%s names %q and the bundle holds %q", manifestFileName, sorted(named), sorted(got))
+	}
+	// GOM4011 is the baseline failure this fixture exists to produce, and the
+	// manifest carrying it is the whole reason a program reads the bundle:
+	// which failure this is, without parsing prose.
+	if described.Failure.Code != string(engine.CodeBaselineTestFailed) {
+		t.Errorf("%s says the failure was %q, want %s",
+			manifestFileName, described.Failure.Code, engine.CodeBaselineTestFailed)
+	}
+	if described.RunID == "" || described.ToolVersion == "" {
+		t.Errorf("%s does not identify the run that wrote it: %+v", manifestFileName, described)
+	}
+
 	// Written last, because its existence is what says the bundle is complete
 	// and therefore collectable. A marker written before the files it marks
-	// would let a collector remove a bundle that was still being written.
+	// would let a collector remove a bundle that was still being written -- and
+	// that is why the manifest goes second to last rather than last: it names
+	// every file including this one, and the completion marker stays the
+	// completion marker.
 	requireWrittenLast(t, directory, preservedPathsFileName)
 }
 
@@ -258,6 +292,22 @@ func TestATracedFailureWritesTheBundleBesideItsStreamWithoutRepeatingIt(t *testi
 	}
 	for _, name := range []string{errorFileName, environmentFileName, doctorFileName, preservedPathsFileName} {
 		readBundleFile(t, directory, name)
+	}
+
+	// And the index says so too. A traced bundle's stream is written by the
+	// recorder rather than by the bundle writer, so it is the one file the
+	// manifest could most easily fail to name -- and a manifest that does not
+	// name the recording beside it is an index of a directory nobody has.
+	var described diagnosticsManifest
+	if err := json.Unmarshal([]byte(readBundleFile(t, directory, manifestFileName)), &described); err != nil {
+		t.Fatalf("%s does not decode: %v", manifestFileName, err)
+	}
+	var named []string
+	for _, file := range described.Files {
+		named = append(named, file.Name)
+	}
+	if got := entriesOf(t, directory); !slices.Equal(sorted(named), sorted(got)) {
+		t.Errorf("%s names %q and the directory holds %q", manifestFileName, sorted(named), sorted(got))
 	}
 
 	// The one `trace.jsonl` there is the recording, not the ring: it opens with

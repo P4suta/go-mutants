@@ -1,0 +1,48 @@
+simple
+	baseline-build 1
+	baseline-test 1
+	coverage-run 3
+	go-list 1
+	go-test-c 1
+	go-version 1
+	instrumented-baseline 1
+	mutant-run 16
+	scope-list 1
+	test-list 1
+	validate-build 1
+killable
+	baseline-build 1
+	baseline-test 1
+	coverage-run 2
+	go-list 1
+	go-test-c 1
+	go-version 1
+	instrumented-baseline 1
+	mutant-run 10
+	scope-list 1
+	test-list 1
+	validate-build 1
+coverage
+	baseline-build 1
+	baseline-test 1
+	coverage-run 2
+	go-list 1
+	go-test-c 2
+	go-version 1
+	instrumented-baseline 1
+	mutant-run 8
+	scope-list 1
+	test-list 2
+	validate-build 1
+runaway
+	baseline-build 1
+	baseline-test 1
+	coverage-run 1
+	go-list 1
+	go-test-c 1
+	go-version 1
+	instrumented-baseline 1
+	mutant-run 3
+	scope-list 1
+	test-list 1
+	validate-build 1

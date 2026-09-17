@@ -1,0 +1,28 @@
+Delete this module's run history.
+
+It removes the stored run documents and the pointer to the newest, in every
+workspace directory holding runs of this module, and nothing else. The
+ownership marker stays, so the directory keeps the identity a concurrent run may
+be relying on, and the outcomes filed beside the runs stay too: those are
+`cache clean`'s.
+
+A directory that carries no go-mutants marker, or one whose marker this build
+did not write, is refused rather than deleted — the cache root is shared with
+every other tool on the machine — and so is a directory whose documents cannot
+be read, since nothing there can prove which module they belong to.
+
+Deleting run history loses measurements. It never changes a verdict: the next
+run measures everything it would have measured anyway.
+
+Usage:
+  go-mutants report clean [flags]
+
+Flags:
+  -h, --help   help for clean
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)

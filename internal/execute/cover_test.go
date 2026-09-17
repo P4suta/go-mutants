@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -132,12 +133,12 @@ func TestCollectCoverageRunsEveryBinaryOnceIntoItsOwnDirectory(t *testing.T) {
 		if data.ImportPath != bins[i].ImportPath {
 			t.Errorf("profile %d is for %q, want %q", i, data.ImportPath, bins[i].ImportPath)
 		}
-		if dirs[data.Dir] {
-			t.Errorf("two binaries share the coverage directory %s", data.Dir)
+		if dirs[data.Path] {
+			t.Errorf("two binaries share the coverage profile %s", data.Path)
 		}
-		dirs[data.Dir] = true
-		if ok, statErr := statDir(data.Dir); statErr != nil || !ok {
-			t.Errorf("the coverage directory %s was not created: %v", data.Dir, statErr)
+		dirs[data.Path] = true
+		if ok, statErr := statDir(filepath.Dir(data.Path)); statErr != nil || !ok {
+			t.Errorf("the directory holding %s was not created: %v", data.Path, statErr)
 		}
 
 		c := seen[i]
@@ -147,7 +148,7 @@ func TestCollectCoverageRunsEveryBinaryOnceIntoItsOwnDirectory(t *testing.T) {
 		if c.Dir != bins[i].Dir {
 			t.Errorf("process %d ran in %q, want the package directory %q", i, c.Dir, bins[i].Dir)
 		}
-		want := "-test.gocoverdir=" + data.Dir
+		want := "-test.coverprofile=" + data.Path
 		if !slices.Contains(c.Argv, want) {
 			t.Errorf("process %d argv = %v, want it to carry %q", i, c.Argv, want)
 		}
@@ -393,15 +394,23 @@ func TestScheduleHonoursPerMutantSubsets(t *testing.T) {
 	}
 }
 
-// TestCoverDirFlagIsWhatTheToolchainReads documents, as an executable note, the
-// discovery that shaped the profiling pass.
+// TestTheProfileFlagIsWhatTheToolchainReads documents, as an executable note,
+// the two discoveries that shaped the profiling pass.
 //
-// A `go build -cover` program reads GOCOVERDIR; a *test* binary does not. Its
-// data is emitted by testing's coverTearDown, which is handed only the value of
-// `-test.gocoverdir` and, when that is empty, writes into a temporary directory
-// it then deletes — so a profiling pass driven by the environment variable
-// prints a coverage percentage, exits 0, and leaves nothing behind.
-func TestCoverDirFlagIsWhatTheToolchainReads(t *testing.T) {
+// The first: a `go build -cover` program reads GOCOVERDIR; a *test* binary does
+// not. Its data is emitted by testing's coverTearDown, which is handed only
+// what the flags say and, when they say nothing, writes into a temporary
+// directory it then deletes -- so a profiling pass driven by the environment
+// variable prints a coverage percentage, exits 0, and leaves nothing behind.
+//
+// The second is why the flag is `-test.coverprofile` rather than
+// `-test.gocoverdir`, and it is about *processes*. A coverage directory holds
+// raw counters that `go tool covdata textfmt` has to render before anything can
+// read them, which is one more child process per profile -- and a run that
+// profiles a suite test by test pays it once per test. The binary writes the
+// text format itself when asked for a profile, and the two documents are the
+// same format from the same data.
+func TestTheProfileFlagIsWhatTheToolchainReads(t *testing.T) {
 	t.Parallel()
 
 	f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
@@ -415,9 +424,17 @@ func TestCoverDirFlagIsWhatTheToolchainReads(t *testing.T) {
 		t.Errorf("the profiling run set GOCOVERDIR=%q, which a test binary does not read", value)
 	}
 	if !slices.ContainsFunc(c.Argv, func(arg string) bool {
+		return strings.HasPrefix(arg, "-test.coverprofile=")
+	}) {
+		t.Errorf("the profiling run carries no -test.coverprofile: %v", c.Argv)
+	}
+	if slices.ContainsFunc(c.Argv, func(arg string) bool {
 		return strings.HasPrefix(arg, "-test.gocoverdir=")
 	}) {
-		t.Errorf("the profiling run carries no -test.gocoverdir: %v", c.Argv)
+		t.Errorf("the profiling run carries -test.gocoverdir, which needs a second process to read: %v", c.Argv)
+	}
+	if len(f.seen()) != 1 {
+		t.Errorf("the profiling pass over one binary started %d processes, want one", len(f.seen()))
 	}
 }
 
@@ -483,5 +500,56 @@ func TestCollectCoverageLabelsEachProfilingRun(t *testing.T) {
 	}
 	if want := []string{"example.com/m/a", "example.com/m/b"}; !slices.Equal(got, want) {
 		t.Errorf("the coverage runs are about %q, want one per binary, named by its package %q", got, want)
+	}
+}
+
+// TestCollectCoverageProfilesTheBinariesConcurrently is the binary-level pass's
+// half of the same rule.
+//
+// It is one process per *package* rather than per test, so it is the smaller of
+// the two -- and it is paid before a run measures anything, by every project
+// with more than a handful of packages. Each binary writes a profile of its own
+// under a scratch directory of its own and shares nothing but the package
+// directory it already reads from, which the mutant runs of that same binary
+// already overlap on.
+//
+// The barrier is the proof, as it is for the per-test pass: a serial
+// implementation does not fail this slowly, it deadlocks.
+func TestCollectCoverageProfilesTheBinariesConcurrently(t *testing.T) {
+	t.Parallel()
+
+	const jobs = 3
+	var arrived sync.WaitGroup
+	arrived.Add(jobs)
+	together := make(chan struct{})
+	var once sync.Once
+
+	f := &fake{respond: func(ctx context.Context, c call) runner.Result {
+		arrived.Done()
+		go once.Do(func() { arrived.Wait(); close(together) })
+		select {
+		case <-together:
+			return passed()
+		case <-ctx.Done():
+			return runner.Result{Err: ctx.Err()}
+		}
+	}}
+	opts, coverDir := coverOptions(t, f)
+	opts.Jobs = jobs
+	bins := testBins("example.com/m/a", "example.com/m/b", "example.com/m/c")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	collected, err := execute.CollectCoverage(ctx, opts, bins, coverDir)
+	if err != nil {
+		t.Fatalf("CollectCoverage: %v", err)
+	}
+
+	// And in the binaries' order rather than the workers': what the mapping
+	// sees has to be a function of the tree.
+	for i, data := range collected {
+		if data.ImportPath != bins[i].ImportPath {
+			t.Errorf("profile %d is for %q, want %q", i, data.ImportPath, bins[i].ImportPath)
+		}
 	}
 }

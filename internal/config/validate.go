@@ -100,6 +100,10 @@ func validateOverlay(o Overlay, report reporter) error {
 		problems = append(problems, report.errorf(CodeBaselineRunsOutOfRange, "test.baseline_runs",
 			"%d baseline runs is outside %d..%d", runs, MinBaselineRuns, MaxBaselineRuns))
 	}
+	if probing, ok := o.Probing.Get(); ok && !probing.Valid() {
+		problems = append(problems, report.errorf(CodeUnknownProbing, "test.probing",
+			"unknown probing mode %q: expected %s", probing.String(), probingList()))
+	}
 	if narrowing, ok := o.Narrowing.Get(); ok && !narrowing.Valid() {
 		problems = append(problems, report.errorf(CodeUnknownNarrowing, "test.narrowing",
 			"unknown narrowing %q: expected %s", narrowing.String(), narrowingList()))
@@ -325,6 +329,15 @@ func narrowingList() string {
 	names := make([]string, 0, len(Narrowings()))
 	for _, narrowing := range Narrowings() {
 		names = append(names, strconv.Quote(narrowing.String()))
+	}
+	return strings.Join(names, ", ")
+}
+
+// probingList renders the probing modes for a diagnostic.
+func probingList() string {
+	names := make([]string, 0, len(Probings()))
+	for _, probing := range Probings() {
+		names = append(names, strconv.Quote(probing.String()))
 	}
 	return strings.Join(names, ", ")
 }

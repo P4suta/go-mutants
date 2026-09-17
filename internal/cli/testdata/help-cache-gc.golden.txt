@@ -1,0 +1,24 @@
+Delete stored outcomes written more than N days ago.
+
+An entry is only ever read by a run whose tool version, toolchain, code,
+catalogue, command, timeout and environment all still match the ones that wrote
+it, so an entry a month old has almost certainly outlived the context that could
+read it. Age is the modification time, and reading an entry does not refresh it:
+this removes what is old, not what is unpopular.
+
+Context directories left with nothing in them are removed too. The run history
+beside them is never touched.
+
+Usage:
+  go-mutants cache gc [flags]
+
+Flags:
+      --days N   delete outcomes last written more than N days ago (default 30)
+  -h, --help     help for gc
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)

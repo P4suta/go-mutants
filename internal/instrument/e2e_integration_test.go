@@ -36,6 +36,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/snapshot"
@@ -102,7 +103,7 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 		t.Fatalf("discovered module path = %q, want %q", found.ModulePath, killableModule)
 	}
 
-	// The catalogue, pinned whole. Thirteen mutants is still small enough to
+	// The catalogue, pinned whole. Seventeen mutants is still small enough to
 	// write down, and writing it down is what earns the lookups below: one
 	// mutant per (path, rule) is a property of how the fixture is laid out —
 	// one function per file and no repeated operator — not a coincidence, and
@@ -111,8 +112,12 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 	catalog := mutantkit.Catalog(t, found)
 	wantCatalog := []string{
 		"clamp.go negate-condition v < hi -> !(v < hi)",
+		"clamp.go condition-to-true v < hi -> true",
+		"clamp.go condition-to-false v < hi -> false",
 		"clamp.go lt-to-le < -> <=",
 		"clamp.go negate-condition v > lo -> !(v > lo)",
+		"clamp.go condition-to-true v > lo -> true",
+		"clamp.go condition-to-false v > lo -> false",
 		"clamp.go gt-to-ge > -> >=",
 		"clamp.go return-zero-numeric v -> 0",
 		"clamp.go return-zero-numeric lo + 1 -> 0",
@@ -144,12 +149,13 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 	if want := []string{"clamp.go", "ready.go", "untested.go"}; !slices.Equal(instrumented.FilesInstrumented, want) {
 		t.Errorf("instrumented %q, want %q", instrumented.FilesInstrumented, want)
 	}
-	// Nine mutants in clamp.go are five guards, not nine: a guard is a rewrite
-	// site, and the mutants of one expression or one statement share it. Both
-	// halves matter — the two conditions are two guards because they are two
-	// expressions, and `return lo + 1` is one guard for both the addition and
-	// the whole returned value — which is the distinction this line is here to
-	// keep visible.
+	// Thirteen mutants in clamp.go are five guards, not thirteen: a guard is a
+	// rewrite site, and the mutants of one expression or one statement share it.
+	// Both halves matter — the two conditions are two guards because they are
+	// two expressions, and each carries three mutants now that a condition can
+	// be settled as well as negated, and `return lo + 1` is one guard for both
+	// the addition and the whole returned value — which is the distinction this
+	// line is here to keep visible.
 	if want := map[string]int{"clamp.go": 5, "ready.go": 1, "untested.go": 1}; !maps.Equal(instrumented.GuardsByFile, want) {
 		t.Errorf("guards by file = %v, want %v", instrumented.GuardsByFile, want)
 	}
@@ -471,27 +477,67 @@ func TestDeclarationsNoFormCanRewriteAreSkippedRatherThanFatal(t *testing.T) {
 	snap := mutantkit.SnapshotOf(t, source)
 	found := mutantkit.DiscoverWith(t, toolchain, snap, env)
 
-	// Every edit inside one of the three declarations is a recorded skip, and
-	// the reason is the one the frozen contract reserves for a site no guard
-	// form can express.
-	want := []string{"refused.go unnameable-decl-type 3"}
-	got := make([]string, 0, len(found.Skips))
-	for _, skip := range found.Skips {
-		got = append(got, skip.Path+" "+string(skip.Reason)+" "+fmt.Sprint(skip.Count))
+	// Nothing is refused any more, and the empty list is the assertion.
+	//
+	// This used to be three `unnameable-decl-type` skips, one per declaration,
+	// and the change is not that Form D stopped declining them -- it still
+	// does, for exactly the reasons the fixture's comments give. What changed
+	// is that Form E takes the *initialiser expression* where Form D declines
+	// the statement, so the edits inside those declarations are mutants and no
+	// declaration is rewritten. The form each of them uses is what this test
+	// now checks, below, and it is a stronger claim than the absence was: a
+	// skip proves only that nothing happened, while a Form E hint proves that
+	// the thing that happened was the safe one.
+	if got := len(found.Skips); got != 0 {
+		lines := make([]string, 0, len(found.Skips))
+		for _, skip := range found.Skips {
+			lines = append(lines, skip.Path+" "+string(skip.Reason)+" "+fmt.Sprint(skip.Count))
+		}
+		t.Errorf("skips =\n\t%s\nwant none", strings.Join(lines, "\n\t"))
 	}
-	if !slices.Equal(got, want) {
-		t.Errorf("skips =\n\t%s\nwant\n\t%s", strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
+
+	// The three declarations are not rewritten *as declarations*, which is the
+	// whole subject of this test, and the form histogram is where that shows.
+	//
+	// Two declarations here are ones Form D may rewrite -- `total := n + 1` in
+	// Shadow, which shadows nothing, and Kept's `var` block -- so exactly two
+	// candidates carry Form D. The three Form D declines are carried by Form E,
+	// which moves the initialiser expression and leaves the declaration where
+	// it stands. A fourth Form D would mean one of the three had started being
+	// hoisted in front of its own initialiser, which for two of them produces a
+	// program that compiles and computes something else.
+	forms := map[discover.GuardForm]int{}
+	for _, candidate := range found.Candidates {
+		forms[candidate.Guard.Form]++
+	}
+	if got, want := forms[discover.GuardFormD], 2; got != want {
+		t.Errorf("%d candidates use Form D, want %d: the declarations this file is about "+
+			"are the ones it must not rewrite", got, want)
+	}
+	if got, want := forms[discover.GuardFormE], 3; got != want {
+		t.Errorf("%d candidates use Form E, want %d: one per declaration Form D declines",
+			got, want)
 	}
 
 	catalog := mutantkit.Catalog(t, found)
 	wantCatalog := []string{
-		"refused.go return-zero-numeric scale(n) -> 0",
+		// Widen: the addition inside the call, which Form E takes because the
+		// declaration around it spells a type across three lines.
 		"refused.go add-to-sub + -> -",
+		"refused.go return-zero-numeric scale(n) -> 0",
+		// Shadow: the addition in the outer declaration and the multiplication
+		// in the inner one, which reads the variable it shadows.
+		"refused.go add-to-sub + -> -",
+		"refused.go mul-to-div * -> /",
 		"refused.go delete-assignment n = total -> ",
 		"refused.go return-zero-numeric n -> 0",
+		// Wrap: the guard, and the addition inside the wrapped error's own
+		// declaration.
 		"refused.go negate-condition err != nil -> !(err != nil)",
 		"refused.go nil-error-branch err != nil -> false",
+		"refused.go condition-to-true err != nil -> true",
 		"refused.go neq-to-eq != -> ==",
+		"refused.go add-to-sub + -> -",
 		"refused.go return-err-to-nil err -> nil",
 		// Kept, whose `var` block holds the one spec-with-no-initialiser this
 		// suite rewrites rather than refuses.

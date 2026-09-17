@@ -29,12 +29,6 @@ const repositoryConfig = "../../" + FileName
 // which row has gone stale.
 var repositoryExpectations = []Expectation{
 	{
-		ID: "7c3b141c043e632d833e0d9b948690bf3efb9047c502de6cb3cd372dfc7685b9",
-		Reason: "Equivalent: Disjoint is the zero value of Relation, " +
-			"being first in its iota block, so `return Disjoint` and " +
-			"`return 0` are the same constant.",
-	},
-	{
 		ID: "326eb774d53498b186d7a5990a0ee7f0c7dd2cf4934f6ba8adb79a0217b6025b",
 		Reason: "Equivalent: Len returns 0 through the guard for a reversed span " +
 			"and EndByte - StartByte otherwise, and that difference is 0 exactly " +
@@ -54,23 +48,17 @@ var repositoryExpectations = []Expectation{
 			"already known to differ, so `<` and `<=` are the same test.",
 	},
 	{
-		ID: "9fd083af0792f6b5155cb1cff8883f7a3dce112be8c53e3c92c2ccc0e813044b",
+		ID: "565a13327c3aeca8d6b512fc779934904a161a98911a06d6580a48d96a8f27d8",
 		Reason: "Equivalent: `>= 2` and `> 2` differ only for two-byte paths; " +
 			"a letter plus colon is rejected by the identical post-clean volume " +
 			"guard immediately below, and every other two-byte path fails the " +
 			"colon-or-letter predicates.",
 	},
 	{
-		ID: "ab63a5a3e327b7db2bbe97d3267ca840cebf9cf54a899f10cdc52a111a398548",
+		ID: "5ab87ae91e8e36e223776f77bc7073cf78024a5c0ee5c2f8c68ca40e54b0ce2c",
 		Reason: "Equivalent: the comparison sits inside " +
 			"`if x.position != y.position`, where the two registry positions are " +
 			"already known to differ, so `<` and `<=` are the same test.",
-	},
-	{
-		ID: "90dcb6c9a5eef3328c6287e649f96f5d71187376e2fdb906a262947c815a0c75",
-		Reason: "Equivalent: OutcomeNotRun is the zero value of Outcome, being " +
-			"first in its iota block, so `return OutcomeNotRun` and `return 0` " +
-			"are the same constant -- the same argument as the Disjoint row above.",
 	},
 	{
 		ID: "cf02d1c0b8855d56c21d1216e47fec02bc0674638c7f3e8ab02ce647af24b391",
@@ -80,95 +68,177 @@ var repositoryExpectations = []Expectation{
 			"Detected count, which Score.Validate reports as incoherent.",
 	},
 	{
-		ID: "71a2e9ed6670de5c01f1c29c061ab45b9a5b6000d754250758601e204f997e68",
+		ID: "8b92325aaa44b1850003c67eba45d5cc8f5bf919ed7c78dfeadabb6c1ccda7a6",
 		Reason: "Unreachable: Build only ever sees candidates Add accepted, and " +
 			"Add calls Registry.Verify, which refuses exactly the names " +
 			"Registry.Position cannot find -- both read one immutable map -- so " +
 			"nothing a caller can build reaches this return.",
 	},
 	{
-		ID: "e997446d6c157c03f5403f1ea5ae0a63a7b20fab96a4ccafa604197d2c44e929",
+		ID: "9bc7cd149597bf890755c4774c0f74a728d91e0367f0deed2aaa6e029963843a",
 		Reason: "Unkillable: `>` and `>=` pick different catalogues only at " +
 			"exactly math.MaxUint32 queued candidates, which is 4,294,967,295 " +
 			"Candidate values in one builder.",
 	},
 	{
-		ID: "a94a2c50fc8b33c7f5ea10f9f5cea1e05eb85138b54119cf80383a8eac4b5c01",
+		ID: "5787a1dbed1334bd7ae10267e4a44fa05c0b26f6eba202194db08bdf2f17958f",
 		Reason: "Unkillable: this return is reached only past math.MaxUint32 " +
 			"queued candidates, so killing it means holding more than " +
 			"4,294,967,295 Candidate values in memory.",
 	},
 	{
-		ID: "0879ed736b35300ea72bf867721591ee218f02a21a7d1fdc5d1a8a89df20a718",
+		ID: "cb8fd2b2364bab9b19cf007c167a5f1ba7d7c2efba55e35d1c80e54a7aea36d7",
 		Reason: "Unkillable: Build only sees candidates Add validated and " +
 			"Candidate.ID re-runs that same validation, so the only error left " +
 			"for this branch to catch is WriteLengthPrefixed's 4 GiB field guard " +
 			"-- see the id.go rows below.",
 	},
 	{
-		ID: "85dc0334ed347973ea6af195207e0cd262ca6a2bfc9c7a710bda312262b5aad7",
+		ID: "17ee3178f2ecd2292dd028daced5dd0ce3550ba32f604880f417ae71927eb122",
 		Reason: "Unkillable: the same branch as the row above -- the error this " +
 			"forwards can only come from WriteLengthPrefixed's 4 GiB field guard.",
 	},
 	{
-		ID: "ce40ad71426f18bdb1c7af2f1ab665321d3b2e150d071e52c39b9c6e38ada90c",
+		ID: "b0d2a8afec954577ebc1513a7524fa17426961c52e6efabaa029d99f7923e861",
 		Reason: "Unkillable: WriteLengthPrefixed fails only on a field longer " +
 			"than math.MaxUint32 bytes, so entering this branch means hashing an " +
 			"identity whose path is four gigabytes long.",
 	},
 	{
-		ID: "feba9b0fd4945263451deb51c5fbe281d6fd97a4c98c181f6aec9eebcab4c2c1",
+		ID: "941885a4446b5d0051d8aff50241e741d6bf8ea0e7cc04b26e2fb904189b4818",
 		Reason: "Unkillable: the same branch as the row above -- the error this " +
 			"forwards exists only for a field longer than math.MaxUint32 bytes.",
 	},
 	{
-		ID: "e8eb2f6092486a0554da44e0796371ab157e4bf07c574ef16d9ff8ece74f4474",
+		ID: "9843e3803263d340889f58b002b6e66622b2f25dcf4163a8d4fe48ab62fb038c",
 		Reason: "Unkillable: `>` and `>=` disagree only on a string of exactly " +
 			"math.MaxUint32 bytes, so telling them apart means allocating four " +
 			"gigabytes in a unit test.",
 	},
 	{
-		ID: "ad9321c58f07017b27f8a9dd8f1e4acad7a38d4a83a9e100589634d63512117c",
+		ID: "778f61b378f9a44f3cc836eccc8bcac2f79295189a0514b28e838b9340dab6b2",
 		Reason: "Unkillable: this return is reached only for a string longer " +
 			"than math.MaxUint32 bytes, so killing it means allocating more than " +
 			"four gigabytes in a unit test.",
 	},
 	{
-		ID: "d42fb63591d5db90e42e36081a7f65630aae5c925098abab5ed536f7dd5f57bb",
-		Reason: "Equivalent: this is the tie-break of a sort whose primary key " +
-			"is the start line, so it only orders intervals that share one; " +
-			"merge joins any such run into [start, max end] whatever their " +
-			"order, and nothing downstream reads the order itself.",
+		ID: "a7353f2073cb5e21aa44235cf31014b9efb6f153afbfba57b110741e38c34ca7",
+		Reason: "Equivalent: the loop ends at the first unterminated line, and " +
+			"an empty body is that case -- bytes.Cut finds no separator and " +
+			"reports none -- so the extra pass `>=` admits breaks before it " +
+			"reads anything. The condition is kept over `for {}` because " +
+			"dropping it makes two mutants of this package never return.",
 	},
 	{
-		ID: "96e3e2eaaff49e3c662188a99235ddcd673af4d3e5c9189bd9b42461d3a5faa6",
-		Reason: "Equivalent: the same tie-break as the row above -- intervals " +
-			"sharing a start line all overlap, so merge folds them into " +
-			"[start, max end] however the sort arranges them, and the " +
-			"primary key still decides every pair whose start lines differ.",
+		ID: "db02130598a10e890c61ed90883ab299048c2c39d35a78eff6fc34f7d17a8961",
+		Reason: "Equivalent: a pair where exactly one path carries a drive letter " +
+			"differs at the colon, which has no case, so EqualFold and == " +
+			"answer alike on it -- the third disjunct therefore never decides " +
+			"anything the first two did not.",
 	},
 	{
-		ID: "4316f032816f9b8bea32fd9582296b74674df9d53de742511356db366a4e68d9",
+		ID: "1f4a99534a7ccad44442be50ef60312c931fd9c1de1f138b3531bad74920cc28",
+		Reason: "Equivalent: blame over an empty pending set answers an empty list, " +
+			"so `> 0` and `>= 0` set the same blame on every build; the guard " +
+			"is there to skip parsing the compiler's whole output on a trial " +
+			"build, which is a cost and not an answer.",
+	},
+	{
+		ID: "fda92421584cc2c8f5b4e4c888e0656c44b52f9f429fbba10f137294c522c8f1",
+		Reason: "Unreachable: the loop is bounded at one pass per catalogued file " +
+			"and every pass decides at least one of them, because blame never " +
+			"answers an empty list while anything is pending -- so the search " +
+			"always returns from inside it.",
+	},
+	{
+		ID: "bf25dbed393a8d14949ff071df66c17d4437b17463acdf15bfc6314f641628fb",
+		Reason: "Unreachable: the other half of the same backstop, which exists so " +
+			"that a search wrong about its own bound fails closed rather than " +
+			"falling out of the loop.",
+	},
+	{
+		ID: "7793f84f81acc0da784e91c4a1320e9c156ca3d0475b3b002a5ef98874c8201e",
+		Reason: "Unkillable: WriteLengthPrefixed fails only on a field longer than " +
+			"math.MaxUint32 bytes, so entering this branch means hashing a " +
+			"cache context with a four-gigabyte field in it.",
+	},
+	{
+		ID: "3d14887a7d333b18f16fb83768515c14163e526a294eb9dc957c1f040d6d15b2",
+		Reason: "Unkillable: the same branch as the row above -- the error this " +
+			"forwards exists only for a field longer than math.MaxUint32 bytes.",
+	},
+	{
+		ID: "bcd244f179ba95adfcd0020401cc298e8d31d2d720f4fa45d243e18c55858d36",
+		Reason: "Equivalent: the listing this guards is of the same directory the " +
+			"emptiness check lists a few lines below, with the same call and " +
+			"the same message, and a context whose files could not be listed " +
+			"always reaches it -- so removing the guard reports the identical " +
+			"failure one step later.",
+	},
+	{
+		ID: "0cd7d9c3ebdf68673934e1190bf9a0e4ccf9417e7bb27e9579d796ecc3046b49",
+		Reason: "Equivalent: an entry with no recorded bound falls through to the " +
+			"default case at the same answer, because `limit <= 0 || limit >= 0` " +
+			"is true for every limit -- so `<=` and `<` choose different " +
+			"branches and the same value.",
+	},
+	{
+		ID: "e3418c470aa16f236561181b9a6713f2edb763ea9aa0f8e045e1d8074e02f799",
+		Reason: "Unreachable: an Entry is strings, integers and booleans, and " +
+			"encoding/json has no failure for any of them.",
+	},
+	{
+		ID: "19130654362658aa70faf1306d512d00f8fbb57574ed1e6b8929b71997f5e101",
+		Reason: "Unreachable: the other half of the same branch -- the diagnostic " +
+			"returned for an encoding failure an Entry cannot produce.",
+	},
+	{
+		ID: "0c61708323241091dc71b704454a4644278eaab1c340cb77ffb76f35539109b7",
+		Reason: "Unreachable where this gate runs: filepath.Rel refuses a pair only " +
+			"when the two carry different volume names, which no POSIX path " +
+			"does, so both paths here are always relatable.",
+	},
+	{
+		ID: "a87698a37045703dda49276056c91ac240a017f41e1c57783c1694ab13d38814",
+		Reason: "Unreachable where this gate runs: the same branch as the row above, " +
+			"and the answer it gives -- not inside -- for a pair of paths POSIX " +
+			"cannot produce.",
+	},
+	{
+		ID: "06cabbdf7a94e889df9b5cc94b72e9d07805cf567329afb27da1e0a674dfeae2",
+		Reason: "Unreachable: the pattern compiled here is path.Clean's output " +
+			"over a path NormalizePath already refused as empty, absolute or " +
+			"escaping, which is exactly the set glob.Compile refuses, so the " +
+			"error is never non-nil.",
+	},
+	{
+		ID: "ae90054cf1b9d69d588a9e2e112cbe697fd0ddc72d994fbce9dea744e302f896",
+		Reason: "Unreachable: the other half of the same branch -- the " +
+			"diagnostic returned for a glob.Compile failure that no configured " +
+			"report directory can produce.",
+	},
+	{
+		ID: "00110ba284fd3da4b8408c57a7bfa66a2187047ede44d2adb78d948757c8ac4d",
 		Reason: "Unreachable: compileErr is set only when an embedded schema " +
 			"cannot be read, parsed, registered or compiled, and " +
 			"TestEveryRegisteredSchemaCompiles asserts that none of that " +
 			"happens in this build, so this branch is never taken.",
 	},
 	{
-		ID: "d8c4cff8932d9455d3ef8e81586b06ca622755ecb2f56c108a98ca56b40b25d7",
+		ID: "22db5c4a94a19f10e8d159ff0b1b1fa7bc069f9188d1fea90cd5c77fce6ec2bc",
 		Reason: "Unreachable: the return the row above guards, reported " +
 			"`survived (uncovered)` because no suite reaches a line that " +
 			"needs compileErr to be non-nil.",
 	},
 	{
-		ID: "dc8a00968d7b71abe998d1d562013904cb4b84f09b97ee2bfd3e6827bbb3abe9",
+		ID: "20f61827e337d7d8df88ce7c1b1dd7194ae27b45046037dbb40f6c2397ca5587",
 		Reason: "Unreachable: compileAll compiles every type in the registry " +
 			"and schemaFor looks up that same registry, so the lookup " +
 			"cannot miss; TestEveryRegisteredSchemaCompiles asserts it for " +
 			"every registered type.",
 	},
 	{
-		ID: "cc88bfab205c63ce546f8c6c20a8481ea065cb270f5c6027731c5a2e4186cfc1",
+		ID: "fa9198cae68dd0d7dd80f6472facc13d667dbce0a9058daa0c4966df57a03d74",
 		Reason: "Unreachable: the file is read out of an embed.FS fixed at " +
 			"build time, and TestEverySchemaIsRegistered plus " +
 			"TestEveryRegisteredSchemaCompiles assert that every registered " +
@@ -176,20 +246,20 @@ var repositoryExpectations = []Expectation{
 			"return.",
 	},
 	{
-		ID: "5b74b4c090cbff9cd61dc5bc551946c41f0275647a1e79d8c1eb541859d83890",
+		ID: "af2611a10aede2a5c1a3d950fb443d87a838d4f43b38b9ae7add828ab038e0de",
 		Reason: "Unreachable: the bytes are an embedded schema this " +
 			"repository's own tests parse and compile, so they are JSON in " +
 			"every build TestEveryRegisteredSchemaCompiles passes on.",
 	},
 	{
-		ID: "cbed187653982db4970d6f42da553e14e2ef7d932e05de603de728450c5bf382",
+		ID: "2293c23d9c88aecfa2ff1653021a8bc7ac0829a88aa3d692cf4834be61a25c73",
 		Reason: "Unreachable: AddResource fails on a resource identity it " +
 			"cannot parse, and TestSchemaIDsMatchTheirFilenames pins every " +
 			"embedded schema's `$id` to `baseURL + <file>`, which is a URL " +
 			"by construction.",
 	},
 	{
-		ID: "939b4163d07d97de0f882ab4af250a72f14eaea40a377cff94f7aeab16b01b42",
+		ID: "a20ef5c99cbd0a4949615e0ef6de29ae6a29e43d177520ca24701dc206aebb06",
 		Reason: "Unreachable: every registered schema compiles, which is " +
 			"exactly what TestEveryRegisteredSchemaCompiles asserts by " +
 			"requiring an invalid document to come back GOM5003 rather than " +
@@ -201,7 +271,7 @@ var repositoryExpectations = []Expectation{
 	// build and are the reason the rows say "on a 64-bit build" rather than
 	// "unkillable".
 	{
-		ID: "da6962bfd6364a6dc88c69bf087dbfe0b3c656a06792a122f081f69a7585703e",
+		ID: "5bb4a8040f463792d43781d51bd9b6995e38f6a12f6a8580317a3e79cd71a179",
 		Reason: "Equivalent on every platform: `v > int64(maxInt)` and " +
 			"`v >= int64(maxInt)` select different branches only at exactly " +
 			"int64(maxInt), where the guard returns maxInt and falling " +
@@ -209,21 +279,21 @@ var repositoryExpectations = []Expectation{
 			"both spellings narrow every int64 to the same int.",
 	},
 	{
-		ID: "5fb5f529dd138bc5a91fa7542bc406dbfdf12b0ff8ad63536a41c029d745b9e6",
+		ID: "7af7a156c75b48f732fb14d52058b69c48c7fec5ffb4e3a438c4e865035db75a",
 		Reason: "Unreachable on a 64-bit build, which is every platform this " +
 			"gate runs on: maxInt is int(^uint(0) >> 1), so int64(maxInt) is " +
 			"math.MaxInt64 and no int64 is greater than it. Killing it means " +
 			"running this package's suite on a 32-bit GOARCH.",
 	},
 	{
-		ID: "7df627f07c3e78285bf6602785c6e0f5d8f117af4018505748e9e23d42e2618d",
+		ID: "985fd8191cfaf201339168e161400c586913136dd6b7ec0d719a1611736b3131",
 		Reason: "Equivalent on every platform: the same argument as the `>` " +
 			"row above, at the other end -- `<` and `<=` disagree only at " +
 			"exactly int64(minInt), where the guard returns minInt and " +
 			"falling through returns int(v), which is minInt.",
 	},
 	{
-		ID: "0609825e5d771c579eb7e2335afa6d224c3005ea2eb50eb82ff5e09fec76dcdd",
+		ID: "559f0ed09e2f0cbabc410e7beccf4c79b0e365f0daf3e13e2ecfb3e7b0e9d04d",
 		Reason: "Unreachable on a 64-bit build: minInt is -maxInt - 1, so " +
 			"int64(minInt) is math.MinInt64 and no int64 is less than it -- " +
 			"the mirror of the maxInt row above, and reachable on the same " +
@@ -252,28 +322,20 @@ var repositoryExpectations = []Expectation{
 			"4096 is positive for any document at all.",
 	},
 	{
-		ID: "c3d40ed1a36996a03b454620a03da2ec1cf9cbe070a8e58599e3db30e4fc71c6",
+		ID: "8f903b36a640803fa64d8ba74fe7193614d10d7483f840cceccb99099473267e",
 		Reason: "Equivalent: the second argument of make is a capacity hint, " +
 			"the runtime clamps a negative one to zero, and a map holds the " +
 			"same entries whatever it was sized for.",
 	},
 	{
-		ID: "5ac5c99ed973fed0246e266c52f28ae1658ce86971424d583595849871a76af1",
-		Reason: "Equivalent: OutcomeNotRun is the zero value of " +
-			"mutation.Outcome, being first in its iota block, so `return " +
-			"mutation.OutcomeNotRun` and `return 0` are the same constant " +
-			"-- the same argument as the Disjoint and OutcomeNotRun rows " +
-			"above.",
-	},
-	{
-		ID: "4bf4f630bb41121facb1dc4f0cc6b30b4a19f699d17defaaca13dc59e6653813",
+		ID: "e46a140ecb4932fb9454fe6cf44688246bbd11546052e38baf97f199db1330e4",
 		Reason: "Equivalent: the guard reports 0 for a negative duration and " +
 			"d.Milliseconds() otherwise, and a zero duration is 0 " +
 			"milliseconds through either branch, so `<` and `<=` render " +
 			"every duration the same.",
 	},
 	{
-		ID: "252f817d8fb60f606b7c0c92a3674ade07fff7c7a7e0de9c08dd0872c2e352eb",
+		ID: "2215b1ea6ce4f26d04ade414b5790ab67800f358a8f7d1f18a17820d6274e80b",
 		Reason: "Equivalent: `<=` and `<` disagree only for an id of exactly " +
 			"DisplayIDLength characters, where returning `id` and returning " +
 			"`id[:DisplayIDLength]` return the same string.",
@@ -315,20 +377,20 @@ var repositoryExpectations = []Expectation{
 			"row above.",
 	},
 	{
-		ID: "e1b62d0b86c672b24228a09bbf179c7604acc67aeec244fce260f3c182716b9f",
+		ID: "a9ea01df1d5598b5e7a262424acfd79c3444573f67cdaa914667fa603affc77c",
 		Reason: "Equivalent: a rejected mutant's disposition carries no " +
 			"outcome, and StateOf answers `unfulfilled` through the " +
 			"Rejected case and through the default alike, because the zero " +
 			"Outcome is not OutcomeSurvived. Nothing else reads the field.",
 	},
 	{
-		ID: "926d93171820882528895f954fa11206a0277bf20ede3b5beed639d7d333437b",
+		ID: "6ff6656d50385f425cd37c8ae327942d870a06a596016e8e8f1c159c3c4cee14",
 		Reason: "Equivalent: the `existed` flag is read only by the rollback " +
 			"that puts a document back, and a caller handed this error " +
 			"returns before there is a rollback to run.",
 	},
 	{
-		ID: "e8db06e466a9891f3385d91579a4e8b3e3a0d0371fd517ac84d82c44c93edee7",
+		ID: "3df5f41b6b99375178004b38f82f50defccf85ee3f1ac56865cb1e201d4bede8",
 		Reason: "Equivalent: both callers impose a total order of their own on " +
 			"what this returns -- readWorkspace sorts the runs by " +
 			"NewestFirst and the damaged rows by path, and RemoveRuns only " +
@@ -336,66 +398,79 @@ var repositoryExpectations = []Expectation{
 			"back in is not observable.",
 	},
 	{
-		ID: "c4740390a45d54b1d38fa58c53c0428f0ea155276dd2a16064fe8a8a100974e5",
+		ID: "08d86b2c021fd792592e63d649824a73e267a1774e7fccf871105e0e96dbc987",
 		Reason: "Unreachable: partition has already translated every result's " +
 			"outcome through OutcomeOf, which refuses anything outside the " +
 			"six, and mutation.Tally records all six -- so the count this " +
 			"forwards cannot fail.",
 	},
 	{
-		ID: "999cd4aaba4b5576d06ebdf8e2653913747069fdf735bc0cb88f1fbe7dfae8bd",
+		ID: "634eb68967cd8504330ece9b2abefff34613fbc39235d458790d41775bd2c9d2",
 		Reason: "Unreachable: the same failure as the row above, on the line " +
 			"that would forward it.",
 	},
 	{
-		ID: "1e020d3ff3ff61130316dcb84a767c777f56238373e596c0cc2b85a9b941a1f4",
+		ID: "fe42ae5aaa23af3a23eaf400d24024246e1fd02e8c9119fbf71ced8d1472bfe0",
 		Reason: "Unreachable: the same argument one level in -- tallyOf reads " +
 			"the outcomes partition has already accepted, so " +
 			"mutation.TallyOf cannot refuse one.",
 	},
 	{
-		ID: "46377b3b20a3d917d144c3d08c7d82a298112add1d68716790668110095e8fea",
+		ID: "5de0482053b9edb451bd524fcaf2cc9961be90840809d527e99927d2b37099be",
 		Reason: "Unreachable: the same failure as the row above, on the line " +
 			"that would report it.",
 	},
 	{
-		ID: "b64199f55d4fab06639b68d71bc06fa0d2452976e0db479b11ba7cdfd4a488c9",
+		ID: "9ba94e487e2da6ec210920658f492727cf96ac59096361a35bb85e9bffe1efc0",
 		Reason: "Unreachable: Outcome.Mutation answers with one of the six core " +
 			"outcomes or with an error the line above returns, and " +
 			"mutation.Tally.Record has a case for all six.",
 	},
 	{
-		ID: "c9397f88ba8e506557c65396f13f7dd19a3ca8778188db8b74b2150eb0cb3117",
+		ID: "8faf6ec6bea019578b545f1a72ee6577fa18c924fe61e734b2f2bc16e6851cf3",
 		Reason: "Unreachable: the same failure as the row above, on the line " +
 			"that would report it.",
 	},
 	{
-		ID: "b4ed4c56cfeb5cc16f4c388aa005499a8551897c4f262b418f4182455b7a535f",
+		ID: "f9610cef085ed854a8d866f1f49b3151995bbced9dbacb9179b98b93af941e0f",
 		Reason: "Unreachable: the counts disagree only when a row was not " +
 			"consumed by the catalogue walk, and a row is consumed exactly " +
 			"when its id is catalogued -- so the loop above always finds " +
 			"the row this line exists to report the absence of.",
 	},
 	{
-		ID: "7dd25029ee5d776af3373a66167256898409217c7d655bf0fbbad65a6a8aab1b",
+		ID: "843a24ebe25ecb3c9b062e5df5776e2f82236eea1c85b70c904342083ece1abc",
+		Reason: "Unreachable: every module's report has been built or merged " +
+			"by the time this runs, and a report that was is one whose every " +
+			"outcome mutation.TallyOf accepted -- so the aggregate over those " +
+			"same outcomes cannot fail. Both constructors return through this " +
+			"one line, which is why it is declared once rather than at each of them.",
+	},
+	{
+		ID: "7647d940eade086845f48dc51b2515eada4bd201d25632874d9eadf7b852530e",
+		Reason: "Unreachable: the same failure as the row above, on the line " +
+			"that would forward it.",
+	},
+	{
+		ID: "95b0ddca198266155d3b025dfb8fd94e4b6db7b96486b194b2bad78bbce211b8",
 		Reason: "Unkillable: encoding/json fails only on a value it cannot " +
 			"represent -- a cycle, a channel or function field, a " +
 			"non-finite float -- and a Projection is strings, ints and a " +
 			"map of them, so no value of the type can make Encode fail.",
 	},
 	{
-		ID: "779e89c5aa67aa6ee881c10fc35d27ec70f693c193005ece49b215d40c95321a",
+		ID: "58b9a70ee05269bf17d5a0fcc2d3c9ee39d5a821d385abc02665e9050494d5af",
 		Reason: "Unkillable: the same failure as the row above, on the line " +
 			"that would report it.",
 	},
 	{
-		ID: "fb9d1e077634dc9befaec38521c6026643a2bb81dfb66404cbe2eb3ee232ee1e",
+		ID: "cdaeae3a0171381e52574b95f907baec6d0bc2fb39d12cc32c7745c973f49c05",
 		Reason: "Unkillable: the same encoding, reached through WriteArtifacts " +
 			"-- the document it publishes is the Projection the row above " +
 			"is about.",
 	},
 	{
-		ID: "4dad6256bc511e6795e5e344201ef55546b6d1bc41df6c38ff5f02ad9406c2db",
+		ID: "0653f507f92b55eeca7b45c60b1c54f4e6823d6b2fb84c383f9d31b95be55303",
 		Reason: "Unkillable: the same failure as the row above, on the line " +
 			"that would forward it.",
 	},
@@ -415,38 +490,25 @@ var repositoryExpectations = []Expectation{
 			"was given.",
 	},
 	{
-		ID: "3190c37f7f6fc15fd4d516a8beb3f098a6a4aaaff0930c9dc3026d81b859d7f8",
+		ID: "0b273dc1d64bac1ceef63affc3d880d1f737c81c962e1e73e364fe7b9a6d4e5f",
 		Reason: "Unkillable: filepath.Abs returns an error only when os.Getwd " +
 			"does, which needs this process's own working directory to have " +
 			"been deleted -- a state a test would be arranging for every " +
 			"other test in the same binary.",
 	},
 	{
-		ID: "ace7fb73f25d06b183db8d38fe3fdafb0cea0462c99c02b82b6ca9863d399164",
+		ID: "170340b291e6416303a6270f2a4395876b8639ef12ab690c95169525511abe07",
 		Reason: "Unkillable: the same failure as the row above, on the line " +
 			"that would forward it.",
 	},
 	{
-		ID: "8471bd3d5848c7aa2d0afe09b8e7ffd1621d7312c1bbe299ea97f184a0438797",
-		Reason: "Unreachable: the walk climbs to the parent only while the " +
-			"filesystem says a name is not there, and it stops at a path " +
-			"that is its own parent -- the volume root. Every path it is " +
-			"given is under a store root a file has just been read from, so " +
-			"it meets a name that resolves before it reaches one that has " +
-			"no parent.",
+		ID: "9fbb23c0f5a691d282c91d6f4e76e10cdeef49d64cd129e6e11c8b375c46531c",
+		Reason: "Unreachable: the answer for a volume root that does not " +
+			"resolve, which needs a path none of whose ancestors exist -- " +
+			"and the root itself always does.",
 	},
 	{
-		ID: "ec5aae2cd6b5938eab74dd4e90b24ceac892c9fdcf0ed2f0d17a05257ac87b8e",
-		Reason: "Unreachable: the same guard as the row above, spelled the " +
-			"other way.",
-	},
-	{
-		ID: "700cbc056f3fb82558d41158da5f717ce1041698df05826787554562ba3c2a3b",
-		Reason: "Unreachable: the branch the two rows above guard, which is the " +
-			"answer for a volume root that does not resolve.",
-	},
-	{
-		ID: "2380340d24fe192076857b8148ca285ed7c8a60f2ef97ca79ae09c272d76d540",
+		ID: "d0c7b47105ddeaca591bf4e46a18272d93b0b4e053f4896013277cc950d2abd6",
 		Reason: "Unreachable: filepath.EvalSymlinks walks a path from the left " +
 			"and reports the first name it cannot resolve, so a path it " +
 			"calls `not there` and a parent that fails for some other " +
@@ -454,7 +516,7 @@ var repositoryExpectations = []Expectation{
 			"answers with the same failure.",
 	},
 	{
-		ID: "e136ee1f2165220ec767905f8c86ed8a73d44f043657f2ac293afc970793a275",
+		ID: "6234ee76e3bbd193c4afb81a22fcef3027a038ac604c4dda243fff2d30133f7a",
 		Reason: "Unreachable: the same failure as the row above, on the line " +
 			"that would forward it.",
 	},
@@ -486,21 +548,20 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 	want := Config{
 		Version: 1,
 		Mutation: Mutation{
-			// Ten whole packages. Scoped test binaries bought the first two
-			// — the gate used to be two files, because every mutant ran every
-			// test binary in the module — internal/mutation's own tests
-			// bought the third, by killing the survivors that kept it out,
-			// the next three were measured before they were included and
-			// had no survivor to kill, and the three after those were bought
-			// the same way the third was. The ninth is this package: the file
-			// this test reads is inside the scope that reads it. The tenth is
-			// the toolchain wrapper, and it is the first one in this list
-			// that starts processes rather than deciding over values.
-			// had no survivor to kill, and the four after that were bought
-			// the same way the third was. The ninth is this package: the
-			// file this test reads is inside the scope that reads it. The
-			// tenth is internal/gocmd, the toolchain wrapper, and the
-			// eleventh is internal/report, which is what a run writes down.
+			// Thirteen whole packages, in the order the file lists them,
+			// which is the order they were added. The gate used to be two
+			// files, because every mutant ran every test binary in the
+			// module, and scoping the test binaries is what made whole
+			// packages affordable. Most arrived by having their survivors
+			// killed first, which is the rule; a few were measured before
+			// the line was added and had no survivor to kill, which is the
+			// only way a package is allowed in without a test being written
+			// for it. The ninth is this package: the file this test reads is
+			// inside the scope that reads it. The tenth, internal/gocmd, is
+			// the first here that starts processes rather than deciding over
+			// values; the eleventh, internal/report, is the first that writes
+			// files; and the thirteenth, internal/tempowner, is the first
+			// that takes a lock.
 			//
 			// The order is the file's order, and it is asserted rather than
 			// sorted for the same reason the expectation ids are: a list
@@ -517,6 +578,12 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"internal/config/*.go",
 				"internal/gocmd/*.go",
 				"internal/report/*.go",
+				"internal/testlog/*.go",
+				"internal/tempowner/*.go",
+				"internal/gitdiff/*.go",
+				"internal/snapshot/*.go",
+				"internal/cache/*.go",
+				"internal/validate/*.go",
 			},
 			Exclude: []string{"**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"},
 			// `operators` is deliberately omitted from the file, so the
@@ -542,6 +609,12 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"./internal/coverage/...", "./internal/schemas/...", "./internal/config/...",
 				"./internal/gocmd/...",
 				"./internal/report/...",
+				"./internal/testlog/...",
+				"./internal/tempowner/...",
+				"./internal/gitdiff/...",
+				"./internal/snapshot/...",
+				"./internal/cache/...",
+				"./internal/validate/...",
 			},
 			// `timeout` is deliberately omitted from the file now that the
 			// binaries are scoped, so it derives from the baseline rather than
@@ -555,20 +628,25 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 			Memory:       0,
 			BaselineRuns: 3,
 			Narrowing:    NarrowingTest,
+			Probing:      ProbingOff,
 		},
 		// `jobs` is pinned in the file rather than defaulted, so that a local
 		// run and a GitHub-hosted CI run are the same run; see the comment there
 		// for why it is no longer pinned for correctness.
 		Execution: Execution{Jobs: 4},
 		Cache:     Cache{Mode: CacheAuto, Directory: ""},
-		// The floor moved with the eleventh package, for the first time since
-		// it went to 99: one percent of 2432 scored mutants is twenty-four
-		// survivors of slack, which is more than the twenty-one that was
-		// judged too much at 544. 99.5 buys twelve (2420/2432 = 99.51%
-		// clears, 2419/2432 = 99.47% does not), where 99 bought thirteen
-		// before this widening, so the backstop is the same backstop at a
-		// larger size. The arithmetic is written out in the file.
-		Policy: mutation.Policy{Strict: false, MinimumScore: 99.5, RequireMutants: true},
+		// The floor has moved twice, by the same rule both times: it goes up
+		// when half a percent -- one percent, before the first move -- buys
+		// more slack than the twenty-one survivors judged too much at 544.
+		// One percent of 2432 was twenty-four, which moved it to 99.5; half a
+		// percent of 4306 is 21.53, which moves it to 99.75. Between those it
+		// stayed put through five widenings, and that was arithmetic rather
+		// than inertia. At 4306 scored mutants a quarter of a percent buys ten
+		// survivors (4296/4306 = 99.77% clears, 4295/4306 = 99.74% does not),
+		// where 99.5 bought twelve when it was set: a floor written as a
+		// survivor count rather than as a percentage of a growing catalogue.
+		// The arithmetic is written out in the file.
+		Policy: mutation.Policy{Strict: false, MinimumScore: 99.75, RequireMutants: true},
 		Report: Report{
 			Directory: "reports/mutation",
 			Formats:   []ReportFormat{FormatJSON, FormatHTML},

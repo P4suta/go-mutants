@@ -92,9 +92,21 @@ func (r *guardRenderer) guard(node *siteNode, s site, orig []byte) ([]byte, erro
 	var err error
 	switch s.form {
 	case discover.GuardFormC:
-		err = r.selector(&b, node, s, orig)
+		err = r.selector(&b, node, s, orig, "")
+	case discover.GuardFormCPrime:
+		err = r.selector(&b, node, s, orig, s.siteType)
 	case discover.GuardFormS:
 		err = r.chain(&b, node, s, orig)
+	case discover.GuardFormE:
+		err = r.returningClosure(&b, node, s, orig)
+	case discover.GuardFormF:
+		// The closure and its call are written around exactly the chain Form S
+		// writes, which is what keeps the two forms one renderer: what differs
+		// is the slot the result is legal in, not the guard inside it.
+		b.WriteString("func() { ")
+		if err = r.chain(&b, node, s, orig); err == nil {
+			b.WriteString(" }()")
+		}
 	case discover.GuardFormD:
 		r.declarations(&b, s)
 		err = r.chain(&b, node, s, orig)
@@ -128,17 +140,37 @@ func (r *guardRenderer) guard(node *siteNode, s site, orig []byte) ([]byte, erro
 // typing, evaluation order, and short-circuiting; exactly one of them is ever
 // evaluated, and with every flag false that one is ORIG, byte for byte the
 // source the user wrote.
-func (r *guardRenderer) selector(b *bytes.Buffer, node *siteNode, s site, orig []byte) error {
-	b.WriteByte('(')
+//
+// Form C' is the same selector with a conversion at each end, for a site whose
+// type is a named boolean rather than the universe one:
+//
+//	T(A.M[i1] && bool(m1) || … || !(…) && bool(ORIG))
+//
+// The selector itself is an untyped boolean expression either way; what changes
+// is that where the site's type is not `bool`, the expression has to be
+// converted back to it, and each operand has to be converted *to* `bool` first
+// because `&&` and `||` need operands of one boolean type. Both conversions are
+// between a defined type and its underlying type, which is always legal.
+//
+// Nothing about evaluation changes. A conversion of a boolean expression
+// evaluates that expression and nothing else, so the short-circuiting, the
+// order, and the "exactly one operand is evaluated" property are the selector's
+// as before.
+func (r *guardRenderer) selector(b *bytes.Buffer, node *siteNode, s site, orig []byte, convertTo string) error {
+	opening := "("
+	if convertTo != "" {
+		opening = convertTo + "("
+	}
+	b.WriteString(opening)
 	for _, m := range node.Alternatives {
 		mutated, err := r.mutated(s, m)
 		if err != nil {
 			return err
 		}
 		b.WriteString(r.flag(m))
-		b.WriteString(" && (")
-		b.Write(mutated)
-		b.WriteString(") || ")
+		b.WriteString(" && ")
+		writeOperand(b, mutated, convertTo != "")
+		b.WriteString(" || ")
 	}
 	b.WriteString("!(")
 	for i, m := range node.Alternatives {
@@ -147,10 +179,28 @@ func (r *guardRenderer) selector(b *bytes.Buffer, node *siteNode, s site, orig [
 		}
 		b.WriteString(r.flag(m))
 	}
-	b.WriteString(") && (")
-	b.Write(orig)
-	b.WriteString("))")
+	b.WriteString(") && ")
+	writeOperand(b, orig, convertTo != "")
+	b.WriteByte(')')
 	return nil
+}
+
+// writeOperand writes one operand of a selector, in parentheses, and converted
+// to `bool` when the site's own type is not.
+//
+// `bool(x)` rather than `(x)`: `&&` and `||` require both operands to have one
+// boolean type, and a named boolean and an untyped constant do not mix the way
+// two untyped constants do. Converting each operand rather than relying on
+// assignability is what keeps the shape the same for every alternative,
+// whatever the mutated text turned out to be.
+func writeOperand(b *bytes.Buffer, text []byte, convert bool) {
+	if convert {
+		b.WriteString("bool(")
+	} else {
+		b.WriteByte('(')
+	}
+	b.Write(text)
+	b.WriteByte(')')
 }
 
 // chain renders the branch chain both statement forms share:
@@ -184,6 +234,45 @@ func (r *guardRenderer) chain(b *bytes.Buffer, node *siteNode, s site, orig []by
 	}
 	b.WriteString(" else ")
 	writeBranch(b, orig)
+	return nil
+}
+
+// returningClosure renders the Form E guard: a closure that returns the site's
+// own type, called where the expression stood.
+//
+//	func() T { if A.M[i1] { return m1 } else { return ORIG } }()
+//
+// It is the branch chain with every branch returning rather than executing, and
+// the `else` is always written for the reason [guardRenderer.chain] gives: a
+// function whose body is an `if` chain needs every branch to terminate, or the
+// closing brace is reachable without a return.
+//
+// The closure is written *where the expression was*, which is the whole of what
+// makes this form sound. A call is evaluated where it is written, so the
+// expression is evaluated in the same order and the same number of times; every
+// name in scope at the expression is in scope inside the closure; and no
+// identifier is invented, so nothing can collide.
+func (r *guardRenderer) returningClosure(b *bytes.Buffer, node *siteNode, s site, orig []byte) error {
+	b.WriteString("func() ")
+	b.WriteString(s.siteType)
+	b.WriteString(" { ")
+	for i, m := range node.Alternatives {
+		if i > 0 {
+			b.WriteString(" else ")
+		}
+		b.WriteString("if ")
+		b.WriteString(r.flag(m))
+		b.WriteString(" { return ")
+		mutated, err := r.mutated(s, m)
+		if err != nil {
+			return err
+		}
+		b.Write(mutated)
+		b.WriteString(" }")
+	}
+	b.WriteString(" else { return ")
+	b.Write(orig)
+	b.WriteString(" } }()")
 	return nil
 }
 

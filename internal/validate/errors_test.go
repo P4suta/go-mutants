@@ -67,3 +67,27 @@ func TestErrorStringNoLongerEmbedsTheCompilerOutput(t *testing.T) {
 		t.Errorf("Command() = %+v, want the build it was about", got)
 	}
 }
+
+// TestEveryCodeIsSpelledTheWayItIsPrinted writes this package's codes out.
+//
+// They are what a user reads in a failure and what docs/errors.md lists, so
+// they are asserted as literals rather than derived from the constants: a test
+// comparing `string(c)` with `c.String()` would pass however the block was
+// renumbered.
+func TestEveryCodeIsSpelledTheWayItIsPrinted(t *testing.T) {
+	t.Parallel()
+
+	for _, pair := range [][2]string{
+		{validate.CodeOptions.String(), "GOM7401"},
+		{validate.CodeSourceUnreadable.String(), "GOM7402"},
+		{validate.CodeBuildFailed.String(), "GOM7410"},
+		{validate.CodeBuildTimedOut.String(), "GOM7411"},
+		{validate.CodeInterrupted.String(), "GOM7412"},
+		{validate.CodeNotMutantInduced.String(), "GOM7420"},
+		{validate.CodeStillFailing.String(), "GOM7421"},
+	} {
+		if pair[0] != pair[1] {
+			t.Errorf("a code renders as %q, want %q", pair[0], pair[1])
+		}
+	}
+}

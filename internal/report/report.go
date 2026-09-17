@@ -603,6 +603,20 @@ type Execution struct {
 	// It is optional and absent when false, so a document written before the
 	// bound existed is still a document this build reads.
 	MemoryExceeded bool `json:"memory_exceeded,omitzero"`
+	// Diverged reports that this pass ended itself because a counted loop of
+	// the tree went past the ceiling this run derived for it from what the
+	// original program did under the same tests.
+	//
+	// It is why a row can say `timed-out` after one attempt and a handful of
+	// milliseconds. A timeout is measured twice before it is believed, because
+	// one timeout on a loaded machine says as much about the machine as about
+	// the mutant; a divergence is two counts taken in one tree and says nothing
+	// about the machine at all, so it settles where it is read. The loop and
+	// the counts are in the retained output. See ADR 0013.
+	//
+	// It is optional and absent when false, so a document written before the
+	// counters existed is still a document this build reads.
+	Diverged bool `json:"diverged,omitzero"`
 	// PeakMemoryBytes is the highest memory any binary of this pass was
 	// observed to hold.
 	//
@@ -898,6 +912,19 @@ type Mutant struct {
 	// mutant's lines and therefore did not execute it. Such a mutant is a
 	// survivor — no test could have caught it — with zero attempts.
 	Uncovered bool `json:"uncovered"`
+	// Unobserved says the run established that no test binary could *observe*
+	// this mutant and therefore did not execute it. Such a mutant is a survivor
+	// with zero attempts, exactly as an uncovered one is.
+	//
+	// The two are the pair a reader has to tell apart, and the field exists to
+	// let them. An uncovered mutant's lines are never run; an unobserved one's
+	// are run, and running them changes nothing any test looks at — so the
+	// remedy for the first is a test that reaches the line, and the remedy for
+	// the second is an assertion in a test that already does.
+	//
+	// It is omitted when false, which is every mutant of a run that did not
+	// probe. See internal/probe for the rule that establishes it.
+	Unobserved bool `json:"unobserved,omitzero"`
 	// Cached says this outcome was adopted from the outcome cache rather than
 	// measured by this run. The duration, the attempts, the killed_by and the
 	// output tail are then the ones the run that first measured it recorded, and
@@ -924,6 +951,12 @@ type Mutant struct {
 	// of `killed`; the bound it was measured against is `test.memory_bytes`.
 	MemoryExceeded  bool  `json:"memory_exceeded,omitzero"`
 	PeakMemoryBytes int64 `json:"peak_memory_bytes,omitzero"`
+	// Diverged says a counted loop is what settled this mutant rather than the
+	// deadline, and it restates the execution rows for [Mutant.MemoryExceeded]'s
+	// reason: a cached mutant has an attempt count and no rows.
+	//
+	// It is only ever true beside an outcome of `timed-out`. See ADR 0013.
+	Diverged bool `json:"diverged,omitzero"`
 }
 
 // A Branch is the body span a mutant's condition gates, in the coordinates

@@ -651,7 +651,7 @@
       "additionalProperties": false,
       "required": ["kind"],
       "properties": {
-        "kind": { "enum": ["workspace", "probe"] },
+        "kind": { "enum": ["workspace", "probe", "worker"] },
         "source": { "type": "string" },
         "dir": { "type": "string" },
         "stable": {

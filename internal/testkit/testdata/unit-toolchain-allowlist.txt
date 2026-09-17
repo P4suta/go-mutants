@@ -44,6 +44,34 @@
 internal/discover/discover_test.go
 internal/discover/skipsites_test.go
 
+# internal/gitdiff runs a real `git` because every interesting thing about this
+# package is what git actually prints: which commit a merge base resolves to,
+# how a hunk header is spelled, what a missing upstream says. Its own file says
+# it first -- "a fake git would be a second implementation of the thing under
+# test" -- and that is the same argument internal/discover makes two entries up.
+#
+# It is here now because it was invisible before. The skip was a bare
+# exec.LookPath("git"), which GO_MUTANTS_TEST_REQUIRE_TOOLS cannot be told
+# about, and the needle list named GitBinary and not the lookup -- so a runner
+# whose git went missing retired eighteen tests and reported green, and every
+# mutant in internal/gitdiff would have survived a dogfood run that covered it.
+# Both halves are closed: the skip goes through testkit.GitBinary, and
+# exec.LookPath("git") is a needle like exec.LookPath("go") beside it.
+internal/gitdiff/gitdiff_test.go
+
+# internals_test.go is the same argument for the half of the package that is
+# unexported. Almost all of it is scripted -- the failures a repository cannot
+# be put into are driven through a seam rather than through git -- and one test
+# is not: what environment a git command sees is a claim about a child process,
+# and the only way to ask it is to start one and read what it answered.
+internal/gitdiff/internals_test.go
+
+# internal/cli has one test that has to be inside a repository: the sentence
+# `--changed` prints when the branch it is on has no upstream. That sentence is
+# go-mutants' own output rather than git's, but there is no way to reach it
+# without a working tree for git to have an opinion about.
+internal/cli/run_test.go
+
 # internal/instrument generates Go source, and the only claim that matters about
 # generated source is that it is a program. These three compile what the
 # instrumenter produced — the mutated tree, the probe rewrite, the probe sites —
@@ -69,10 +97,28 @@ internal/instrument/probesites_test.go
 # harness needles are matched unqualified: written as `testkit.GoBinary(` they
 # would never match a call from inside package testkit, and the one package
 # whose subject is the tier policy would be the one package outside it.
+#
+# Naming a needle in a sentence no longer puts a file here. The scan blanks
+# comments before it looks, so the paragraph above costs nothing -- which it
+# would not have, back when a file explaining the rule was reported for
+# explaining it.
 internal/testkit/env_test.go
 internal/testkit/module_test.go
 internal/testkit/tiers_test.go
 internal/testkit/tools_test.go
+
+# licensegate_test.go is the REUSE gate, and it asks git which files this
+# repository commits. That is a question only git can answer: a filesystem walk
+# would have to reimplement .gitignore to tell a committed file from a build
+# output, and would then be a gate that agrees with a reimplementation rather
+# than with the tree.
+#
+# It stays in the unit tier because the state it replaces is worse than its
+# cost. REUSE.toml has existed since this repository did and nothing enforced
+# it: no tool pinned, no mise task, no workflow. A licensing manifest checked
+# only in a tier that does not run on every push is a manifest that drifts
+# between the pushes. About a tenth of a second, one `git ls-files`.
+internal/testkit/licensegate_test.go
 
 # internal/sourcegate's pointer-conversion gate type-checks this module, which needs
 # a real toolchain by construction: the questions it asks — which package

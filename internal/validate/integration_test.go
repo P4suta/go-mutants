@@ -48,18 +48,29 @@ const rejectableModule = "fixture.example/rejectable"
 // wantCatalog is the fixture's whole catalogue, in catalogue order.
 //
 // It is written out rather than derived because every assertion below names a
-// mutant by its position in it. Nineteen candidates is small enough to read, and
-// pinning it means a change to the fixture that adds or moves a candidate fails
-// here — where the answer is "update the fixture's expectations" — instead of
-// silently shifting which mutant a later assertion is about.
+// mutant by its position in it. Twenty-seven candidates is small enough to read,
+// and pinning it means a change to the fixture that adds or moves a candidate
+// fails here — where the answer is "update the fixture's expectations" —
+// instead of silently shifting which mutant a later assertion is about.
+//
+// The positions themselves are looked up by name below rather than written as
+// numbers. A rule landing in the catalogue inserts candidates into the middle of
+// this list — `branch-replacement` put four into compare.go — and renumbering
+// two tables by hand after every such landing is the kind of arithmetic that is
+// wrong once and silently tests the wrong mutant afterwards. The list stays
+// verbatim, which is what pins the fixture; only the indices are derived.
 //
 // Catalogue order is by path first, which is why named.go's four sit at the end
 // and the positions [trapped] names are unaffected by them.
 var wantCatalog = []string{
 	"compare.go negate-condition v < lo -> !(v < lo)",
+	"compare.go condition-to-true v < lo -> true",
+	"compare.go condition-to-false v < lo -> false",
 	"compare.go lt-to-le < -> <=",
 	"compare.go false-to-true false -> true",
 	"compare.go negate-condition v > hi -> !(v > hi)",
+	"compare.go condition-to-true v > hi -> true",
+	"compare.go condition-to-false v > hi -> false",
 	"compare.go gt-to-ge > -> >=",
 	"compare.go false-to-true false -> true",
 	"compare.go true-to-false true -> false",
@@ -75,17 +86,31 @@ var wantCatalog = []string{
 	"named.go return-false level >= 3 -> false",
 	"named.go ge-to-gt >= -> >",
 	"named.go true-to-false true -> false",
+	"named.go negate-condition f -> !(f)",
+	"named.go condition-to-true f -> true",
+	"named.go condition-to-false f -> false",
+	"named.go return-zero-numeric level -> 0",
 }
 
-// namedBool is the range of catalogue positions covering named.go, the file
-// whose candidates this phase used to reject and now accepts.
+// namedBool is the positions in named.go that this phase used to reject and now
+// accepts, which is not all of that file's candidates any more.
 //
-// It is a range rather than a set because what is asserted about them is
-// uniform: all four are healthy. Its own test says why they are in a fixture
-// named for rejection at all — they are the control that would fail if the
-// statement form ever stopped carrying an edit whose result type is a named
-// boolean, which is a regression no other fixture in the corpus would notice.
-var namedBool = []int{15, 16, 17, 18}
+// What is asserted about them is uniform: every one is healthy. Its own test
+// says why they are in a fixture named for rejection at all — they are the
+// control that would fail if the statement form ever stopped carrying an edit
+// whose result type is a named boolean, which is a regression no other fixture
+// in the corpus would notice. The three candidates at that file's `if f` are
+// the same control for Form C', which converts a selector back to the named
+// type rather than avoiding one, so they are listed with them.
+var namedBool = catalogPositions(
+	"named.go return-true level >= 3 -> true",
+	"named.go return-false level >= 3 -> false",
+	"named.go ge-to-gt >= -> >",
+	"named.go true-to-false true -> false",
+	"named.go negate-condition f -> !(f)",
+	"named.go condition-to-true f -> true",
+	"named.go condition-to-false f -> false",
+)
 
 // trapped names the catalogue positions that cannot compile, and the words the
 // compiler has to use about each. Everything else must survive.
@@ -97,9 +122,44 @@ var namedBool = []int{15, 16, 17, 18}
 // than about the guard around it, which is what the fixture's previous traps —
 // a bool selector meeting a named boolean type — turned out not to be.
 var trapped = map[int]string{
-	8:  "division by zero",
-	11: "overflows",
-	12: "division by zero",
+	catalogPosition("compare.go mul-to-div * -> /"): "division by zero",
+	catalogPosition("limits.go sub-to-add - -> +"):  "overflows",
+	catalogPosition("limits.go mul-to-div * -> /"):  "division by zero",
+}
+
+// catalogPosition is the index of one entry of [wantCatalog].
+//
+// It panics on a name that is missing or that appears twice, which is the only
+// honest answer at package initialisation: a table keyed by a position nobody
+// can resolve would test whichever mutant happened to land there. Two of
+// wantCatalog's entries really are identical -- compare.go negates two
+// comparisons against the same literal -- so ambiguity is a condition that
+// exists rather than one this guards against in theory.
+func catalogPosition(entry string) int {
+	found := -1
+	for i, candidate := range wantCatalog {
+		if candidate != entry {
+			continue
+		}
+		if found >= 0 {
+			panic("validate: " + entry + " appears twice in wantCatalog, so its position is ambiguous")
+		}
+		found = i
+	}
+	if found < 0 {
+		panic("validate: " + entry + " is not in wantCatalog")
+	}
+	return found
+}
+
+// catalogPositions is [catalogPosition] over several entries, in the order
+// given.
+func catalogPositions(entries ...string) []int {
+	out := make([]int, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, catalogPosition(entry))
+	}
+	return out
 }
 
 // TestValidateIsolatesTheTrappedCandidates runs discovery, instrumentation and
@@ -124,7 +184,7 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 		Snap:         snap,
 		Catalog:      catalog,
 		Hints:        mutantkit.Hints(t, found),
-		ModulePath:   rejectableModule,
+		Modules:      []validate.Module{{Dir: ".", Path: rejectableModule}},
 		Toolchain:    toolchain,
 		Jobs:         2,
 		BuildTimeout: mutantkit.StepTimeout,
@@ -231,7 +291,7 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 	})
 
 	t.Run("the surviving guards are the ones that were accepted", func(t *testing.T) {
-		// Six sites in compare.go, two of three in limits.go, and both of
+		// Six sites in compare.go, two of three in limits.go, and all four of
 		// named.go's: the counts of what is left, per file, which is the tree's
 		// own version of the accepted set. A guard is a site rather than a
 		// mutant, so compare.go keeps all six of its sites — the statement
@@ -241,10 +301,12 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 		// since a pristine file carries no guards at all.
 		//
 		// named.go is the file that would once have been absent for the opposite
-		// reason: its four candidates were all rejected, so this phase restored
-		// it to its pristine bytes and it drifted not at all. Two guards there is
-		// the improvement stated as a count.
-		want := map[string]int{"compare.go": 6, "limits.go": 2, "named.go": 2}
+		// reason: its candidates were all rejected, so this phase restored it to
+		// its pristine bytes and it drifted not at all. Four guards there is the
+		// improvement stated as a count, and the last two are the newer half of
+		// it: the `if f` condition is a Form C' site, and its own `return level`
+		// is a statement one.
+		want := map[string]int{"compare.go": 6, "limits.go": 2, "named.go": 4}
 		if got := result.Instrumented.GuardsByFile; !maps.Equal(got, want) {
 			t.Errorf("guards by file = %v, want %v", got, want)
 		}
@@ -322,7 +384,7 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 		// activation that turns on the wrong mutant — or none. So one accepted
 		// mutant, in the file that lost a whole rewrite site to a rejection, is
 		// activated and has to kill the test that covers it.
-		mutant := mutants[14]
+		mutant := mutants[catalogPosition("limits.go add-to-sub + -> -")]
 		red := mutantkit.RunSuite(t, toolchain, snap.Root, mutantkit.Activate(env, mutant.ID))
 		what := "the suite with " + mutant.DisplayID + " (" + mutant.Rule.Name + " in " + mutant.Path + ") active"
 		mutantkit.RequireExit(t, red, 1, what)
@@ -385,7 +447,7 @@ func TestValidateIsDeterministic(t *testing.T) {
 			Snap:         snap,
 			Catalog:      catalog,
 			Hints:        mutantkit.Hints(t, found),
-			ModulePath:   rejectableModule,
+			Modules:      []validate.Module{{Dir: ".", Path: rejectableModule}},
 			Toolchain:    toolchain,
 			BuildTimeout: mutantkit.StepTimeout,
 			Env:          env,
@@ -446,7 +508,7 @@ func TestValidateRefusesATreeItDidNotBreak(t *testing.T) {
 		Snap:         snap,
 		Catalog:      catalog,
 		Hints:        mutantkit.Hints(t, found),
-		ModulePath:   rejectableModule,
+		Modules:      []validate.Module{{Dir: ".", Path: rejectableModule}},
 		Toolchain:    toolchain,
 		BuildTimeout: mutantkit.StepTimeout,
 		Env:          env,
@@ -526,7 +588,7 @@ func TestValidateLeavesNoBuildOutputInTheSnapshot(t *testing.T) {
 		Snap:         snap,
 		Catalog:      catalog,
 		Hints:        mutantkit.Hints(t, found),
-		ModulePath:   found.ModulePath,
+		Modules:      []validate.Module{{Dir: ".", Path: found.ModulePath}},
 		Toolchain:    toolchain,
 		BuildTimeout: mutantkit.StepTimeout,
 		Env:          env,
@@ -669,7 +731,7 @@ func TestValidateDoesNotTouchTheUsersBuildCache(t *testing.T) {
 		Snap:         snap,
 		Catalog:      catalog,
 		Hints:        mutantkit.Hints(t, found),
-		ModulePath:   found.ModulePath,
+		Modules:      []validate.Module{{Dir: ".", Path: found.ModulePath}},
 		Toolchain:    toolchain,
 		BuildTimeout: mutantkit.StepTimeout,
 		Env:          buildEnv,

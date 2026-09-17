@@ -78,10 +78,14 @@ func MapTests(opts TestOptions) TestResult {
 	}
 	slices.SortFunc(tests, compareTestKeys)
 
+	modules := modulesOf(opts.ModulePath, opts.Mutants)
 	matched := make(map[string]bool)
-	indexes := make(map[TestKey]fileIndex, len(tests))
-	for _, key := range tests {
-		indexes[key] = newFileIndex(opts.Profiles[key], opts.ModulePath, matched)
+	// A slice beside tests rather than a map keyed on one: the index of a test
+	// is wanted once per file per test, and a two-string key hashed that many
+	// times is a cost with no question behind it.
+	indexes := make([]fileIndex, len(tests))
+	for i, key := range tests {
+		indexes[i] = newFileIndex(opts.Profiles[key], modules, matched)
 	}
 
 	result := TestResult{
@@ -90,18 +94,75 @@ func MapTests(opts TestOptions) TestResult {
 		Tests:     tests,
 		Matched:   len(matched),
 	}
-	for _, m := range opts.Mutants {
-		var covering []TestKey
-		for _, key := range tests {
-			if indexes[key].covers(m.Path, m.StartLine, m.EndLine) {
-				covering = append(covering, key)
+	covering := make([][]TestKey, len(opts.Mutants))
+	for _, group := range groupByFile(opts) {
+		for i, key := range tests {
+			intervals := indexes[i][group.path]
+			if len(intervals) == 0 {
+				continue
+			}
+			for _, placed := range group.mutants {
+				if overlaps(intervals, placed.start, placed.end) {
+					covering[placed.at] = append(covering[placed.at], key)
+				}
 			}
 		}
-		if len(covering) == 0 {
+	}
+	for i, m := range opts.Mutants {
+		if len(covering[i]) == 0 {
 			result.Uncovered = append(result.Uncovered, m.ID)
 			continue
 		}
-		result.Covering[m.ID] = covering
+		result.Covering[m.ID] = covering[i]
 	}
 	return result
+}
+
+// A fileGroup is the mutants of one file, under the name a profile spells that
+// file with, and where each of them sits in the caller's own list.
+type fileGroup struct {
+	path    string
+	mutants []placedMutant
+}
+
+// A placedMutant is one mutant reduced to what the overlap search reads: its
+// line interval, and the position its answer belongs in.
+type placedMutant struct {
+	at    int
+	start int
+	end   int
+}
+
+// groupByFile gathers the mutants by the file a profile would name them under,
+// in the order the files first appear.
+//
+// It is what turns the mapping from a product into a sum of two of them. How a
+// profile spells a mutant's file is a fact about the mutant, and finding that
+// file in a profile is a fact about the file; asked inside the innermost loop
+// they were both facts about a *pair*, which on a real run is the catalogue
+// times the suite — four thousand mutants against six hundred tests is two and
+// a half million strings built and thrown away, and as many lookups of a long
+// path, to answer a question a few hundred files' worth already settles.
+//
+// The first-appearance order is what keeps the result a function of the input
+// alone: iterating the map would order the groups differently from run to run,
+// and although the answer does not depend on the order — each mutant's own
+// covering list is appended in test order whichever group it is in — a
+// deterministic walk is what makes that true by construction rather than by
+// inspection.
+func groupByFile(opts TestOptions) []fileGroup {
+	groups := make([]fileGroup, 0, 8)
+	at := make(map[string]int, 8)
+	for i, m := range opts.Mutants {
+		path := profilePath(opts.ModulePath, m)
+		index, seen := at[path]
+		if !seen {
+			index = len(groups)
+			at[path] = index
+			groups = append(groups, fileGroup{path: path})
+		}
+		groups[index].mutants = append(groups[index].mutants,
+			placedMutant{at: i, start: m.StartLine, end: m.EndLine})
+	}
+	return groups
 }

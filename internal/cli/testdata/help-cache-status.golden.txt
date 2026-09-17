@@ -1,0 +1,21 @@
+Print where the outcome cache lives and what is in it.
+
+One line per workspace, ordered by key: how many outcomes are stored for it, what
+they take up, and when the newest was written. A directory under the cache root
+that carries no go-mutants marker, or one naming a format this build does not
+know, is listed as skipped rather than counted — a directory go-mutants will not
+delete is worth knowing about, and "nothing here" and "nothing I would touch"
+are different answers.
+
+Usage:
+  go-mutants cache status [flags]
+
+Flags:
+  -h, --help   help for status
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)

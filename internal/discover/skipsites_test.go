@@ -79,6 +79,9 @@ func describeSite(t *testing.T, root string, site SkipSite) string {
 	t.Helper()
 	where := site.Path + ":" + strconv.Itoa(site.Line) + ":" + strconv.Itoa(site.Column) +
 		" " + string(site.Reason)
+	if site.Rule != "" {
+		where += " " + site.Rule
+	}
 	if site.Line == 0 && site.Column == 0 {
 		return where
 	}
@@ -139,24 +142,25 @@ func TestSuppressedSitesCarryTheirCoordinates(t *testing.T) {
 			// declarations, both expressions hiding in one array length, the
 			// three package-level initialisers — the last of which is a
 			// function literal holding a comparison and a return, so it is
-			// three sites on one line — and the four case labels.
+			// two sites on one line — and the four case labels.
 			path: "suppressed/suppressed.go",
 			sites: []string{
-				`suppressed/suppressed.go:18:12 const-decl "true"`,
-				`suppressed/suppressed.go:20:13 const-decl "> 1"`,
-				`suppressed/suppressed.go:27:18 const-decl "<= 4"`,
-				`suppressed/suppressed.go:33:28 array-length "< 2, t"`,
-				`suppressed/suppressed.go:33:33 array-length "true})"`,
-				`suppressed/suppressed.go:36:19 package-var-init "< 5"`,
-				`suppressed/suppressed.go:39:15 package-var-init "true"`,
-				`suppressed/suppressed.go:50:33 package-var-init "1 == 2"`,
-				`suppressed/suppressed.go:50:33 package-var-init "1 == 2"`,
-				`suppressed/suppressed.go:50:35 package-var-init "== 2 }"`,
-				`suppressed/suppressed.go:58:18 const-decl "> 2"`,
-				`suppressed/suppressed.go:68:9 case-label "== b:"`,
-				`suppressed/suppressed.go:72:10 case-label "== fal"`,
-				`suppressed/suppressed.go:72:13 case-label "false:"`,
-				`suppressed/suppressed.go:89:16 case-label "< b):"`,
+				`suppressed/suppressed.go:18:12 const-decl true-to-false "true"`,
+				`suppressed/suppressed.go:20:13 const-decl gt-to-ge "> 1"`,
+				`suppressed/suppressed.go:27:18 const-decl le-to-lt "<= 4"`,
+				`suppressed/suppressed.go:33:28 array-length lt-to-le "< 2, t"`,
+				`suppressed/suppressed.go:33:33 array-length true-to-false "true})"`,
+				`suppressed/suppressed.go:36:19 package-var-init lt-to-le "< 5"`,
+				`suppressed/suppressed.go:39:15 package-var-init true-to-false "true"`,
+				// One coordinate and one rule, where both return replacements
+				// could have stood: `1 == 2` is a constant the checker folded
+				// to false, so `return-false` is not a mutation to decline --
+				// it is the program itself -- and the refusal is made before
+				// the suppression is recorded. A site that is not an edit is
+				// not a declined edit either.
+				`suppressed/suppressed.go:50:33 package-var-init return-true "1 == 2"`,
+				`suppressed/suppressed.go:50:35 package-var-init eq-to-neq "== 2 }"`,
+				`suppressed/suppressed.go:58:18 const-decl gt-to-ge "> 2"`,
 			},
 		},
 		{
@@ -165,27 +169,32 @@ func TestSuppressedSitesCarryTheirCoordinates(t *testing.T) {
 			// type argument list.
 			path: "generics/generics.go",
 			sites: []string{
-				`generics/generics.go:29:27 type-param "true})"`,
-				`generics/generics.go:36:28 type-param "false}"`,
-				`generics/generics.go:43:27 type-param "true})"`,
-				`generics/generics.go:60:25 type-param "true})"`,
-				`generics/generics.go:60:51 type-param "false}"`,
+				`generics/generics.go:29:27 type-param true-to-false "true})"`,
+				`generics/generics.go:36:28 type-param false-to-true "false}"`,
+				`generics/generics.go:43:27 type-param true-to-false "true})"`,
+				`generics/generics.go:60:25 type-param true-to-false "true})"`,
+				`generics/generics.go:60:51 type-param false-to-true "false}"`,
 			},
 		},
 		{
-			// The condition of a named boolean type, which is negatable Go and
-			// no guard form's site.
+			// The condition of a named boolean type, which three rules want and
+			// which every one of them used to be refused at. Form C' converts
+			// the selector back to the named type, so the file now records
+			// nothing at all -- and the empty list here is the assertion,
+			// because a refusal that came back would otherwise show up only as
+			// three mutants quietly missing.
 			path:  "negate/negate.go",
-			sites: []string{`negate/negate.go:48:5 unnameable-decl-type "f {"`},
+			sites: nil,
 		},
 		{
-			// The addition inside the call on the `:=` line, which is the edit
-			// whose Form D site declares a type this file cannot spell. The
-			// coordinate is the edit's and not the declaration's, which is
-			// what makes it findable: the refusal is about the statement, and
-			// the statement is where the reader has to look.
+			// The one refusal left in the corpus, and the coordinate is the
+			// edit's own. Arithmetic over an unexported numeric type from
+			// another package has that type, a `switch` tag has no statement
+			// around it for any statement form to stand in, and it is not
+			// boolean — so the search walks outward, finds nothing it can
+			// name, and declines at the operator itself.
 			path:  "unnameable/unnameable.go",
-			sites: []string{`unnameable/unnameable.go:19:20 unnameable-decl-type "+ b)"`},
+			sites: []string{`unnameable/unnameable.go:42:23 unnameable-decl-type add-to-sub "+ hidd"`},
 		},
 	} {
 		equalStrings(t, describeSitesIn(t, root, result.SkipSites, want.path), want.sites)

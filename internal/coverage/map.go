@@ -4,6 +4,7 @@
 package coverage
 
 import (
+	"cmp"
 	"slices"
 	"sort"
 	"strings"
@@ -23,6 +24,14 @@ type Mutant struct {
 	// Path is the module-relative source path with forward slashes, as
 	// internal/discover reports it — "internal/alpha/alpha.go".
 	Path string
+	// ModulePath is the module Path is relative to, and is empty outside a
+	// workspace, where [Options.ModulePath] is the one answer for every mutant.
+	//
+	// A workspace run has several, and the profile spells its files under
+	// whichever module each belongs to: two modules can each hold an `app.go`,
+	// and stripping one module's prefix off the other's file would make them
+	// one file. See ADR 0012.
+	ModulePath string
 	// StartLine and EndLine are the 1-based, inclusive line interval the
 	// mutant's span covers. A single-line edit has StartLine == EndLine; see
 	// [EndLine] for how a caller derives the end from the original bytes.
@@ -50,9 +59,11 @@ type Options struct {
 	// the module-relative "internal/alpha/alpha.go" a mutant is located by.
 	//
 	// Empty means the profile already spells its files module-relatively, which
-	// is what a hand-written test fixture does. A real run always names the
-	// module: a mismatch would leave every file unmatched and every mutant
-	// uncovered, which is why [Result.Matched] exists for the caller to check.
+	// is what a hand-written test fixture does, or that each mutant names its
+	// own module, which is what a workspace run does. A single-module run always
+	// names the module: a mismatch would leave every file unmatched and every
+	// mutant uncovered, which is why [Result.Matched] exists for the caller to
+	// check.
 	ModulePath string
 
 	// Mutants are the located mutants to decide about. The order is preserved
@@ -118,10 +129,11 @@ func Map(opts Options) Result {
 	}
 	slices.Sort(binaries)
 
+	modules := modulesOf(opts.ModulePath, opts.Mutants)
 	matched := make(map[string]bool)
 	indexes := make(map[string]fileIndex, len(binaries))
 	for _, importPath := range binaries {
-		indexes[importPath] = newFileIndex(opts.Profiles[importPath], opts.ModulePath, matched)
+		indexes[importPath] = newFileIndex(opts.Profiles[importPath], modules, matched)
 	}
 
 	result := Result{
@@ -131,9 +143,12 @@ func Map(opts Options) Result {
 		Matched:   len(matched),
 	}
 	for _, m := range opts.Mutants {
+		// Spelled once and not once per binary: how a profile names a mutant's
+		// file is a fact about the mutant.
+		path := profilePath(opts.ModulePath, m)
 		var covering []string
 		for _, importPath := range binaries {
-			if indexes[importPath].covers(m.Path, m.StartLine, m.EndLine) {
+			if indexes[importPath].covers(path, m.StartLine, m.EndLine) {
 				covering = append(covering, importPath)
 			}
 		}
@@ -166,20 +181,29 @@ type interval struct {
 type fileIndex map[string][]interval
 
 // newFileIndex builds the index for one binary's profile, recording in matched
-// every module-relative file the profile named.
+// every file the profile named.
+//
+// The index is keyed on the profile's own spelling of a file —
+// "example.com/m/internal/alpha/alpha.go" — rather than on a module-relative
+// path, and a mutant is looked up by the same spelling reassembled from its
+// module and its path. That is what lets one profile carry two modules of a
+// workspace: `app.go` in each of them is two files there and two keys here,
+// where stripping a module prefix would have made them one.
 //
 // Uncovered blocks are dropped rather than stored with a flag: the only
 // question ever asked is whether a *covered* block overlaps, so a file whose
 // every block has a zero count indexes to an empty list — present, and covering
 // nothing, which is exactly the fact the mapping needs.
-func newFileIndex(profile Profile, modulePath string, matched map[string]bool) fileIndex {
+func newFileIndex(profile Profile, modules []string, matched map[string]bool) fileIndex {
 	index := make(fileIndex)
 	for _, block := range profile.Blocks {
-		path, ok := relativeTo(modulePath, block.File)
-		if !ok {
+		path := block.File
+		if path == "" {
 			continue
 		}
-		matched[path] = true
+		if underModule(path, modules) {
+			matched[path] = true
+		}
 		if !block.Covered() {
 			// The file is still recorded above, so that "profiled and never
 			// reached" stays distinguishable from "never profiled".
@@ -198,7 +222,17 @@ func newFileIndex(profile Profile, modulePath string, matched map[string]bool) f
 
 // covers reports whether the file's covered intervals overlap [start,end].
 func (f fileIndex) covers(path string, start, end int) bool {
-	intervals := f[path]
+	return overlaps(f[path], start, end)
+}
+
+// overlaps is [fileIndex.covers] with the file already found.
+//
+// The split is what lets a caller placing many mutants of one file find that
+// file once rather than once per mutant: the lookup is a fact about the file
+// and the search is a fact about the span, and only the second of them is a
+// fact about the mutant. See [MapTests], where the difference is the catalogue
+// times the suite.
+func overlaps(intervals []interval, start, end int) bool {
 	if len(intervals) == 0 || start > end {
 		return false
 	}
@@ -215,15 +249,21 @@ func (f fileIndex) covers(path string, start, end int) bool {
 // become [3,9] — because the answer this structure gives is a yes or no about
 // overlap, and two adjacent ranges answer it identically to one joined range
 // while costing an extra comparison on every lookup.
+//
+// The order is a total one and it is spelled with cmp rather than with
+// subtraction. Two intervals that share a start line all overlap, so the loop
+// below folds any run of them into [start, max end] whichever way the sort
+// leaves them — which made the difference of the end lines a tie-break no
+// answer depends on, and therefore two mutants of it that no honest test could
+// reach. A comparison written as a comparison has no arithmetic in it to
+// rewrite, so the order stays total and the pair of unkillable mutants is gone
+// rather than declared.
 func merge(intervals []interval) []interval {
 	if len(intervals) < 2 {
 		return intervals
 	}
 	slices.SortFunc(intervals, func(x, y interval) int {
-		if c := x.start - y.start; c != 0 {
-			return c
-		}
-		return x.end - y.end
+		return cmp.Or(cmp.Compare(x.start, y.start), cmp.Compare(x.end, y.end))
 	})
 	merged := make([]interval, 0, len(intervals))
 	merged = append(merged, intervals[0])
@@ -238,21 +278,51 @@ func merge(intervals []interval) []interval {
 	return merged
 }
 
-// relativeTo turns a profile's file name into a module-relative path, and
-// reports whether it belongs to the module at all.
+// underModule reports whether a profile's file belongs to one of the modules
+// the mutants are in, which is what [Result.Matched] counts.
 //
-// A profile written with `-coverpkg=<module>/...` names only files inside the
-// module, so a name that does not resolve is either a package from outside it —
-// which holds no mutants and is correctly ignored — or a module path that does
-// not match what the toolchain wrote, which [Result.Matched] is there to make
-// visible.
-func relativeTo(modulePath, file string) (string, bool) {
-	if modulePath == "" {
-		return file, file != ""
+// No modules at all is the hand-written fixture case, where a profile already
+// spells its files module-relatively and every file it names is one of theirs.
+func underModule(file string, modules []string) bool {
+	if len(modules) == 0 {
+		return true
 	}
-	rest, ok := strings.CutPrefix(file, modulePath+"/")
-	if !ok || rest == "" {
-		return "", false
+	for _, module := range modules {
+		if strings.HasPrefix(file, module+"/") {
+			return true
+		}
 	}
-	return rest, true
+	return false
+}
+
+// modulesOf is every module the run's mutants are in: the run's own, and each
+// mutant's when it names one.
+func modulesOf(runModule string, mutants []Mutant) []string {
+	var modules []string
+	if runModule != "" {
+		modules = append(modules, runModule)
+	}
+	for _, m := range mutants {
+		if m.ModulePath != "" && !slices.Contains(modules, m.ModulePath) {
+			modules = append(modules, m.ModulePath)
+		}
+	}
+	return modules
+}
+
+// profilePath is how a profile spells one mutant's file: under the module the
+// mutant belongs to, which is its own when it names one and the run's otherwise.
+//
+// Neither, and the path is taken as it stands — which is what a hand-written
+// test fixture writes, and the one case where a profile's files are already
+// module-relative.
+func profilePath(runModule string, m Mutant) string {
+	module := m.ModulePath
+	if module == "" {
+		module = runModule
+	}
+	if module == "" {
+		return m.Path
+	}
+	return module + "/" + m.Path
 }

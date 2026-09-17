@@ -8,11 +8,12 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 **Status: implemented.** The pure packages, the strict configuration decoder,
 the snapshot, the baseline execution layer, discovery for the whole
 eleven-family catalogue, guard-based instrumentation with its generated runtime
-in all three forms, compile validation, mutant execution, coverage-guided
+in all six forms, compile validation, mutant execution, coverage-guided
 selection, `RunReport v1` with its history store, the Stryker projection and
 the self-contained HTML report, the live TUI dashboard, `--changed`, `--shard`
 with `report merge`, `--explain`, the outcome cache, and the whole v1 command
-tree — `run`, `list`, `doctor`, `init`, `report`, and `cache` — all exist.
+tree — `run`, `list`, `doctor`, `init`, `report`, `cache`, `explain` and
+`trace` — all exist.
 Each section below carries its own status line; nothing here should be read as
 a description of working software until its status says so.
 
@@ -30,6 +31,15 @@ every run today.
    spliced into the snapshot in a single pass, and the environment variable
    `GO_MUTANTS_ACTIVE=<64-hex id>` activates exactly one of them per test
    process. The build is effectively performed once, not once per mutant.
+
+   The recording says so in counts, and
+   `internal/engine/testdata/work-ceiling.golden.txt` fixes them. A run of the
+   `simple` corpus module starts **1** `go-test-c` and **16** `mutant-run`.
+   A run of `killable` starts **1** and **10**. The compile count is the number
+   of test binaries the scope holds; it does not move when the mutant count
+   does. Rebuilding per mutant would spend sixteen and ten compiles on those
+   same two modules. The claim above is that sentence, and the golden is what
+   keeps it a measurement rather than a slogan.
 3. **Bytes, not pretty-printed syntax.** Mutants are assembled from original
    source byte slices, so comments, whitespace, and CRLF survive untouched, and
    splices preserve line numbers so coverage line data maps one-to-one.
@@ -253,6 +263,57 @@ executes.
 
   Short-circuiting alone selects the side; there is no allocation.
 
+- **Form C′ — converted boolean selector.** For a condition whose type is a
+  *named* boolean rather than the universe one:
+
+  ```go
+  Flag(__gm.M[3] && bool(<mutated condition>) || !(__gm.M[3]) && bool(<original>))
+  ```
+
+  The selector is untyped either way; what a named boolean needs is a
+  conversion back to it, and a conversion of each operand to `bool` first,
+  because `&&` and `||` want operands of one boolean type. Both directions are
+  conversions between a defined type and its underlying type, which are always
+  legal, and a conversion evaluates its operand and nothing else — so the
+  short-circuiting and the "exactly one operand is evaluated" property are Form
+  C's, unchanged. Discovery carries the spelling of the type down with the
+  hint, since the instrumenter never type-checks.
+
+- **Form F — simple-statement closure.** For a statement in a slot that holds
+  a *simple* statement rather than any statement — an `if`, `switch` or `for`
+  initialiser, or a `for` post statement:
+
+  ```go
+  func() { if __gm.M[7] { <mutated, flattened> } else { <original> } }()
+  ```
+
+  A call is an expression, an expression alone is an expression statement, and
+  an expression statement is simple, so this parses where a block does not. The
+  closure captures by reference, so an assignment or an `++` inside it works on
+  the variable the statement named. Its statement list is *narrower* than Form
+  S's: a `return` would return from the closure, a `defer` would fire when the
+  closure returns, and a `break`, `continue` or `goto` cannot cross a function
+  boundary — none of which can appear in one of these slots anyway, which is
+  why excluding them costs nothing.
+
+- **Form E — typed expression closure.** For an expression with no statement
+  around it a guard can stand in — a `switch` tag, a `range` clause, a type
+  switch guard, the initialiser of a `:=` in a header slot:
+
+  ```go
+  func() int { if __gm.M[7] { return <mutated> } else { return <original> } }()
+  ```
+
+  It is the last form tried and needs the least of its site: an expression, in
+  a position where an expression of the same type is legal, whose type this
+  file can spell. Three properties follow from the closure being *where the
+  expression was* rather than hoisted in front of it, and each is a refusal
+  some other design would have had to make: the expression is evaluated in the
+  same order and the same number of times; every name in scope at the
+  expression is in scope inside the closure, including a `:=`'s own declared
+  name, whose scope begins at the end of its specification; and no identifier
+  is invented, so nothing can collide.
+
 - **Form D — declaration rewrite.** For `:=` and `var` initializers:
 
   ```go
@@ -262,10 +323,31 @@ executes.
   `T` comes from `types.TypeString` with an import-qualifier map, and it is
   discovery that computes it: the type information the qualifier needs is
   there and nowhere else, so every candidate carries the form, the site span,
-  and any declared types down to instrumentation as a hint. A type that cannot
-  be named is a recorded skip with reason `unnameable-decl-type`, never a
-  silent omission — and so is every other site none of the three forms can
-  express; see [Operators](operators.md).
+  and any declared types down to instrumentation as a hint. Where the qualifier
+  has no name for a package, the guard may carry one: a candidate declares the
+  imports its spelling needs, limited to paths a sibling file of the same
+  package already has, and instrumentation splices them in beside the runtime's.
+  A type that cannot be named *anywhere* is a recorded skip with reason
+  `unnameable-decl-type`, never a silent omission — and so is every other site
+  none of the forms can express; see [Operators](operators.md).
+
+**Loop counters.** Every `for` of an instrumented file carries two locals and
+one test besides its guards:
+
+```go
+__gm_n7, __gm_k7 := uint64(0), __gm.Limit[7]; for i := 0; i < n; i++ {
+    if __gm_n7++; __gm_n7 > __gm_k7 { __gm_k7 = __gm.Over(7, __gm_n7) };
+```
+
+They are what decides a mutant that does not return, instead of a stopwatch:
+the ceiling is what the original program did in this tree under this suite, as
+the instrumented baseline counted it, and a loop that passes its own ends the
+process naming itself and both counts. The counter is a local, so nothing is
+shared and nothing is atomic; the declaration goes in front of a *label* where
+there is one, or `break outer` would stop naming a loop; and a function holding
+a `goto` keeps its loops uncounted, because Go forbids a jump that brings a
+variable into scope. See
+[ADR 0013](adr/0013-a-mutant-that-does-not-return-is-decided-by-work.md).
 
 **Flattening.** The mutated copy is re-tokenized with `go/scanner` and explicit
 semicolons are inserted where automatic semicolon insertion would have applied,
@@ -286,7 +368,11 @@ Status: implemented. The runtime lives inside the snapshot at
 because the Go tool ignores those. A name collision bumps a suffix.
 
 It exports `var M [N]bool` — a dense array in catalog order — and a map from
-full ID to index. Its `init` reads `GO_MUTANTS_ACTIVE`: empty means every entry
+full ID to index. It also exports `var Limit [L]uint64`, one ceiling per counted
+loop, and `func Over(site uint32, n uint64) uint64`, which a loop calls when its
+own counter passes its own ceiling: a process holding a table never returns from
+it, and a process taking the census records the count and hands back a higher
+ceiling. Its `init` reads `GO_MUTANTS_ACTIVE`: empty means every entry
 stays false, which is exactly the instrumented baseline; an unknown ID calls
 `os.Exit(97)` so a stale catalog can never masquerade as a clean baseline, and
 the runner classifies 97 as an infrastructure error. Because the package is
@@ -296,10 +382,13 @@ dispatch is a plain array load and the race detector stays quiet.
 
 ## Probe runtime and the infection log
 
-Status: the runtime, its log format and the first probe form — the return-value
-one — are implemented in `internal/instrument`, and the pass that drives these
-processes is implemented in `internal/execute` and reachable through the engine
-API's `Session.Probe`; the other probe forms are not.
+Status: implemented end to end. The runtime, its log format and all four probe
+forms are in `internal/instrument`; the pass that drives these processes is in
+`internal/execute` and reachable through the engine API's `Session.Probe`; the
+rule that turns a log into executions a run need not make is `internal/probe`;
+and `internal/engine`'s probe phase is what a `run` reaches it through, selected
+by `test.probing = "on"` and off by default. See
+[ADR 0011](adr/0011-an-unobservable-mutant-need-not-be-executed.md).
 
 The next proof a consumer can act on is **infection**: if the site of mutant
 `m` never evaluated to a value different from the original's during test `t`,
@@ -458,10 +547,142 @@ literal, a field, a composite — almost all sit in statements whose other
 operands are pure too, because `return 0, err` and `return report{}, err` are
 what such a statement looks like.
 
-Everything else is simply unprobed for now. Only this family has a form, so a
-file of comparisons comes out of `ModeProbe` byte for byte as its author wrote
-it, with no runtime import at all; a run then learns nothing about which tests
-could observe those mutants and runs them all, which is the safe direction.
+### The boolean probe
+
+The second form covers every **Form C site** — a comparison, a boolean operator,
+an `if` or `for` condition — which is most of what a run catalogues, and it
+measures the site where it stands:
+
+```go
+__gm.Differs(i, (<original>), (<mutated>))
+```
+
+`Differs` is the probe runtime's second export. It evaluates nothing itself: the
+compiler has both readings in hand by the time it is called, in the site's own
+context, and what the helper adds is one comparison and, the first time the two
+disagree, one line in the log. It yields the *original's* reading, so the
+program the call is spliced into is the program without it — and because each
+call yields its second argument, several mutants of one site chain rather than
+compete for the slot:
+
+```go
+__gm.Differs(4, __gm.Differs(3, (a == b), (!(a==b))), (a!=b))
+```
+
+A helper call is what the guard forms deliberately avoid — `__gm.Cmp(3, a, b)`
+breaks on untyped constants, on shifts and on named types — and none of that
+reaches a helper whose parameters are the universe `bool`, which is exactly and
+only what a Form C site is. A named boolean type is a Form C′ site instead and
+is not probed by this form.
+
+**The conditions are about the whole site rather than about one operand**, and
+that is the difference from the return form. Both readings are evaluated, so an
+effect anywhere in the expression would happen twice; and the mutated reading
+may evaluate operands the original short-circuited past — `x != nil && x.n > 0`
+under `and-to-or` reads `x.n` exactly when `x` is nil. Asking the panic grammar
+of the whole expression settles both at once, because it walks every operand and
+refuses a field reached through a pointer. The nil check on its own is still
+probed: both readings of `x != nil` compare a pointer with nil and neither
+touches what it points at.
+
+Nesting composes children first, as everywhere else: the *original* reading of
+an enclosing site is its bytes with the inner sites' calls already folded in, so
+an inner mutant is recorded once, from the reading the program really evaluates.
+Each mutated reading is rendered from the pristine bytes with one edit, so it
+carries no inner call at all.
+
+### The value probe
+
+The third form is the boolean one for everything that is not a boolean. It wraps
+the nearest expression around the edit whose value can be compared, in the
+closure Form E already is:
+
+```go
+func() T {
+    var p T = (<original>)
+    if p != (<mutated>) { __gm.Infect(i) }
+    return p
+}()
+```
+
+It is written on one line in the tree, as every rewrite here is; the shape above
+is the same text with the semicolons turned back into newlines.
+
+Standing where the expression stood is what makes it work, and it is what no
+statement rewrite could do: a `switch` tag and a `for` post statement have
+nowhere to hoist a temporary to, and this needs nowhere. The value is produced
+in the site's own context, so the compiler settles its type exactly as it
+settled the original's; the original is evaluated once, into `p`, and `p` is
+what the closure yields.
+
+Its conditions are the boolean form's plus two about the comparison itself. The
+value has to be **comparable without panicking** — a slice, a map and a function
+are not comparable at all, and two interfaces holding an incomparable dynamic
+type panic where a mutant would not — and it may not be **floating-point or
+complex**, since `-0.0 != 0` is false while the two are distinguishable. Both
+rules already existed: the first is what `internal/discover` applies to an `==`
+the user wrote, and the second is the return form's.
+
+### The ordering rule both in-place forms share
+
+Both forms put a **call** where an expression stood, and a call is not an
+ordinary operand. Go orders function calls, method calls, receive operations and
+binary logical operations within one expression, assignment or return statement,
+left to right — and leaves the reading of a plain variable beside them
+unordered. So replacing `n` with a call in `return n, bump()` moves the read of
+`n` from "some time" to "before `bump()`":
+
+```go
+var n int
+func bump() int { n = 5; return 1 }
+func F() (int, int) { return n, bump() }
+```
+
+gc really does evaluate the call first, so the original returns `(5, 1)` and a
+probed tree would return `(0, 1)`. A probe tree that is not the original program
+has nothing to say about the original program — so a site is measured only when
+everything its **own statement** evaluates beside it is inert.
+
+Its own statement, and only the expressions that statement evaluates itself: an
+`if`'s initialiser is a statement of its own and runs to completion first, a
+`case` clause's body is not evaluated with its labels, and a loop's body is not
+evaluated with its condition. Asking about those would refuse nearly every site
+for a hazard that cannot arise.
+
+### The reachability probe
+
+The fourth form is the weakest, and it is why the invariant at the top of this
+section is worded the way it is. A deleted statement's mutant differs from the
+original by the **absence** of an effect, and a probe tree runs effects: there
+is no value to compare, and no rewrite of the original program could make one
+appear. What there is instead is the fact that the statement ran:
+
+```go
+{ __gm.Infect(i); <original statement> }
+```
+
+and a pass that never ran it cannot have observed its removal. The same licence,
+from different evidence. It needs none of the other forms' conditions and that
+is not an oversight: nothing is evaluated twice, so there is nothing to be
+effect-free about, and the call is a statement of its own, so the ordering rule
+above does not reach it. What it needs is a statement a block may be wrapped
+around, which is Form S's list.
+
+Two costs, and both are real. It over-approximates badly — a deletion on a hot
+path is "infected" by nearly every test that touches the package, which licenses
+nothing — and reaching a statement is not observing its removal, so deleting
+`x = x` is reported infected by every test that runs it. Neither costs
+correctness: both make the answer *more* conservative, which is the direction
+this layer is allowed to be wrong in.
+
+A statement whose expression has a form of its own carries both, one inside the
+other: the deletion records that the statement ran, the operand records whether
+its value differed.
+
+Everything else is simply unprobed. A file holding only such mutants comes out
+of `ModeProbe` byte for byte as its author wrote it, with no runtime import at
+all; a run then learns nothing about which tests could observe them and runs
+them all, which is the safe direction.
 A probe site that turns out not to compile is dropped the same way, by the
 bisection in `internal/validate`: the mutant loses its probe and keeps
 everything else.
@@ -730,10 +951,29 @@ the outcome cache.
   prints `command:`, `dir:` and the output tail under the coded message. A nil
   recorder records nothing and costs a zero `TraceSeq`, so the traced and the
   untraced paths are one path.
-- **One shared snapshot.** Activation is per-process, so N workers share it. A
-  test that writes into its package directory is caught by re-digesting the
-  manifest after the instrumented baseline; drift is exit 2 with the offending
-  files listed. `--isolate` is reserved as the per-worker escape hatch.
+- **One shared snapshot, unless a suite makes that impossible.** Activation is
+  per-process, so N workers share it. A test that writes into its package
+  directory is caught by re-digesting the manifest after the instrumented
+  baseline; drift is exit 2 with the offending files listed, and the message
+  names the way through.
+- **`--isolate`, the per-worker copy.** It is that way through, and the only
+  way to measure a project whose tests legitimately write into the package
+  directory they run in. Every worker gets a copy of the instrumented tree —
+  each a snapshot in its own right, made *of* that tree, so asking it what
+  drifted is asking exactly "what did the tests write" — and the copy is put
+  back after every *pass*, not every mutant. The distinction is the one thing
+  here that is easy to get wrong: a survivor is measured twice, once against
+  its covering tests and once against the whole binary, and a restore that only
+  happened between mutants would leave the second measuring a tree the first
+  had edited.
+
+  Two other things move with it. The baseline runs the suite in the shared
+  snapshot *before* anything is instrumented, so an isolating run restores the
+  shared snapshot after the baseline as well; without that, the baseline's own
+  writes would be copied into every worker and reported by the drift gate — the
+  refusal the flag exists to get past. And the gate keeps its full meaning
+  rather than being skipped: nothing executes in the shared tree, so what it
+  reports is go-mutants having changed something it did not mean to.
 - **Timeouts.** Explicit, or `max(10s, slowest baseline × 5)` over the baseline
   runs after the first, which is the one that compiles — or over the only run
   when there is one. A first timeout
@@ -798,12 +1038,16 @@ the outcome cache.
   rule a run at 256 MiB would cache `killed` and a run at 8 GiB would adopt it.
   See `cache.Entry.UsableWithin`.
 - **Coverage-guided selection.** *Implemented.* The test binaries are built
-  with `-cover -coverpkg=<module>/...` and each is then run once with nothing
-  activated and `-test.gocoverdir` pointed at a directory of its own — the
-  flag, never the `GOCOVERDIR` environment variable, which a *test* binary does
-  not read — and an inherited `GOCOVERDIR` is stripped from every child
-  environment go-mutants composes, so a run started underneath somebody else's
-  coverage collection cannot append into it. `go tool covdata textfmt` blocks
+  with `-cover -coverpkg=<module>/...` and each is then run with nothing
+  activated and `-test.coverprofile` pointed at a file of its own — the flag,
+  never the `GOCOVERDIR` environment variable, which a *test* binary does not
+  read — and an inherited `GOCOVERDIR` is stripped from every child environment
+  go-mutants composes, so a run started underneath somebody else's coverage
+  collection cannot append into it. The profile flag rather than
+  `-test.gocoverdir` because a coverage *directory* holds raw counters that
+  `go tool covdata textfmt` still has to render, which is one more child process
+  per profile — and a run that profiles a suite test by test pays it once per
+  test. The profile's blocks
   are mapped to mutants by
   line-interval overlap only: columns describe the instrumented text while a
   mutant's span was measured against the user's own bytes, and only the lines
@@ -829,6 +1073,22 @@ the outcome cache.
   for a project that prefers it. Neither narrows what is *measured*: every mode
   measures every mutant, and only how much of the suite each mutant is measured
   against differs.
+
+  **Stopping at the first failure.** A mutant run and a control both carry
+  `-test.failfast`, because the answer each of them produces is one bit: did
+  anything catch this edit, and does this set of tests pass together with
+  nothing activated. The first test that fails has answered either question, and
+  the tests a binary would go on to run after it are paid for and cannot change
+  it — which on a mutant narrowed to a dozen covering tests is most of what the
+  execution phase spends. No verdict moves: a mutant nothing catches runs every
+  selected test either way, and one something catches is killed by the same
+  binary. The single thing that moves is which *kind* of detection is reported
+  when a mutant both fails an early test and hangs a later one, and a kill is
+  the more precise of the two answers. A probe pass never carries the flag: its
+  product is accumulated by every test that runs, so a pass that stopped early
+  would record a smaller set than it measured. A `test.command` — or a library
+  caller's `Args` — that spells `-test.failfast=false` itself is obeyed, since
+  the engine's flag is placed in front of the target's own.
 
   Two rules bound the whole optimisation. Narrowing is auto-on exactly when
   `test.command` is one
@@ -1008,20 +1268,22 @@ is the whole of what was asked for and a failure is an error.
 
 | Package | Responsibility | Status |
 | --- | --- | --- |
-| module root (`gomutants`) | Public frozen-workspace and reusable-session API | implemented |
+| `.` — the module root (`gomutants`) | Public frozen-workspace and reusable-session API | implemented |
 | `cmd/go-mutants` | Thin main | implemented |
-| `internal/cli` | cobra tree, flag validation, GOM errors, exit codes | `run`, `list` |
+| `internal/cli` | cobra tree, flag validation, GOM errors, exit codes | implemented |
 | `internal/config` | Strict TOML decode and precedence merge | implemented |
 | `internal/mutation` | Pure: spans, stable IDs, rules, catalog, score | implemented |
 | `internal/interval` | Pure: interval forest | implemented |
 | `internal/glob` | Pure: `**` glob semantics, fuzzed | implemented |
-| `internal/discover` | `packages.Load`, types walk, candidates, skips with their sites | 2 families |
+| `internal/discover` | `packages.Load`, types walk, candidates, skips with their sites | implemented |
 | `internal/instrument` | Forms S/C/D, flattener, runtime codegen, splicer | implemented |
 | `internal/snapshot` | Manifest, digests, link rejection, cleanup | implemented |
 | `internal/tempowner` | Temporary-directory lock, marker, and orphan sweep | implemented |
-| `internal/gocmd` | `go build`, `go test -c`, `go tool covdata` | build, test |
+| `internal/gocmd` | Locates the toolchain and composes its argument vectors | implemented |
+| `internal/gitdiff` | Which lines of the workspace changed since a ref, for `--changed` | implemented |
 | `internal/runner` | One process, timed, supervised and recorded; tree kill | implemented |
 | `internal/coverage` | covdata textfmt parsing, line overlap mapping per binary and per test | implemented |
+| `internal/probe` | the rule that turns an infection log into executions a run need not make | implemented |
 | `internal/cache` | Outcome cache: key, store, mode, `gc` | implemented |
 | `internal/validate` | One build, then bisection; rejections with diagnostics | implemented |
 | `internal/execute` | Test-binary build, profiling per binary and per test, scheduling, timeout retry | implemented |
@@ -1030,13 +1292,22 @@ is the whole of what was asked for and a failure is an error.
 | `internal/testflag` | Shared Go test-binary flag recognition | implemented |
 | `internal/report` | RunReport, projections, HTML, history, merge | implemented |
 | `internal/engine` | Orchestration, typestate pipeline, events | implemented |
+| `internal/testlog` | Reads the action log a Go test binary writes under `-test.v=test2json` | implemented |
 | `internal/console` | Deterministic plain-line renderer | implemented |
 | `internal/tui` | The bubbletea dashboard | implemented |
-| `internal/schemas` | Embedded JSON Schemas, validation before writing | catalog, run report, doctor |
+| `internal/schemas` | Embedded JSON Schemas, validation before writing | implemented |
+| `internal/sourcegate` | Rules about this module's own source that need it type-checked to state; no code of its own | implemented |
+| `internal/testsupport` | The previous home of the shared test helpers, kept as a forwarder while its call sites move | test-only support |
 | `internal/testkit` | Module and fixture paths, tree copies, hermetic environment, toolchain lookup, child processes, golden files, helper subprocesses, clocks, the keep-on-failure policy and its dumps | test-only support |
 | `internal/testkit/mutantkit` | Snapshots, the discover/catalogue/instrument sequence, mutant lookups, report marshalling and normalisation, a per-test trace recording, a scripted `go` command | test-only support |
+| `internal/devgates` | The checks whose subject is this repository rather than the product: what a configuration file claims, and whether it is still true | test-only support |
 | `internal/devtools/testcache` | The test-owned build cache and the kept scratch root: `path`, `status`, `clean`, `trim`, `exec` | developer tool |
-| `vendor-assets` | The vendored viewer bundle and its digest check | implemented |
+| `internal/devtools/testcost` | Turns `go test -json` into a per-package cost and skip table | developer tool |
+| `internal/devtools/traceaudit` | Re-derives a run's conclusions from the recording beside it, with code that never calls the engine's | developer tool |
+| `trace` | Public: the event contract, the recorder, the reader, and the sink | implemented |
+| `schema` | Public: the JSON Schema documents go-mutants publishes, embedded | implemented |
+| `schema/stryker` | The vendored mutation-testing-report schema and its provenance | vendored |
+| `vendor-assets` | The vendored viewer bundle and its digest check | vendored |
 
 Pure packages have no filesystem or process access, which is what makes the
 golden ID vectors and property tests meaningful.
@@ -1151,10 +1422,10 @@ ledger: every fixture, what it is for, and the tests that drive it.
 
 Most fixtures are about the operators or about one phase. Five are about the
 edges of a workspace, and are what the instrumentation and the run have to get
-right around an ordinary module: `workspace/` is a `go.work` over two modules —
-measured one module at a time when pointed inside it, refused by `run` and by
-`list` at its root before anything is copied, so that the `go.work` the refusal
-names is the user's own rather than a snapshot's; `tagged/` puts one of its two
+right around an ordinary module: `workspace/` is a `go.work` over three modules
+— measured one module at a time when pointed inside it, and as one run over all
+three when pointed at its root, where the third module's tests are the only
+thing that kills the second's mutants; `tagged/` puts one of its two
 candidates behind `//go:build special`, so `GOFLAGS` changes both the catalogue
 and the outcome cache's context; `untested/` is a package with tests beside one
 without; `selfwriting/`'s suite writes into the package directory it runs in,
@@ -1174,8 +1445,45 @@ compiled binary. Every CI job that runs a suite then ends with
 `git status --porcelain --ignored -- fixtures`, because the corpus is an input
 and a suite that wrote where it reads cannot be trusted to have noticed.
 
+## A workspace is one run over many modules
+
+A `go.work` at the root is measured as **one run** over one catalogue that spans
+its modules, because a module's tests routinely cover a sibling module's code —
+that is what a workspace is for — and three separate runs would report a mutant
+as surviving that the suite catches.
+[ADR 0012](adr/0012-a-workspace-is-one-run-of-many-modules.md) is the argument;
+what the pipeline does differently is six things:
+
+1. **Discovery runs per module**, each rooted at its own directory, and stamps
+   every candidate with its module path. That path is a tenth identity field,
+   hashed under a domain of its own, because two modules can each hold an
+   `app.go` and a module-relative path is all a candidate has.
+2. **The catalogue spans the modules**, keyed on the module in all four places a
+   path was a coordinate on its own: the source-digest and original-text
+   conflicts, the canonical order, and the deduplication key. A module's mutants
+   are contiguous in it, and so are their dense indices.
+3. **Instrumentation runs per module, and every runtime carries the whole
+   catalogue.** A module's files can only import a runtime its own module
+   declares, so each gets a pass and a package of its own — and each of those
+   packages is generated from the whole catalogue, because a mutant of one
+   module is activated while another module's tests are running.
+4. **GOWORK is removed rather than pinned to `off`**, so the go command finds
+   the workspace file of the tree it is running in by walking up from its own
+   working directory. That is the snapshot's own, or a worker's copy of it under
+   `--isolate`; a named path could not promise it, because a path has a spelling
+   and a working directory has another.
+5. **`./...` is expanded** into one `./<dir>/...` per module. The go command
+   does not accept `./...` at a workspace root — the root is not itself a module
+   — and every module's own `./...` is what the user meant by it.
+6. **The document is a workspace report.** `workspace.module_path` is required
+   of a run report and a workspace has no single answer for it, so the run
+   publishes `go-mutants/workspace-report` with each module's own run report
+   embedded. The modules' documents are embedded rather than filed beside it
+   because a history store names a run's document by its run id.
+
 ## Documented v1 limitations
 
-No `switch`/`select` case mutation, no cgo packages, no package-level `var`
+No mutation of a *tagged* switch's case labels or a type switch's, no cgo
+packages, no package-level `var`
 initializers, no cross-`GOOS` matrix (a run describes the host configuration),
 and `go.work` support limited to `use` directives inside the snapshot.

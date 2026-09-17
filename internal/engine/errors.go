@@ -85,12 +85,17 @@ const (
 	// each later mutant is measured against; the run stops and names the files
 	// rather than reporting outcomes nobody could reproduce.
 	CodeWorkspaceDrift Code = "GOM4014"
-	// CodeCoverageRender reports a `go tool covdata textfmt` that would not run,
-	// or whose output could not be read back. It is the engine's own code
-	// because the engine is what issues the command — internal/coverage is pure
-	// and never starts a process — and it never reaches a user as an error: the
-	// coverage phase turns it into internal/coverage's GOM7602 warning and
-	// measures every mutant against every binary instead.
+	// CodeCoverageRender reports a coverage profile that could not be read back
+	// off the disk a profiling run wrote it to. It is the engine's own code
+	// because the engine is what ran the binary that wrote it — internal/coverage
+	// is pure and reads only what it is handed — and it never reaches a user as
+	// an error: the coverage phase turns it into internal/coverage's GOM7602
+	// warning and measures every mutant against every binary instead.
+	//
+	// It used to name a `go tool covdata textfmt` that would not run, which is a
+	// command no run issues any more: the binary writes the text format itself.
+	// The number stays where it was, because what it reports is the same fact
+	// one process earlier.
 	CodeCoverageRender Code = "GOM4015"
 
 	// CodeTimeoutTooSmall reports an explicit `test.timeout` that is not above
@@ -229,6 +234,53 @@ const (
 	// run and takes the runner down on an unbounded one, and that is not
 	// something to discover from a job that vanished.
 	CodeMemoryBoundUnavailable Code = "GOM4047"
+	// CodeBaselineFromTestCache reports a run whose every timed baseline run was
+	// answered out of the toolchain's test result cache, which means nothing
+	// measured what the suite costs and the per-mutant budgets are sized on cache
+	// lookups. `go test` keeps a passing result and reprints it, which is why
+	// every baseline run after the first is given `-count=1` through GOFLAGS --
+	// see [gocmd.CountOnce]. A run that reports this anyway is one whose
+	// `test.command` does not obey GOFLAGS: a wrapper script that composes its
+	// own environment, or a command that is not the go command at all.
+	//
+	// It is a warning rather than an error because the run is still a run and its
+	// verdicts are still verdicts: a budget that is too small turns work into
+	// timeouts, and a confirmed timeout is counted as a detection, so the score
+	// is not inflated by it. What it costs is diagnosis -- a timeout says "this
+	// mutant did not return" where the truth is "the budget was a cache lookup"
+	// -- and that is exactly the kind of thing to be told about rather than to
+	// deduce from a run that looked slower than it should have.
+	CodeBaselineFromTestCache Code = "GOM4048"
+	// CodeLoopCensusUnusable reports a run whose loop census could not be read
+	// or whose ceilings could not be written, so its mutants are bounded in
+	// time alone: the stopwatch and the second measurement, which is what every
+	// run was held to before it could count what a loop does.
+	//
+	// It is a warning rather than an error for the reason the coverage pass
+	// fails open. Counting is an optimisation over the stopwatch and not a
+	// second opinion about a verdict — a mutant that does not return is
+	// detected either way — so a census that cannot be read costs the run time
+	// and precision of diagnosis, never a wrong answer. See ADR 0013.
+	CodeLoopCensusUnusable Code = "GOM4049"
+
+	// CodeChangedTestsUnaccounted is a `--changed` run whose diff edited test
+	// files, whose effect on the verdicts the narrowing cannot see.
+	//
+	// The narrowing keeps the mutants the diff touched, and a `_test.go` file
+	// holds none — internal/discover does not mutate one — so a test edit
+	// narrows nothing towards itself. What it changes instead is which mutants
+	// the suite kills, and the mapping that could name those is built from the
+	// selection this narrowing produces: the answer does not exist yet at the
+	// moment the question is asked.
+	//
+	// Both silent answers are wrong. Reporting the narrowed run without a word
+	// turns "I cannot see this" into "there is nothing there", and a diff of
+	// tests alone then publishes a score over an empty selection. Keeping every
+	// mutant instead turns it into "everything may have moved", and since nearly
+	// every commit edits a test beside the code it tests, that is the flag
+	// switched off for the runs it was built for. So the run narrows as asked and
+	// states the part it did not account for.
+	CodeChangedTestsUnaccounted Code = "GOM4050"
 )
 
 // String returns the code as it is printed.
@@ -260,6 +312,9 @@ var codes = []Code{
 	CodeTemporaryNotKept,
 	CodeDeadlineExceeded,
 	CodeMemoryBoundUnavailable,
+	CodeBaselineFromTestCache,
+	CodeLoopCensusUnusable,
+	CodeChangedTestsUnaccounted,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric

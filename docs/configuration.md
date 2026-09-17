@@ -40,9 +40,11 @@ timeout = "60s"
 memory = "2GiB"
 baseline_runs = 3
 narrowing = "test"
+probing = "off"
 
 [execution]
 jobs = 8
+isolate = false
 
 [cache]
 mode = "auto"
@@ -79,8 +81,9 @@ low = 60
   mutant still runs on every invocation and never uses a cached outcome:
   survival fulfills it, a kill or confirmed timeout is exit 2, and an ID that
   has disappeared from the catalog is stale and also exit 2. The rows are
-  decoded and checked for shape and uniqueness today; the checking of the
-  evidence arrives with mutant execution.
+  decoded and checked for shape and uniqueness here, and the evidence itself is
+  checked where the results are: `internal/report`'s `Evaluate` reads the ledger
+  against the run, and `internal/engine` turns what it finds into the verdict.
 
 ### `[test]`
 
@@ -143,8 +146,28 @@ low = 60
   `[cache]` below), so set `mode = "on"` if you want it.
 - `timeout`: a duration string such as `"60s"` or `"2m"`. Omitted derives
   `max(10s, slowest baseline × 5)`, where the slowest is taken over the
-  baseline runs after the first — the first run of `go test` compiles, and a
-  mutant run never does — or is the only run when `test.baseline_runs` is 1.
+  baseline runs **that ran the tests**, after the first of them — the first run
+  of `go test` compiles, and a mutant run never does — or is the only such run
+  when there is one.
+
+  "That ran the tests" is not a formality. `go test` keeps a passing result and
+  reprints it, so a baseline of three runs in a fresh snapshot would be one
+  measurement of the suite and two lookups: the first run misses the cache
+  because the copied files carry timestamps it has never seen, and the rest hit.
+  A mutant run always misses — its binary is instrumented and its environment
+  names a mutant — so a budget sized on a lookup is several times smaller than
+  the work it has to cover, and the mutants it cuts short are reported as
+  timeouts rather than as what they are.
+  So every baseline run **after the first** is given `-count=1` through
+  `GOFLAGS`, and the first is the command exactly as written: it is the run that
+  proves the suite green, and it is the compiling one either way. Through
+  `GOFLAGS` rather than through `test.command`, because a flag in the command
+  would make it unrecognisable as a scope and cost the whole of coverage
+  narrowing — see `test.command` above. A run go-mutants still recognises as
+  answered from the cache is dropped from the derivation; a baseline in which
+  every run was answered that way says so as `GOM4048` and sizes the budget on
+  the slowest lookup, which is all the evidence there is. That can now only
+  happen to a command that does not obey `GOFLAGS`.
 - `memory`: a byte size such as `"2GiB"` or `"512MiB"`, bounding the resident
   memory of each mutant's whole process tree. Omitted derives
   `max(1GiB, largest baseline peak × 4)`. The units are binary — `B`, `KiB`,
@@ -166,7 +189,12 @@ low = 60
   a run starts, so that is also where a bound set too low announces itself
   first.
 - `baseline_runs`: positive integer, default 3. Every observation is retained
-  in the report, not just the slowest.
+  in the report, not just the slowest. Runs after the first are real
+  measurements of the suite: they carry `-count=1` in `GOFLAGS`, so the setting
+  buys what it says it buys rather than one measurement and *n*−1 cache
+  lookups. That is also what they cost — a suite that takes a minute costs three
+  of them at `baseline_runs = 3`, and a project that would rather pay once sets
+  it to 1, which is taken as it is, compilation and all.
 - `narrowing`: `"test"` (default) or `"package"`. How far coverage narrows what
   each mutant is measured against. `"test"` profiles every test of every test
   binary on its own and runs each mutant against only the tests whose coverage
@@ -177,10 +205,52 @@ low = 60
   are one binary. There is no flag: it is a choice about how a project's suite
   behaves rather than about one run. Neither turns coverage off — a custom
   `test.command` is what does that.
+- `probing`: `"off"` (default) or `"on"`. Whether the run proves, before
+  executing anything, which executions it does not have to make. `"on"` builds a
+  second copy of the module — the **probe tree** — in which nothing is activated
+  and every site records whether each test binary could have ruled each mutant
+  out, runs one pass per binary, and then reports as survivors the mutants no
+  covering binary could observe and narrows the rest to the binaries that could.
+  Both settings reach the same verdicts; the difference is cost, and unlike
+  `narrowing` the arithmetic can come out either way. A probing run pays a
+  second snapshot, a second instrumentation, a second validation, a second build
+  of every test binary, and one suite run per binary. What it buys is every
+  execution it can prove unnecessary — thousands on a module whose tests are
+  quick and whose mutants are thinly covered, nothing on one whose every test
+  touches everything — which is why it is off by default.
+  A mutant it settles is reported as a survivor with `unobserved` set and no
+  executions, which is never the same thing as `uncovered`: an uncovered
+  mutant's lines are never run, and an unobserved one's are run while nothing
+  asserts anything about what they produce. Nothing here can fail a run: a tree
+  that will not build, a pass that fails, a log that cannot be read is a
+  `GOM7101` warning and a run that measures everything.
+  There is no flag, for `narrowing`'s reason. See
+  [ADR 0011](adr/0011-an-unobservable-mutant-need-not-be-executed.md).
 
 ### `[execution]`
 
 - `jobs`: positive worker count. Defaults to `min(NumCPU, 8)`.
+- `isolate`: give every worker its own copy of the instrumented tree, and put
+  that copy back between mutants. Defaults to `false`; `--isolate` overrides it.
+
+  It is the escape hatch from the drift gate, and the only way to measure a
+  project whose tests legitimately write into the package directory they run
+  in — a golden file they update, a database they create in `testdata`, a test
+  that changes directory and writes relative. Those projects cannot run at all
+  without it: the gate stops the run, correctly, because every mutant after the
+  first would be measured against a tree the one before it edited.
+
+  What it costs is the instrumented tree's size times the worker count on disk,
+  and a walk of one copy after every *pass* — which is after every mutant, and
+  again after the whole-binary confirmation a survivor is measured with. What it
+  buys, beyond running at all, is a verdict that is about the mutation: in the
+  corpus fixture written for this, one mutant is reported as killed without it
+  and as survived with it, and the survival is the true answer.
+
+  It is a key as well as a flag, unlike most of what a flag can override. A
+  project whose suite always writes needs the answer written down; a user who
+  has just met the drift gate once wants to get past it without editing a
+  file.
 
 ### `[cache]`
 
@@ -332,5 +402,12 @@ when the file already there is byte-identical to what this build would write and
 1 when it is not, which is a CI freshness gate rather than a policy failure.
 
 `doctor` reports the toolchain, the module, git, the cache directory, the
-platform, and whether this file parses — as an aligned table, or as a
-`go-mutants/doctor` v1 document with `--json`.
+platform, the memory limit, and whether this file parses — as an aligned table,
+or as a `go-mutants/doctor` v1 document with `--json`.
+
+The memory line is the one that warns on an ordinary machine. A per-mutant
+bound is accepted on every platform and enforced on some: linux samples the
+process tree, windows adds the kernel's job limit under the sampler, and darwin
+does neither. A `warn` there says the number in `[mutants] memory` is being
+taken and not acted on, so a mutant that runs away is stopped by its timeout
+instead.

@@ -170,14 +170,14 @@ func Open(opts Options) (*Cache, error) {
 		}
 		root = resolved
 	}
-	context, err := opts.Context.ContextKey()
-	if err != nil {
-		return nil, err
-	}
+	// One key, truncated here rather than asked for twice: [Context.ContextKey]
+	// is [Context.Key] cut to length, so a second call could only fail where
+	// the first already had.
 	key, err := opts.Context.Key()
 	if err != nil {
 		return nil, err
 	}
+	context := key[:ContextKeyLength]
 	// The same claim the run history makes, against the same marker: a
 	// workspace directory belonging to something else is refused before
 	// anything is written into it.
@@ -284,6 +284,19 @@ type Entry struct {
 	// one that wanted a hundred megabytes, which is the first thing anybody
 	// asks. A cached outcome should read like a measured one.
 	PeakMemory int64 `json:"peak_memory_bytes,omitempty"`
+	// Diverged says a counted loop is what settled the mutant rather than the
+	// clock, and it is stored for [Entry.PeakMemory]'s reason: a cached outcome
+	// should read like a measured one.
+	//
+	// Without it a warm run reports "timed out" where the cold run reported
+	// which loop went past what the original program does and by how much,
+	// which is the whole of what ADR 0013 bought. It also decides the entry's
+	// own reusability -- see [Entry.UsableUnder] -- because a divergence was
+	// not measured against the clock at all.
+	//
+	// It is only ever set on a timed-out entry, because that is the outcome a
+	// loop past its ceiling produces and no other.
+	Diverged bool `json:"diverged,omitempty"`
 }
 
 // Duration renders the stored measurement.
@@ -307,6 +320,10 @@ func (e Entry) Timeout() time.Duration { return time.Duration(e.TimeoutMS) * tim
 //     bound no larger it does not finish either, so the timeout stands; under a
 //     larger one it might have completed, so the entry is refused and the
 //     mutant is measured again.
+//   - A divergence was never measured against a bound. A counted loop went
+//     further than the original program goes under this suite, which is as true
+//     under a larger bound as under a smaller one, so the entry is evidence
+//     about every run of this tree and the clock decides nothing. See ADR 0013.
 //
 // A refusal here is an ordinary miss and not a diagnosis. Nothing is wrong with
 // the entry — it is simply not evidence about the run being made now.
@@ -322,6 +339,14 @@ func (e Entry) UsableUnder(timeout time.Duration) bool {
 		// inside one. Nothing is adopted, which is the answer that cannot be
 		// wrong.
 		return false
+	}
+	if e.Diverged {
+		// A third rule, and the only one that does not read the bound at all.
+		// A divergence is two counts taken in one tree: the loop went further
+		// than the original program ever does under this suite, which is as
+		// true under a larger bound as under a smaller one. The entry is
+		// evidence about every run of this tree.
+		return true
 	}
 	if e.Outcome == mutation.OutcomeTimedOut {
 		return bound <= e.TimeoutMS
@@ -486,6 +511,8 @@ func (e Entry) check(key, context, id string) error {
 		return errors.New("its measurement is not one that could have happened")
 	case e.MemoryExceeded && (e.MemoryBytes <= 0 || e.Outcome != mutation.OutcomeKilled):
 		return errors.New("it says a memory bound settled it and records no bound, or an outcome a bound cannot produce")
+	case e.Diverged && e.Outcome != mutation.OutcomeTimedOut:
+		return errors.New("it says a counted loop settled it beside an outcome a loop cannot produce")
 	}
 	return nil
 }
@@ -589,10 +616,10 @@ func writeAtomic(path string, data []byte) error {
 	// against a name that no longer exists.
 	defer func() { _ = os.Remove(name) }()
 
-	if _, err = temp.Write(data); err == nil {
-		err = temp.Sync()
+	if _, err = writeTemp(temp, data); err == nil {
+		err = syncTemp(temp)
 	}
-	if closeErr := temp.Close(); err == nil {
+	if closeErr := closeTemp(temp); err == nil {
 		err = closeErr
 	}
 	if err != nil {
@@ -628,9 +655,8 @@ func rename(from, to string) error {
 
 // display shortens an id for a message, leaving a short or malformed one alone
 // rather than slicing past its end.
-func display(id string) string {
-	if len(id) <= mutation.DisplayIDLength {
-		return id
-	}
-	return id[:mutation.DisplayIDLength]
-}
+//
+// One slice rather than a guard and a slice: an id of exactly the display
+// length is the same string cut or uncut, so the comparison that chose between
+// them had two readings and one answer.
+func display(id string) string { return id[:min(len(id), mutation.DisplayIDLength)] }

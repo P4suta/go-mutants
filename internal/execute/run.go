@@ -5,6 +5,8 @@ package execute
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -60,6 +62,23 @@ type MutantRun struct {
 	// with no budget is refused rather than run unbounded, because a run that
 	// never ends is worse than a mutant reported wrongly.
 	Timeout time.Duration
+
+	// NeverReturns says that discovery proved this mutant's loop has no measure
+	// that decreases: if the loop is entered, it does not leave. It is an
+	// optional fact and false means "nothing was proved", never "it terminates".
+	//
+	// What it changes is one thing, and it is worth being exact about which. A
+	// timeout is ordinarily measured twice before it is believed, because one
+	// timeout is as much a fact about the machine as about the mutant -- a
+	// loaded runner, a budget derived from a quieter moment. A proof answers
+	// that question before anything runs, so the second measurement asks
+	// something already known and costs the whole budget again to do it. With
+	// the proof, one timeout is the verdict.
+	//
+	// It never turns a mutant that finished into one that did not: a proved
+	// mutant that is killed is killed, and a proved mutant that survives
+	// survives. The only attempt it removes is the repeat of a timeout.
+	NeverReturns bool
 
 	// MemoryLimit bounds the resident memory of each test binary's whole
 	// process tree, in bytes, as [runner.Spec.MemoryLimit] takes it. Zero means
@@ -248,6 +267,19 @@ type Attempt struct {
 	// different kills, and internal/runner reports exactly one of them.
 	PeakMemory     int64
 	MemoryExceeded bool
+
+	// Diverged reports that the target ended itself because one of its counted
+	// loops passed the ceiling this run derived for it, rather than because a
+	// supervisor ran out of patience.
+	//
+	// It accompanies [mutation.OutcomeTimedOut] and nothing else, and what it
+	// carries is the difference between a measurement and a fact. A timeout is
+	// retried serially because one timeout on a loaded machine says as much
+	// about the machine as about the mutant; a divergence is the count of what
+	// one loop did against the count of what the original program did in the
+	// same tree under the same tests, so a second measurement would produce the
+	// same two numbers and cost a whole budget to do it. See ADR 0013.
+	Diverged bool
 	// Err carries a [Code] from this package, with the underlying cause
 	// reachable through it. It is set whenever Outcome is
 	// [mutation.OutcomeErrored], and on exactly one other outcome: a not-run
@@ -306,12 +338,52 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 	return runNarrowed(ctx, opts, whole, bins)
 }
 
+// ErrTreeNotRestored is what a failed [Options.Restore] is wrapped in.
+//
+// It is a sentinel rather than a message because [Schedule] has to recognise
+// one: a restore that failed is not a mutant that could not be measured, it is
+// a tree the run can no longer describe, and carrying on would measure every
+// later mutant against it.
+var ErrTreeNotRestored = errors.New("execute: the worker's copy of the tree could not be put back")
+
+// restoreTree puts this worker's tree back after a pass, or reports why not.
+func restoreTree(opts Options) error {
+	if opts.Restore == nil {
+		return nil
+	}
+	if err := opts.Restore(); err != nil {
+		return fmt.Errorf("%w: %w", ErrTreeNotRestored, err)
+	}
+	return nil
+}
+
 // runNarrowed executes one mutant against the test binaries exactly as its
 // [MutantRun.Tests] selection asks — the whole of each binary when it names
 // none. It is [RunOne] without the survivor confirmation, and the two are split
 // so that the confirmation is one place rather than tangled through the branch
 // that decides each binary.
 func runNarrowed(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) Attempt {
+	attempt := runPass(ctx, opts, m, bins)
+	if len(attempt.Binaries) == 0 {
+		// Nothing was started, so nothing can have been written and there is
+		// nothing to put back. It is the refusal paths below that reach this:
+		// a mutant with no identity, no timeout, or no binary to measure it.
+		return attempt
+	}
+	if err := restoreTree(opts); err != nil {
+		// The pass's own verdict is sound -- it ran, and what it saw is what it
+		// saw -- and it is dropped anyway, because [Schedule] is about to stop
+		// the run and a verdict published beside "the tree is now unknown"
+		// would be a verdict somebody reads later without the sentence beside
+		// it.
+		return errored(err)
+	}
+	return attempt
+}
+
+// runPass is [runNarrowed] without the restore: one pass over the selected
+// binaries, which is what the restore is *of*.
+func runPass(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) Attempt {
 	switch {
 	case strings.TrimSpace(m.ID) == "":
 		return errored(&Error{Code: CodeMutantInvalid, Message: "the mutant has no activation identity"})
@@ -350,6 +422,9 @@ func runNarrowed(ctx context.Context, opts Options, m MutantRun, bins []TestBina
 	}
 
 	env := mutantEnvFrom(opts.Env, m.ID, scratch)
+	if opts.LoopLimits != "" {
+		env = append(env, instrument.LoopLimitsEnv+"="+opts.LoopLimits)
+	}
 	logs := planTestLog(m.RecordTestLog, scratch, m.Args)
 
 	attempt := Attempt{Outcome: mutation.OutcomeSurvived}
@@ -365,7 +440,7 @@ func runNarrowed(ctx context.Context, opts Options, m MutantRun, bins []TestBina
 		logPath := logs.path(i)
 		tests := m.Tests[bin.ImportPath]
 		spec, result := startTarget(ctx, opts, trace.ExecKindMutantRun, m.ID, bin, env,
-			m.Timeout, m.MemoryLimit, m.Args, tests, logPath, m.OutputLimit)
+			m.Timeout, m.MemoryLimit, m.Args, tests, logPath, m.OutputLimit, true)
 		attempt.Duration += result.Duration
 		attempt.PeakMemory = max(attempt.PeakMemory, result.PeakMemory)
 		attempt.Binaries = append(attempt.Binaries, bin.ImportPath)
@@ -495,6 +570,23 @@ func runNarrowed(ctx context.Context, opts Options, m MutantRun, bins []TestBina
 			}
 			return attempt
 
+		case result.ExitCode == instrument.DivergedExit:
+			// A verdict, and one that is settled here for [result.MemoryExceeded]'s
+			// reason: this is not a measurement of how loaded the machine is.
+			// The generated runtime counted a loop past what the original
+			// program did anywhere in this suite and said which loop and by how
+			// much, and running it again would count the same thing.
+			//
+			// It sits ahead of the kill below because the divergence status is
+			// non-zero: read there, a mutant that does not return would be
+			// reported as one the tests caught, which is the same score by a
+			// different name and a diagnosis that is simply wrong.
+			attempt.Outcome = mutation.OutcomeTimedOut
+			attempt.KilledBy = bin.ImportPath
+			attempt.Diverged = true
+			attempt.keep(result)
+			return attempt
+
 		case testLogUnsupported(logPath, result, record):
 			// A binary that refused the flag exited 2 having run no test, and
 			// exit 2 is non-zero — so this case sits ahead of the kill below
@@ -533,6 +625,30 @@ func (a *Attempt) keep(result runner.Result) {
 	a.OutputTail = tail(result.Output)
 }
 
+// failFastFlag tells a test binary to start no further test once one has
+// failed.
+//
+// It is a saving rather than a decision, and the two passes that carry it are
+// the two whose product is a single bit. A mutant run asks whether anything
+// caught the edit; a control asks whether a set of tests passes together with
+// nothing activated. The first failure answers either question, and every test
+// the binary would go on to run after it is paid for and cannot change the
+// answer -- which on a mutant narrowed to a dozen covering tests is most of what
+// the execution phase spends.
+//
+// It is placed ahead of the target's own arguments so that a test command that
+// spells the flag itself still decides: the flag package keeps the last value
+// it is given, so `-test.failfast=false` in a test.command is obeyed rather
+// than silently overridden.
+//
+// What it does not change is a verdict. A mutant with no failing test runs
+// every test either way; a mutant with one is killed either way, and the
+// binary that killed it is the same binary. The one thing it can move is which
+// *kind* of detection gets reported when a mutant both fails an early test and
+// hangs a later one: that is a kill now rather than a timeout, which is the
+// more precise of the two answers and is scored the same.
+const failFastFlag = "-test.failfast"
+
 // startTarget starts one prepared test binary and waits for it.
 //
 // This is the whole of what [RunOne] and [RunProbe] do to a child process, and
@@ -565,6 +681,64 @@ func (a *Attempt) keep(result runner.Result) {
 // where cmd/go puts its own: the standard flag package keeps the last value it
 // sees, so a flag placed after a target's arguments would be the one the engine
 // silently overrode rather than the one it supplied.
+// workingDir is the directory a target runs in: the package's own directory in
+// the tree this worker owns.
+//
+// Without [Options.Tree] that is the shared snapshot and this is bin.Dir, which
+// is what every run did before isolation existed. With one, the same package
+// directory inside the worker's copy -- the binary is the same program wherever
+// it runs, and what a copy changes is the working directory, which is what a Go
+// test resolves `testdata` and every relative write against.
+//
+// The two paths are resolved before they are compared, and that is not
+// defensive: `go list` reports a package directory the operating system has
+// resolved, while the snapshot root is the path this process made. On macOS the
+// temporary directory is behind a link -- /var is /private/var -- so the two
+// spellings of one directory disagree, and a comparison of the raw strings
+// would find every binary to be outside the snapshot and silently run every
+// mutant in the shared tree. Isolation would then be a copy per worker that
+// nothing ever ran in.
+//
+// A directory that is not under the snapshot root even after resolution is
+// returned unchanged rather than refused. There is no such binary today --
+// [listPackages] reports directories of a tree rooted at the snapshot -- and the
+// honest answer for one that appeared is the directory it named: rebasing a
+// path that is not under the root would invent one, and refusing would fail a
+// run over a shape this function is not the right place to judge.
+func workingDir(opts Options, bin TestBinary) string {
+	if opts.Tree == "" || opts.SnapshotRoot == "" || opts.Tree == opts.SnapshotRoot {
+		return bin.Dir
+	}
+	rel, ok := under(opts.SnapshotRoot, bin.Dir)
+	if !ok {
+		return bin.Dir
+	}
+	return filepath.Join(opts.Tree, rel)
+}
+
+// under returns dir relative to root, and whether it is under it at all, with
+// both paths resolved first so that two spellings of one directory agree.
+func under(root, dir string) (string, bool) {
+	if rel, ok := relativeTo(root, dir); ok {
+		return rel, true
+	}
+	resolvedRoot, rootErr := filepath.EvalSymlinks(root)
+	resolvedDir, dirErr := filepath.EvalSymlinks(dir)
+	if rootErr != nil || dirErr != nil {
+		return "", false
+	}
+	return relativeTo(resolvedRoot, resolvedDir)
+}
+
+// relativeTo is filepath.Rel with "climbs out" folded into the boolean.
+func relativeTo(root, dir string) (string, bool) {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
+}
+
 func startTarget(
 	ctx context.Context,
 	opts Options,
@@ -578,9 +752,13 @@ func startTarget(
 	tests []string,
 	testLogPath string,
 	outputLimit int,
+	stopAtFirstFailure bool,
 ) (runner.Spec, runner.Result) {
-	argv := make([]string, 0, len(args)+4)
+	argv := make([]string, 0, len(args)+5)
 	argv = append(argv, bin.BinPath, "-test.timeout="+(InProcessTimeoutFactor*timeout).String())
+	if stopAtFirstFailure {
+		argv = append(argv, failFastFlag)
+	}
 	if testLogPath != "" {
 		argv = append(argv, testLogFlagName+"="+testLogPath)
 	}
@@ -590,7 +768,7 @@ func startTarget(
 	argv = append(argv, args...)
 	spec := runner.Spec{
 		Argv:        argv,
-		Dir:         bin.Dir,
+		Dir:         workingDir(opts, bin),
 		Env:         env,
 		Timeout:     timeout,
 		MemoryLimit: memoryLimit,

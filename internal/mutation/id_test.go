@@ -4,7 +4,10 @@
 package mutation
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -39,7 +42,10 @@ type goldenVector struct {
 	source      string
 	original    string
 	replacement string
-	wantID      string
+	// modulePath is empty for the nine-field recipe and set for the
+	// ten-field one, which is the only thing that decides between them.
+	modulePath string
+	wantID     string
 }
 
 var goldenVectors = []goldenVector{
@@ -108,6 +114,43 @@ var goldenVectors = []goldenVector{
 		replacement: "!=",
 		wantID:      "ee5e971c231e2303c070f53860f12c2f50b5051bac2c3b37171bf923647c67bc",
 	},
+	{
+		// The first vector's edit again, measured as part of a workspace. Every
+		// field it hashes is the same and the identity is not, which is the
+		// whole of what the second domain is for: a path is no longer a
+		// coordinate on its own once two modules can each hold one.
+		//
+		// It is a vector rather than an assertion about inequality because the
+		// bytes are the contract. A reimplementation in another language has to
+		// produce this string, and "different from the other one" is not
+		// something anybody can implement against.
+		name:        "workspace module",
+		path:        "internal/mutation/score.go",
+		ruleName:    "eq-to-neq",
+		ruleVersion: 1,
+		span:        Span{StartByte: 1024, EndByte: 1026},
+		source:      lfSource,
+		original:    "==",
+		replacement: "!=",
+		modulePath:  "example.com/workspace/core",
+		wantID:      "f7abd7f50982c88c90f9d4c6b2594eb8052651dd3df22944c22e0b40631e9d9d",
+	},
+	{
+		// The same mutant of a *different* module of the same workspace. The
+		// two modules each normalize this file to the same module-relative
+		// path, so without the tenth field these two vectors would be one
+		// string -- which is exactly the collision the domain exists to stop.
+		name:        "workspace sibling module",
+		path:        "internal/mutation/score.go",
+		ruleName:    "eq-to-neq",
+		ruleVersion: 1,
+		span:        Span{StartByte: 1024, EndByte: 1026},
+		source:      lfSource,
+		original:    "==",
+		replacement: "!=",
+		modulePath:  "example.com/workspace/app",
+		wantID:      "72bff8f39d743fe28fd6012b0ea8acf879477d175c20dacd55ed330af1902159",
+	},
 }
 
 func (v goldenVector) identity() Identity {
@@ -119,6 +162,7 @@ func (v goldenVector) identity() Identity {
 		SourceDigest:      DigestString(v.source),
 		OriginalDigest:    DigestString(v.original),
 		ReplacementDigest: DigestString(v.replacement),
+		ModulePath:        v.modulePath,
 	}
 }
 
@@ -434,4 +478,117 @@ func TestIsIDAndIsDigest(t *testing.T) {
 			t.Errorf("IsID(%q) = true", bad)
 		}
 	}
+}
+
+// TestTheFrozenRecipeIsUntouchedByTheWorkspaceOne is the promise the second
+// domain was introduced to keep.
+//
+// v1 was frozen, and a frozen recipe that grew a field would not have been
+// frozen. So the claim is not "the two differ" -- the vectors above say that in
+// bytes -- but that adding the second one moved nothing: an identity with no
+// module path hashes the same nine fields it always did, and every stored
+// outcome, report and expectation minted before the workspace recipe existed
+// still names the same mutant.
+func TestTheFrozenRecipeIsUntouchedByTheWorkspaceOne(t *testing.T) {
+	t.Parallel()
+
+	for _, v := range goldenVectors {
+		if v.modulePath != "" {
+			continue
+		}
+		t.Run(v.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Stated the long way round, against the field list rather than
+			// against the function: what is frozen is the recipe, and a test
+			// that only called ID() would pass for a build in which the recipe
+			// had been rewritten into something that agreed on these five
+			// inputs and nothing else.
+			id := v.identity()
+			want := hashOf(t,
+				IDDomain,
+				id.Path,
+				id.RuleName,
+				strconv.Itoa(id.RuleVersion),
+				strconv.FormatUint(uint64(id.Span.StartByte), 10),
+				strconv.FormatUint(uint64(id.Span.EndByte), 10),
+				id.SourceDigest,
+				id.OriginalDigest,
+				id.ReplacementDigest,
+			)
+			if want != v.wantID {
+				t.Fatalf("the nine-field recipe hashes to %s and the frozen vector is %s", want, v.wantID)
+			}
+		})
+	}
+}
+
+// TestTheWorkspaceRecipeIsTheNineFieldsPlusOne pins the second recipe the same
+// way, so that both are described by their bytes rather than by their code.
+func TestTheWorkspaceRecipeIsTheNineFieldsPlusOne(t *testing.T) {
+	t.Parallel()
+
+	for _, v := range goldenVectors {
+		if v.modulePath == "" {
+			continue
+		}
+		t.Run(v.name, func(t *testing.T) {
+			t.Parallel()
+
+			id := v.identity()
+			want := hashOf(t,
+				IDDomainWorkspace,
+				id.Path,
+				id.RuleName,
+				strconv.Itoa(id.RuleVersion),
+				strconv.FormatUint(uint64(id.Span.StartByte), 10),
+				strconv.FormatUint(uint64(id.Span.EndByte), 10),
+				id.SourceDigest,
+				id.OriginalDigest,
+				id.ReplacementDigest,
+				id.ModulePath,
+			)
+			if want != v.wantID {
+				t.Fatalf("the ten-field recipe hashes to %s and the frozen vector is %s", want, v.wantID)
+			}
+		})
+	}
+}
+
+// TestAModulePathThatCannotBeHashedIsRefused keeps the tenth field a field.
+//
+// The encoding is unambiguous whatever the bytes are, so this is not about the
+// hash: it is about a module path that could only have arrived by mistake. A
+// version suffix is the one worth naming -- `example.com/m@v2` is a request
+// nobody made, and minting an identity for it would file a run under a module
+// that does not exist.
+func TestAModulePathThatCannotBeHashedIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, bad := range []string{"example.com/m@v2", "example.com/m odule", "example.com/m\nx"} {
+		t.Run(bad, func(t *testing.T) {
+			t.Parallel()
+
+			id := goldenVectors[0].identity()
+			id.ModulePath = bad
+			if _, err := id.ID(); !errors.Is(err, ErrInvalidModulePath) {
+				t.Errorf("ID() = %v, want %v", err, ErrInvalidModulePath)
+			}
+		})
+	}
+}
+
+// hashOf is the identity encoding written out once, so that the two recipe
+// tests above compare bytes with bytes rather than one call of ID() with
+// another.
+func hashOf(t *testing.T, fields ...string) string {
+	t.Helper()
+
+	h := sha256.New()
+	for _, f := range fields {
+		if err := WriteLengthPrefixed(h, f); err != nil {
+			t.Fatalf("hashing %q: %v", f, err)
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }

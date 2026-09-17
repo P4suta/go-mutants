@@ -123,6 +123,12 @@ const (
 	// inactive tree, which is what proves instrumentation changed nothing.
 	ExecKindInstrumentedBaseline = "instrumented-baseline"
 	// ExecKindCovdataTextfmt converts a coverage directory into a profile.
+	//
+	// No run this build makes starts one. A profiling run is asked for
+	// `-test.coverprofile`, so the binary writes the text format itself and
+	// there is nothing left to render; the kind stays because a published
+	// vocabulary is a superset on purpose, and a recording written by an
+	// earlier version holds these events.
 	ExecKindCovdataTextfmt = "covdata-textfmt"
 	// ExecKindGoList lists packages: the set a test binary covers, or — with
 	// the subject `module` — the whole of what a library consumer asked
@@ -252,6 +258,7 @@ const (
 const (
 	SnapshotKindWorkspace = "workspace"
 	SnapshotKindProbe     = "probe"
+	SnapshotKindWorker    = "worker"
 )
 
 // The files and directories a run reports having written or kept.
@@ -284,6 +291,18 @@ const (
 	NoteDiagnostics = "diagnostics"
 	// NoteDiagnosticsUnavailable is a bundle it could not write.
 	NoteDiagnosticsUnavailable = "diagnostics-unavailable"
+	// NoteWorkerRestored is a worker copy of the instrumented tree that was
+	// put back after a mutant, with how many files had to be. It is the sign
+	// that a suite writes into the package directory it runs in, which is what
+	// `--isolate` exists for, so it is a note rather than a warning: a line per
+	// mutant would be a line per mutant.
+	NoteWorkerRestored = "worker-restored"
+
+	// NoteProbeTreeRestored is the probe tree put back the way the
+	// instrumentation left it, between one pass and the next. A probe pass runs
+	// a whole suite, and a suite that writes into the package directory it runs
+	// in would leave the next pass measuring a program nobody instrumented.
+	NoteProbeTreeRestored = "probe-tree-restored"
 	// NoteTraceGC is what collection removed from the trace root.
 	NoteTraceGC = "trace-gc"
 	// NoteCoverageUnavailable is why a coverage-guided run had no coverage,

@@ -55,6 +55,11 @@ var canonicalOrder = []string{
 	// error-swallowing
 	"return-err-to-nil",
 	"nil-error-branch",
+	"return-empty-slice",
+	"return-empty-map",
+	"condition-to-true",
+	"condition-to-false",
+	"loop-condition-to-false",
 	// bitwise
 	"band-to-bor",
 	"bor-to-band",
@@ -68,6 +73,8 @@ var canonicalOrder = []string{
 	"incr-to-decr",
 	"decr-to-incr",
 	// statement-deletion
+	"drop-break-label",
+	"drop-continue-label",
 	"delete-call-statement",
 	"delete-assignment",
 	"delete-incdec",
@@ -82,8 +89,11 @@ var canonicalFamilyOrder = []Family{
 	FamilyFloatArithmetic,
 	FamilyReturnReplacement,
 	FamilyErrorSwallowing,
+	FamilyNeutralValue,
+	FamilyBranchReplacement,
 	FamilyBitwise,
 	FamilyArithmeticAssign,
+	FamilyLabeledBranch,
 	FamilyStatementDeletion,
 }
 
@@ -157,6 +167,9 @@ func TestFamilyTiers(t *testing.T) {
 		FamilyErrorSwallowing:   TierBalanced,
 		FamilyBitwise:           TierStrong,
 		FamilyArithmeticAssign:  TierStrong,
+		FamilyNeutralValue:      TierStrong,
+		FamilyBranchReplacement: TierStrong,
+		FamilyLabeledBranch:     TierAll,
 		FamilyStatementDeletion: TierAll,
 	}
 	for _, rule := range CanonicalRules() {
@@ -202,8 +215,8 @@ func TestTierMonotonicity(t *testing.T) {
 	if len(balanced) != 29 {
 		t.Errorf("balanced selects %d rules, want 29", len(balanced))
 	}
-	if len(strong) != 39 {
-		t.Errorf("strong selects %d rules, want 39", len(strong))
+	if len(strong) != 44 {
+		t.Errorf("strong selects %d rules, want 44", len(strong))
 	}
 	if len(all) != CanonicalRuleCount {
 		t.Errorf("all selects %d rules, want %d", len(all), CanonicalRuleCount)

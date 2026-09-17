@@ -84,6 +84,8 @@ const (
 	CodeNonPositiveMemory Code = "GOM3026"
 	// CodeUnknownNarrowing reports a narrowing that is not test or package.
 	CodeUnknownNarrowing Code = "GOM3027"
+	// CodeUnknownProbing reports a probing mode that is not off or on.
+	CodeUnknownProbing Code = "GOM3028"
 
 	// CodeJobsOutOfRange reports a worker count outside its range.
 	CodeJobsOutOfRange Code = "GOM3030"
@@ -134,6 +136,7 @@ var codes = []Code{
 	CodeInvalidSize,
 	CodeNonPositiveMemory,
 	CodeUnknownNarrowing,
+	CodeUnknownProbing,
 	CodeJobsOutOfRange,
 	CodeUnknownCacheMode,
 	CodeInvalidCacheDirectory,
@@ -254,6 +257,7 @@ var flagNames = map[string]string{
 	"test.timeout":       "--timeout",
 	"test.memory":        "--memory",
 	"execution.jobs":     "--jobs",
+	"execution.isolate":  "--isolate",
 	"cache.mode":         "--cache",
 	"policy.strict":      "--strict",
 	"report.formats":     "--report",

@@ -40,20 +40,61 @@ const (
 	// a recording is JSON Lines, and each line is one instance — and the one
 	// that is never evidence. See docs/trace-v1.md.
 	TraceEventV1 = "go-mutants/trace-event"
+
+	// ExplainV1 is `explain --json`: the account of one mutant, or of one
+	// place in the source, joined from a run report and the recording beside
+	// it. It is the one document type here that is *derived* rather than
+	// recorded, and the only one that names its sources, because a consumer
+	// that wants the lossless claim should be reading the report instead. What
+	// it holds that neither source does is the join: the command to paste, the
+	// command to rebuild with, one mutant's share of each stage, the tail of
+	// what its last pass printed, and the judgements about whether either can
+	// be trusted.
+	ExplainV1 = "go-mutants/explain"
+
+	// DiagnosticsV1 is the manifest of a failed run's diagnostics bundle: what
+	// the directory holds and which failure it explains. The bundle is text a
+	// person reads; this is the one file in it a program reads, so that a CI
+	// job which uploads the directory can say what it uploaded. It is an index
+	// rather than an account — the account is the recording beside it.
+	DiagnosticsV1 = "go-mutants/diagnostics"
+
+	// WorkspaceReportV1 is what a run over a `go.work` publishes instead of a
+	// run report: the run's own counts, and every module's run report embedded
+	// inside it. It exists because `workspace.module_path` is required of a run
+	// report and a workspace has no single answer for it, and the modules'
+	// documents are embedded rather than filed beside it because a history
+	// store names a run's document by its run id. See ADR 0012.
+	WorkspaceReportV1 = "go-mutants/workspace-report"
 )
 
 // registry maps a document type onto the schema file in [schema.FS] that
 // defines it.
 //
 // This is the whole extension point. Adding a schema — doctor-v1 arrived this
-// way, and a vendored Stryker schema will — is one file in schema/ and one line
-// here; nothing else in this package knows how many schemas there are or what
-// they contain.
+// way, and diagnostics-v1 after it — is one file in schema/ and one line here;
+// nothing else in this package knows how many schemas there are or what they
+// contain.
+//
+// The vendored Stryker schema is deliberately not here. It is somebody else's
+// contract, validated where the projection is built
+// (internal/report/strykerschema.go) against a pinned copy that carries its own
+// $id, so that a change in another repository cannot silently change what this
+// one claims to produce.
+//
+// It is a document *type* that costs one line. A second *version* of a type
+// would cost more: registry is keyed on the type alone, so a run-report v2
+// would have to re-key it on (type, version) and teach Validate to read
+// schema_version out of the instance first.
 var registry = map[string]string{
-	CatalogV1:    "catalog-v1.schema.json",
-	DoctorV1:     "doctor-v1.schema.json",
-	RunReportV1:  "run-report-v1.schema.json",
-	TraceEventV1: "trace-v1.schema.json",
+	CatalogV1:     "catalog-v1.schema.json",
+	DiagnosticsV1: "diagnostics-v1.schema.json",
+	ExplainV1:     "explain-v1.schema.json",
+	DoctorV1:      "doctor-v1.schema.json",
+	RunReportV1:   "run-report-v1.schema.json",
+	TraceEventV1:  "trace-v1.schema.json",
+
+	WorkspaceReportV1: "workspace-report-v1.schema.json",
 }
 
 // baseURL is the identity a schema gets when its file declares no "$id".

@@ -22,6 +22,7 @@ import (
 	"golang.org/x/mod/modfile"
 
 	"github.com/P4suta/go-mutants/internal/config"
+	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/runner"
@@ -53,6 +54,7 @@ const (
 	checkGit           = "git"
 	checkCacheDir      = "cache directory"
 	checkPlatform      = "platform"
+	checkMemory        = "memory limit"
 	checkConfiguration = "configuration"
 )
 
@@ -198,6 +200,7 @@ func diagnose(ctx context.Context, dir string) []check {
 		gitCheck(ctx),
 		cacheCheck(),
 		platformCheck(toolchain, toolchainErr),
+		memoryCheck(),
 		configurationCheck(dir),
 	}
 }
@@ -239,8 +242,25 @@ func toolchainCheck(toolchain gocmd.Toolchain, err error) check {
 	return check{checkToolchain, statusOK, detail}
 }
 
-// moduleCheck reports the module this directory is the root of.
+// moduleCheck reports the module this directory is the root of, or the
+// workspace it is the root of.
+//
+// A `go.work` is a tree go-mutants measures -- as one run over every module it
+// joins, see ADR 0012 -- so a check that only knew about `go.mod` would tell a
+// user standing in a workspace that the tool cannot run where it can.
 func moduleCheck(dir string) check {
+	workspace, err := discover.DetectWorkspace(dir)
+	if err != nil {
+		return check{checkModule, statusFail, detailOf(err)}
+	}
+	if workspace != nil {
+		modules := make([]string, 0, len(workspace.Modules))
+		for _, module := range workspace.Modules {
+			modules = append(modules, module.Path)
+		}
+		return check{checkModule, statusOK, countNoun(len(modules), "module") + " (" +
+			filepath.Join(dir, discover.WorkspaceFile) + "): " + strings.Join(modules, ", ")}
+	}
 	module, err := moduleAt(dir)
 	if err != nil {
 		return check{checkModule, statusFail, detailOf(err)}
@@ -362,6 +382,28 @@ func cacheCheck() check {
 // It is a warning rather than a failure because the toolchain is the authority
 // on what it can produce, and a cross-compiling setup that works is not
 // go-mutants' business to refuse.
+// memoryCheck says whether a per-mutant memory bound is enforced here.
+//
+// A bound is part of every request and enforced on some platforms, and a
+// developer on one of the others is running with a number that does nothing.
+// The warning is for that case and not for a missing feature: the run is
+// correct either way, and what changes is whether a runaway mutant is stopped
+// or waited on.
+func memoryCheck() check {
+	switch bound := runner.MemoryBound(); bound {
+	case runner.MemoryEnforcedByKernel:
+		return check{checkMemory, statusOK,
+			"enforced by the kernel's job object, with the sampler under it"}
+	case runner.MemoryEnforcedBySampler:
+		return check{checkMemory, statusOK,
+			"enforced by sampling the process tree every " + runner.MemorySampleInterval.String()}
+	default:
+		return check{checkMemory, statusWarn,
+			"not enforced on " + runtime.GOOS + ": a bound is accepted and nothing acts on it, " +
+				"so a mutant that runs away is stopped by its timeout rather than by its memory"}
+	}
+}
+
 func platformCheck(toolchain gocmd.Toolchain, err error) check {
 	host := runtime.GOOS + "/" + runtime.GOARCH
 	if err != nil {

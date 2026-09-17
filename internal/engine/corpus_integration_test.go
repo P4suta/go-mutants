@@ -37,6 +37,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/testkit"
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // TestRunInsideAGoWorkspaceSeesOnlyTheModuleItWasPointedAt is the scope of a
@@ -47,11 +48,12 @@ import (
 // module's three files and not the workspace file one directory above it, the
 // catalogue holds that module's six mutants, and one test binary is built.
 //
-// The sibling module's fate is what makes the absence checkable rather than
-// merely plausible. All three of `lib`'s mutants survive on purpose — its test
-// exercises the function and asserts nothing about the answer — so a run that
-// reached across the workspace would still be green and would differ from this
-// one in exactly the assertion below: every mutant killed, and six of them.
+// The sibling modules' fate is what makes the absence checkable rather than
+// merely plausible. `lib`'s own test exercises its function and asserts nothing
+// about the answer, so all three of its mutants survive anything but `cross`'s
+// tests — and `cross` is not in this snapshot either. A run that reached across
+// the workspace would still be green and would differ from this one in exactly
+// the assertion below: every mutant killed, and six of them.
 func TestRunInsideAGoWorkspaceSeesOnlyTheModuleItWasPointedAt(t *testing.T) {
 	t.Parallel()
 
@@ -98,49 +100,72 @@ func TestRunInsideAGoWorkspaceSeesOnlyTheModuleItWasPointedAt(t *testing.T) {
 	}
 }
 
-// TestRunAtTheWorkspaceRootIsRefused is the other direction, and the one that
-// used to give the wrong answer.
+// TestRunAtTheWorkspaceRootMeasuresEveryModuleAtOnce is the other direction,
+// and the claim that a workspace is one run rather than three.
 //
-// A workspace has no single module path, no single set of module-relative
-// identities and no single baseline, so v1 refuses it. Discovery has always
-// said so — GOM4102, with the workspace file named — but discovery runs after
-// the copy, the scope resolution and a full baseline, and the scope resolution
-// got there first with a different story: `go list ./...` in a workspace
-// directory places no package, so the run reported the *user's test command* as
-// matching nothing. That is a true sentence about the wrong subject, and it
-// sends a reader to their `test.command`.
+// The three modules are measured together, under one run id, and the document
+// is a workspace report with each module's own run report inside it — because
+// `workspace.module_path` is required of a run report and a workspace has no
+// single answer for it. See ADR 0012.
 //
-// So the question is asked before anything is copied, and the two halves of
-// this assertion are what that buys: the code is the one a user can search for,
-// and the path in the message is the `go.work` in their own tree rather than
-// one in a temporary directory that no longer exists.
-func TestRunAtTheWorkspaceRootIsRefused(t *testing.T) {
+// `lib` is what makes the point checkable. Its own test exercises [Differs] and
+// asserts nothing about the answer, so its three mutants are killed here or not
+// at all; `cross` is the module whose tests kill them. Three separate runs
+// would report those three as survivors in a module whose tests are green,
+// which is the wrong answer rather than a missing feature — so "every mutant
+// killed" is the whole of what this run has to say.
+func TestRunAtTheWorkspaceRootMeasuresEveryModuleAtOnce(t *testing.T) {
 	t.Parallel()
 
 	workspace := testkit.Copy(t, "workspace")
-	_, _, err := collect(t, t.Context(), optionsAt(t, workspace))
-	if err == nil {
-		t.Fatal("a run at the root of a go.work workspace completed")
+	outcome, _, err := collect(t, t.Context(), optionsAt(t, workspace))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
 	}
-	if code := discover.CodeOf(err); code != discover.CodeWorkspace {
-		t.Errorf("code = %q, want %q: %v", code, discover.CodeWorkspace, err)
+	if outcome.Status != StatusOK {
+		t.Fatalf("status = %s, want %s", outcome.Status, StatusOK)
 	}
-	for _, phrase := range []string{
-		"multi-module workspaces are not yet supported",
-		"makes this a workspace",
-		"run go-mutants inside one of its modules instead",
-		filepath.Join(workspace, discover.WorkspaceFile),
-	} {
-		if !strings.Contains(err.Error(), phrase) {
-			t.Errorf("the refusal does not say %q:\n%v", phrase, err)
+	if outcome.Report != nil {
+		t.Errorf("a workspace run published a run report; the module path it would need has no answer")
+	}
+	doc := outcome.WorkspaceReport
+	if doc == nil {
+		t.Fatal("a workspace run published no workspace report")
+	}
+	if doc.DocumentType != report.WorkspaceDocumentType {
+		t.Errorf("document_type = %q, want %q", doc.DocumentType, report.WorkspaceDocumentType)
+	}
+	if doc.Summary.Survived != 0 || doc.Summary.Total != 11 {
+		t.Errorf("summary = %d of %d killed; every mutant of this workspace is killed, and three of "+
+			"them only by another module's tests", doc.Summary.Killed, doc.Summary.Total)
+	}
+
+	// The modules, in `use` order, each with its own report and its own module
+	// path -- and `lib`'s three mutants killed, which is the cross-module claim
+	// stated as a number.
+	want := map[string]int{
+		"fixture.example/workspace/app":   6,
+		"fixture.example/workspace/cross": 2,
+		"fixture.example/workspace/lib":   3,
+	}
+	if len(doc.Modules) != len(want) {
+		t.Fatalf("the document holds %d modules, want the workspace's %d", len(doc.Modules), len(want))
+	}
+	for _, module := range doc.Modules {
+		if module.Report.Workspace.ModulePath != module.ModulePath {
+			t.Errorf("module %s carries a report of %s",
+				module.ModulePath, module.Report.Workspace.ModulePath)
 		}
-	}
-	// Nothing was copied and nothing was published, so the engine left the
-	// workspace exactly as it found it. (internal/cli files a diagnostics
-	// bundle for a failed run, which is its own decision and its own tests'
-	// business; this is the engine, and it wrote nothing at all.)
-	if _, statErr := os.Stat(filepath.Join(workspace, "reports")); statErr == nil {
-		t.Error("the refused run wrote a report directory into the workspace it refused")
+		if got := module.Report.Summary.Killed; got != want[module.ModulePath] {
+			t.Errorf("%s killed %d of its mutants, want %d",
+				module.ModulePath, got, want[module.ModulePath])
+		}
+		for _, m := range module.Report.Mutants {
+			if m.Outcome != report.OutcomeKilled {
+				t.Errorf("mutant %s in %s %s settled as %s",
+					m.DisplayID, module.ModulePath, m.Path, m.Outcome)
+			}
+		}
 	}
 }
 
@@ -413,14 +438,15 @@ func TestATestThatWritesIntoItsOwnDirectoryStopsTheRunAtTheDriftGate(t *testing.
 }
 
 // TestAnUnnameableDeclarationIsSkippedWithItsReasonAndTheRunStaysGreen is a
-// refusal that is not a failure.
+// refusal that is not a failure, and the completion that is not a refusal.
 //
-// A guard at the addition inside `hidden.New(a + b)` would have to declare a
-// temporary of the type `c` is given, and that type is `*hidden.counter` — not
-// exported, so there is no source form of the declaration and discovery does
-// not invent one by adding an import. The site is recorded with the reserved
-// reason and the pass carries on: the ordinary candidate on the next line is
-// catalogued, executed and killed, and the run completes.
+// The refusal is an edit whose every enclosing expression has the type
+// `hidden.tally`, which is unexported: there is no source form of that type
+// outside its own package, and no import supplies one — which is the difference
+// from the `split` package below, where the type is exported and the name is
+// all that was missing. The site is recorded with the reserved reason and the
+// pass carries on: every other candidate in the module is catalogued, executed
+// and killed, and the run completes.
 //
 // The coordinates are asserted through internal/discover rather than through
 // the report, and the split is the one the two views were designed around: the
@@ -428,6 +454,15 @@ func TestATestThatWritesIntoItsOwnDirectoryStopsTheRunAtTheDriftGate(t *testing.
 // — because forty coordinates per file is a document nobody would read, and the
 // listing carries the sites for the person who asked which. This is the one
 // fixture whose whole subject is a single site, so both are checked.
+//
+// The module's `split` package is the same question with the other answer, and
+// it is here rather than in a fixture of its own because it is the same
+// subject: a type the file being rewritten cannot spell. What separates the two
+// is *reach*. `*hidden.counter` is unexported, so no import makes it writable
+// and the refusal stands; `reachable.Extent` is exported and the package is one
+// a sibling file already imports, so the rewrite is given that import and the
+// mutant exists. The kill on split/unsayable.go is what says the instrumented
+// tree compiled with an import this phase added.
 func TestAnUnnameableDeclarationIsSkippedWithItsReasonAndTheRunStaysGreen(t *testing.T) {
 	t.Parallel()
 
@@ -444,13 +479,33 @@ func TestAnUnnameableDeclarationIsSkippedWithItsReasonAndTheRunStaysGreen(t *tes
 	if !slices.Equal(outcome.Report.Skips, wantSkips) {
 		t.Errorf("skips = %+v, want %+v", outcome.Report.Skips, wantSkips)
 	}
-	if found := discoveredOf(t, events); found.Skips != 1 || found.Candidates != 3 {
-		t.Errorf("Discovered = %+v, want 3 candidates and 1 skip", found)
+	if found := discoveredOf(t, events); found.Skips != 1 || found.Candidates != 15 {
+		t.Errorf("Discovered = %+v, want 15 candidates and 1 skip", found)
 	}
 	want := []string{
 		"killed hidden/hidden.go:17 return-nil",
 		"killed hidden/hidden.go:20 return-zero-numeric",
-		"killed unnameable.go:21 return-zero-numeric",
+		"killed hidden/hidden.go:35 return-zero-numeric",
+		"killed hidden/hidden.go:39 return-zero-numeric",
+		"killed reachable/reachable.go:18 return-zero-numeric",
+		"killed reachable/reachable.go:21 return-zero-numeric",
+		"killed split/sayable.go:19 return-zero-numeric",
+		"killed split/sayable.go:23 add-to-sub",
+		"killed split/sayable.go:23 return-zero-numeric",
+		// The line the module's second half is for. The tag of this `switch`
+		// has a type only the file beside it has a name for, so the guard is
+		// written with an import the rewrite adds — and this row is the proof
+		// that what came out compiled, ran, and was caught.
+		"killed split/unsayable.go:21 add-to-sub",
+		"killed split/unsayable.go:23 return-zero-numeric",
+		"killed split/unsayable.go:25 return-zero-numeric",
+		// The addition the fixture's Counted used to have refused. Its
+		// declaration is still one no form may rewrite; the initialiser
+		// expression around the edit is an `int`, and a closure returning an
+		// `int` stands where it stood.
+		"killed unnameable.go:25 add-to-sub",
+		"killed unnameable.go:26 return-zero-numeric",
+		"killed unnameable.go:46 return-zero-numeric",
 	}
 	got := slices.Clone(results(events))
 	slices.Sort(got)
@@ -465,8 +520,14 @@ func TestAnUnnameableDeclarationIsSkippedWithItsReasonAndTheRunStaysGreen(t *tes
 	wantSites := []discover.SkipSite{{
 		Path:   "unnameable.go",
 		Reason: discover.SkipUnnameableDeclType,
-		Line:   20,
-		Column: 20,
+		Line:   44,
+		Column: 23,
+		// The rule is part of the site because one coordinate can carry
+		// several refusals, and here it says which edit the fixture is about:
+		// the addition between two values of the unexported numeric type, in a
+		// `switch` tag, which is the one shape where the edit's own expression
+		// and every expression around it is something this file cannot name.
+		Rule: "add-to-sub",
 	}}
 	if !slices.Equal(sites, wantSites) {
 		t.Errorf("skip sites = %+v, want %+v", sites, wantSites)
@@ -483,4 +544,99 @@ func discoveredOf(t *testing.T, events []Event) Discovered {
 	}
 	t.Fatal("the run published no Discovered event")
 	return Discovered{}
+}
+
+// TestIsolateGivesEveryWorkerATreeAndPutsItBackBetweenMutants is the escape
+// hatch from the gate above, and the one test that can tell a working
+// restoration from a missing one.
+//
+// The fixture's suite writes into the package directory it runs in, which is
+// what stops an ordinary run at the drift gate. With `--isolate` every worker
+// has its own copy of the instrumented tree, so the write lands in a directory
+// only that worker can see — and the copy is put back after every mutant, so
+// the next one finds the tree as the run left it.
+//
+// The proof is a *survivor*, not a count. The fixture's suite asserts, at the
+// top, that no earlier mutant's witness is there, and Nudge's mutants survive a
+// passing binary. Drop the restore and the second mutant onwards fail that
+// assertion, so they are reported as killed — a difference no number of drifted
+// files would show, because with a copy per worker the shared tree does not
+// drift at all.
+//
+// One worker on purpose: the shape this is about is two mutants in a row on the
+// same tree, and several workers would let two mutants be the first on theirs.
+func TestIsolateGivesEveryWorkerATreeAndPutsItBackBetweenMutants(t *testing.T) {
+	t.Parallel()
+
+	opts, sink := tracedOptions(t, "selfwriting")
+	opts.Config.Execution.Isolate = true
+	opts.Config.Execution.Jobs = 1
+
+	outcome, events, err := collect(t, t.Context(), opts)
+	if err != nil {
+		t.Fatalf("an isolating run of a self-writing suite: %v", err)
+	}
+	if outcome.Status != StatusOK {
+		t.Fatalf("status = %s, want %s", outcome.Status, StatusOK)
+	}
+
+	// Every mutant of Nudge survives, and that is the whole assertion. The
+	// function is called and never checked, so nothing in a passing binary can
+	// kill one; a kill here means the binary stopped passing, and the only way
+	// it does that is the witness check at the top of the suite.
+	survivors, kills := 0, 0
+	for _, m := range outcome.Report.Mutants {
+		switch m.Outcome {
+		case report.OutcomeSurvived:
+			survivors++
+		case report.OutcomeKilled:
+			kills++
+		default:
+			t.Errorf("mutant %s (%s) settled as %s", m.DisplayID, m.Rule, m.Outcome)
+		}
+	}
+	if survivors == 0 {
+		t.Errorf("no mutant survived, so either the worker's tree is not being put back between "+
+			"mutants or the fixture stopped having a survivor:\n\t%s", strings.Join(results(events), "\n\t"))
+	}
+	if kills == 0 {
+		t.Errorf("nothing was killed, so the suite is not measuring anything:\n\t%s",
+			strings.Join(results(events), "\n\t"))
+	}
+
+	// And the run reported putting the copy back, which is the mechanism
+	// rather than its consequence. It is a note rather than a warning because
+	// for this fixture drifting after every mutant is the ordinary case.
+	restored, copies := 0, 0
+	for _, event := range sink.Events() {
+		switch {
+		case event.Type == trace.TypeNote && event.Note != nil &&
+			event.Note.Kind == trace.NoteWorkerRestored:
+			restored++
+		case event.Type == trace.TypeSnapshot && event.Snapshot != nil &&
+			event.Snapshot.Kind == trace.SnapshotKindWorker:
+			copies++
+		}
+	}
+	if copies != 1 {
+		t.Errorf("the run recorded %d worker copies, want the one worker it was given", copies)
+	}
+	if restored == 0 {
+		t.Error("the run restored no worker copy, so nothing was put back between mutants")
+	}
+}
+
+// TestIsolateIsOffByDefault is the other half: the gate above still stops a
+// run that did not ask for a copy per worker.
+//
+// It is stated here rather than left to the gate's own test because a default
+// that quietly flipped would make that test pass for the wrong reason — the
+// run would complete, and a reader would have to notice that the refusal it
+// was about had stopped happening.
+func TestIsolateIsOffByDefault(t *testing.T) {
+	t.Parallel()
+
+	if opts := options(t, "selfwriting"); opts.Config.Execution.Isolate {
+		t.Error("execution.isolate defaults to true, so the drift gate can never be reached")
+	}
 }

@@ -567,7 +567,7 @@ command, and an unlabelled command is a recording that does not validate.
 | `baseline-build` | compiling the unmutated tree |
 | `baseline-test` | one unmutated observation of the test command |
 | `instrumented-baseline` | the tests against the instrumented but inactive tree, which is what proves instrumentation changed nothing |
-| `covdata-textfmt` | converting a coverage directory into a profile |
+| `covdata-textfmt` | converting a coverage directory into a profile — no longer started by any run, and kept because the vocabulary is a superset |
 | `go-list` | listing the packages a test binary set covers |
 | `go-test-c` | compiling one test binary |
 | `test-list` | asking one test binary to name its tests |
@@ -580,7 +580,7 @@ command, and an unlabelled command is a recording that does not validate.
 | `verify` | re-checking the frozen tree before a session claims to measure it |
 
 `subject` is the mutant id for `mutant-run`, the import path for `go-test-c`,
-`test-list`, `coverage-run`, `covdata-textfmt` and `control-run`, the pattern
+`test-list`, `coverage-run` and `control-run`, the pattern
 for `scope-list`, and absent where the kind says everything there is to say. A
 `coverage-run` that profiles a single test rather than the whole binary names
 both, as the import path, one space, and the test's name: an import path holds
@@ -802,7 +802,7 @@ option enters it, which is why a traced and an untraced run share a cache.
 
 | Field | Meaning |
 | --- | --- |
-| `kind` | `workspace` or `probe` |
+| `kind` | `workspace`, `probe`, or `worker` |
 | `source` | the tree that was copied |
 | `dir` | where the copy is |
 | `stable` | whether the copy carried the source tree's modification times with it |
@@ -810,6 +810,21 @@ option enters it, which is why a traced and an untraced run share a cache.
 | `digest` | the frozen workspace digest |
 | `duration_ms` | how long freezing took |
 | `error` | why it failed, if it did |
+
+A `worker` is the copy of the *instrumented* tree one worker of an `--isolate`
+run owns. There is one per worker, its `source` is the run's own snapshot rather
+than the user's tree, and it is put back between mutants — which the run reports
+as a `worker-restored` note carrying how many files had to be, not as a warning:
+for the suites this feature exists for, a drift after every mutant is the
+ordinary case rather than a surprise.
+
+A `probe` is the second tree a run with `test.probing = "on"` measures: the
+original program with a report attached, instrumented from the same source the
+mutant tree was. It is put back between passes, and for the `worker` copy's
+reason — a probe pass runs a whole suite, and a suite that writes into the
+package directory it runs in would leave the next pass measuring a program
+nobody instrumented. That too is a note rather than a warning, spelled
+`probe-tree-restored`.
 
 `stable` is what decides whether the Go build cache can be reused across
 snapshots, so a run that is unexpectedly slow is one `stable: false` away from
@@ -860,9 +875,22 @@ closed, because the recording is one of the things that goes into it.
 | `detail` | the detail line that accompanies it |
 
 A note is what the run could not do, said once. None of them can change a
-verdict or an exit code. goatest spells this payload `progress` rather than
-`note`, with the same `kind` and `detail` fields, so a consumer joining the two
-streams reads go-mutants' `note` and goatest's `progress` as one kind of line.
+verdict or an exit code.
+
+goatest carries a payload spelled `progress` with the same two field names, and
+this page used to say the two were one kind of line. **They are not.** goatest's
+`progress` mixes three things: what the run could not do, which is a note;
+summaries such as how many mutation jobs there were; and actual progress, such
+as how many targets of how many have been reached. Only the first is what a note
+is. A consumer joining the two streams has to read `kind` before deciding what a
+`progress` row is, and cannot read every one of them as a note.
+
+The mistake is worth keeping in view, because the shape of it is general. The
+two field names really were the same, and a check comparing field names would
+have agreed with the sentence. What was wrong was the claim underneath — that
+the same thing flows through them — and no comparison of names can see that. A
+ledger pins the set a page enumerates against the set the code enumerates; it
+does not pin what the page says the members *mean*.
 
 `coverage-unavailable` carries the whole reason rather than its first line,
 which is the difference between a note and the console warning beside it.
@@ -959,6 +987,38 @@ A recording also depends on what the run actually did. Trace options take no
 part in cache identity, so a warm run answers from the cache — and its recording
 says so rather than describing the work the cached result stands for.
 
+## Why recording is asked for
+
+A recording cannot be taken afterwards. The account is wanted at the moment
+something went wrong, which is after the run that would have produced it, so
+`--trace` being opt-in means the runs that have an account are the ones somebody
+predicted would need one. That is the wrong way round, and it was measured
+rather than argued about.
+
+Three of the four costs are not costs. The trace options are not part of any
+identity — `internal/cache/key.go` hashes the tool, the toolchain, the
+workspace, the catalogue, the test command and a named set of environment
+variables, and nothing about recording — so a recorded run and an unrecorded one
+share a cache key and reach the same verdict. A sink that cannot write is a
+`trace-unavailable` note and never a failed run. The directory keeps the last
+ten runs and no more. And the wall clock does not separate them: two runs of
+seventy mutants took 66 s and 58 s untraced against 42 s and 42 s traced, which
+is a machine's noise and not a measurement of anything.
+
+The fourth is real, and it is not the disk. One such run writes **7.0 MiB** — 3.0
+of stream and 4.0 of preserved output — which ten of would be seventy. The cost
+is what that does to a suite: `internal/cli`'s tests drive whole runs, and
+recording every one of them takes the package from **about 7 seconds to over
+600**. A default that multiplies the test suite by two orders of magnitude is not
+a default, whatever it buys, and it buys the least in exactly the runs that pay
+the most — a test that asserts on an exit code has no use for an account of how
+it got there.
+
+So it stays opt-in, and the reason is written here rather than left as the shape
+of the flag. `GO_MUTANTS_TRACE=1` in a CI job is the thing worth doing: those
+runs are long, their failures are the ones nobody can reproduce, and a suite is
+not waiting on them.
+
 ## Joining a go-mutants recording to its consumer's
 
 go-mutants is a library as well as a command, and its embedders record their own
@@ -971,6 +1031,16 @@ in both — the argument vector, the directory it ran in, and the digest of what
 it printed — so two recordings of one execution can be matched without either
 tool knowing about the other's sequence numbers. `prepare` is identical field
 for field, so a preparation timeline reads the same wherever it is read.
+
+**Every claim on this page about what the two traces share is prose, and
+nothing checks it.** The alignment was designed and then written down, which is
+a different thing from being held: the two schemas live in two repositories, so
+no test can read both, and the sentence above about `note` and `progress` shows
+what that costs — it was wrong about the payloads while being right about their
+field names, and it stayed wrong because being right about field names is all
+anybody could have checked from here. Read the claims as intent rather than as
+a guarantee, and pin the ones a consumer depends on in a test of the consumer's
+own.
 
 A consumer driving the library has a stronger join than that and does not have
 to guess at all: `OpenOptions.Trace` puts both recordings under its own control,

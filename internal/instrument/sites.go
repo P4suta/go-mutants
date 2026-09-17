@@ -34,6 +34,9 @@ type site struct {
 	// with the type each is declared as. Empty for the other two forms, and for
 	// a declaration whose every name is the blank identifier.
 	declare []discover.DeclType
+	// siteType is the type a Form C' guard converts its selector back to,
+	// spelled as the file may write it. Empty for every other form.
+	siteType string
 	// undeclare are the splices that turn a Form D site's own bytes into plain
 	// assignments — the `:=` downgraded to `=`, the `var` keyword, the
 	// parentheses and the declared types cut out — in site-relative
@@ -196,6 +199,34 @@ func (x *siteIndex) siteFor(m mutation.Mutant, guard discover.Guard, srcPath str
 		}
 		return site{form: discover.GuardFormC, span: span}, nil
 
+	case discover.GuardFormE:
+		if !x.hasExpr(span) {
+			return site{}, x.notFound(m, srcPath, span, "no expression covers these bytes")
+		}
+		if guard.SiteType == "" {
+			// The result type is what the closure is written around, and there
+			// is none. A hint like this is discovery and this package
+			// disagreeing about the form, which is what the independent check
+			// here exists to catch.
+			return site{}, x.unsupported(m, srcPath, span,
+				"a Form E site carries no type for its closure to return")
+		}
+		return site{form: discover.GuardFormE, span: span, siteType: guard.SiteType}, nil
+
+	case discover.GuardFormCPrime:
+		if !x.hasExpr(span) {
+			return site{}, x.notFound(m, srcPath, span, "no expression covers these bytes")
+		}
+		if guard.SiteType == "" {
+			// The conversion is the whole of what this form adds, and there is
+			// nothing to convert to. A hint like this is discovery and this
+			// package disagreeing about the form, which is exactly what the
+			// independent check here exists to catch.
+			return site{}, x.unsupported(m, srcPath, span,
+				"a Form C' site carries no type to convert its selector back to")
+		}
+		return site{form: discover.GuardFormCPrime, span: span, siteType: guard.SiteType}, nil
+
 	case discover.GuardFormS:
 		stmt, ok := x.stmts[span]
 		if !ok {
@@ -206,6 +237,17 @@ func (x *siteIndex) siteFor(m mutation.Mutant, guard discover.Guard, srcPath str
 				fmt.Sprintf("a %T is not one of the statements Form S wraps", stmt))
 		}
 		return site{form: discover.GuardFormS, span: span}, nil
+
+	case discover.GuardFormF:
+		stmt, ok := x.stmts[span]
+		if !ok {
+			return site{}, x.notFound(m, srcPath, span, "no statement covers these bytes")
+		}
+		if !closurableStatement(stmt) {
+			return site{}, x.unsupported(m, srcPath, span,
+				fmt.Sprintf("a %T is not one of the statements Form F moves into a closure", stmt))
+		}
+		return site{form: discover.GuardFormF, span: span}, nil
 
 	case discover.GuardFormD:
 		stmt, ok := x.stmts[span]
@@ -243,9 +285,42 @@ func (x *siteIndex) siteFor(m mutation.Mutant, guard discover.Guard, srcPath str
 // rather than block-scoped: a `defer` inside the guard's block still runs when
 // the enclosing *function* returns, and a `go` still starts its goroutine, so
 // the block the guard adds changes nothing about when either fires.
+//
+// This list and [discover.FormSStatement] are one fact in two places, and the
+// second one is the fail-closed one: a hint naming a statement this package
+// cannot wrap has to be refused here rather than trusted. Two implementations
+// can disagree, so TestBothPhasesAgreeOnWhatFormSCanWrap drives every statement
+// kind Go has through both and requires the same answer.
 func wrappableStatement(stmt ast.Stmt) bool {
 	switch s := stmt.(type) {
 	case *ast.ExprStmt, *ast.ReturnStmt, *ast.IncDecStmt, *ast.SendStmt, *ast.DeferStmt, *ast.GoStmt:
+		return true
+	case *ast.AssignStmt:
+		return s.Tok != token.DEFINE
+	case *ast.BranchStmt:
+		// A branch binds to the nearest enclosing construct of its own kind and
+		// an `if` is not one, so the block the guard adds changes nothing about
+		// where it goes. `fallthrough` is refused for a syntactic reason rather
+		// than a semantic one: it has to be the final statement of a case
+		// clause, which a statement inside an `if` block is not.
+		return s.Tok != token.FALLTHROUGH
+	default:
+		return false
+	}
+}
+
+// closurableStatement reports whether a statement may be moved into a closure
+// that is called where it stood.
+//
+// It is [wrappableStatement]'s list minus a `return`, a `defer`, a `go` and
+// every branch statement, and the reasons are written out in
+// [discover.FormFStatement] beside the list this one has to agree with. Asking
+// again here rather than trusting the hint is the same fail-closed rule the
+// Form S check follows, and TestBothPhasesAgreeOnWhatFormFCanClose is what
+// keeps the two lists one list.
+func closurableStatement(stmt ast.Stmt) bool {
+	switch s := stmt.(type) {
+	case *ast.ExprStmt, *ast.SendStmt, *ast.IncDecStmt:
 		return true
 	case *ast.AssignStmt:
 		return s.Tok != token.DEFINE
@@ -431,31 +506,41 @@ func buildSites(
 	srcPath string,
 	mutants []mutation.Mutant,
 	hints Hints,
-) (interval.Forest[mutation.Mutant], map[mutation.Span]site, error) {
+) (interval.Forest[mutation.Mutant], map[mutation.Span]site, []discover.Completion, error) {
 	items := make([]interval.Item[mutation.Mutant], 0, len(mutants))
 	sites := make(map[mutation.Span]site, len(mutants))
+	var completions []discover.Completion
+	fail := func(err error) (
+		interval.Forest[mutation.Mutant], map[mutation.Span]site, []discover.Completion, error,
+	) {
+		return interval.Forest[mutation.Mutant]{}, nil, nil, err
+	}
 	for _, m := range mutants {
 		guard, err := hints.guardFor(m, srcPath)
 		if err != nil {
-			return interval.Forest[mutation.Mutant]{}, nil, err
+			return fail(err)
 		}
 		resolved, err := index.siteFor(m, guard, srcPath)
 		if err != nil {
-			return interval.Forest[mutation.Mutant]{}, nil, err
+			return fail(err)
 		}
 		if previous, seen := sites[resolved.span]; seen {
 			if err := agree(previous, resolved, m, srcPath); err != nil {
-				return interval.Forest[mutation.Mutant]{}, nil, err
+				return fail(err)
 			}
 		}
 		sites[resolved.span] = resolved
+		// Collected per mutant rather than per site: two mutants can share a
+		// site and reach it through guards that spell different types, and what
+		// the file needs is the union of what is written into it.
+		completions = discover.MergeCompletions(completions, guard.Imports)
 		items = append(items, interval.Item[mutation.Mutant]{Span: resolved.span, Payload: m})
 	}
 	forest, err := placeSites(srcPath, items)
 	if err != nil {
-		return interval.Forest[mutation.Mutant]{}, nil, err
+		return fail(err)
 	}
-	return forest, sites, nil
+	return forest, sites, completions, nil
 }
 
 // agree refuses two hints that name one site and disagree about what it is.

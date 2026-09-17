@@ -105,35 +105,6 @@ func TestBareInvocationPrintsHelpAndSucceeds(t *testing.T) {
 	}
 }
 
-func TestHelpCarriesTheExitCodeTable(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"run", "--help"}} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			code, stdout, _ := execute(t, args...)
-			if code != int(mutation.ExitOK) {
-				t.Errorf("exit = %d, want 0", code)
-			}
-			for _, needle := range []string{"Exit codes:", "  0 ", "  1 ", "  2 ", "  130 ", "  143 "} {
-				if !strings.Contains(stdout, needle) {
-					t.Errorf("help does not document %q", needle)
-				}
-			}
-		})
-	}
-}
-
-func TestHelpDoesNotDependOnTheMachine(t *testing.T) {
-	// The worker default is min(NumCPU, 8), so printing it as pflag's default
-	// would make `run --help` say a different number on a laptop and on a CI
-	// runner. Help output has to be diffable between two machines.
-	_, stdout, _ := execute(t, "run", "--help")
-	if strings.Contains(stdout, "(default ") {
-		t.Errorf("run --help prints a pflag default, which may vary by machine:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "min(CPUs, 8)") {
-		t.Errorf("run --help does not describe the worker default:\n%s", stdout)
-	}
-}
-
 func TestOutOfRangeJobsIsRefusedByTheConfiguration(t *testing.T) {
 	t.Chdir(t.TempDir())
 	code, _, stderr := execute(t, "run", "--jobs", "0")
@@ -325,7 +296,10 @@ func TestOverlayCarriesOnlyChangedFlags(t *testing.T) {
 		}
 		return nil
 	}
-	cmd.SetArgs(nil)
+	// Explicitly empty rather than nil: cobra reads the process's own argv when
+	// SetArgs has never been called, and nil is indistinguishable from that.
+	// Under `go test -update` that argv holds a flag no go-mutants command has.
+	cmd.SetArgs([]string{})
 	cmd.SetOut(&bytes.Buffer{})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -510,5 +484,31 @@ func TestInterpretDistinguishesTheSignals(t *testing.T) {
 	other := &engine.Error{Code: engine.CodeBaselineTestFailed, Message: "failed"}
 	if got := ExitCode(interpret(other, syscall.SIGTERM)); got != mutation.ExitInfrastructure {
 		t.Errorf("an ordinary failure with a signal recorded: exit = %d, want 2", got)
+	}
+}
+
+// TestNoArgumentsMeansNoArgumentsRatherThanTheProcessesOwn pins the one place
+// an embedded command line can pick up somebody else's.
+//
+// cobra reads os.Args[1:] when SetArgs has never been called, and a nil slice
+// is indistinguishable from not calling it. So `ExecuteContext(ctx, nil, …)`
+// used to run against whatever the surrounding program was invoked with — and
+// for a test binary that is its own flags, which is how `mise run
+// golden-update` came to fail with `unknown shorthand flag: 'u' in -update`
+// from a command nobody had passed a flag to.
+//
+// The flag is chosen to be one no go-mutants command has and one `go test`
+// does, so the test fails in exactly the way the defect did.
+func TestNoArgumentsMeansNoArgumentsRatherThanTheProcessesOwn(t *testing.T) {
+	previous := os.Args
+	t.Cleanup(func() { os.Args = previous })
+	os.Args = []string{"go-mutants", "-update", "--this-flag-does-not-exist"}
+
+	var out, errOut bytes.Buffer
+	if code := ExecuteContext(t.Context(), nil, &out, &errOut); code != int(mutation.ExitOK) {
+		t.Errorf("exit = %d, want 0; stderr = %q", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Usage:") {
+		t.Errorf("a bare invocation printed %q, want the help", out.String())
 	}
 }

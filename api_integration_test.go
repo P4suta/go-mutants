@@ -283,7 +283,10 @@ func requireTargetIsGone(t *testing.T, pidFile, what string) {
 // Five seconds rather than a tighter number for the same reason: what this
 // rules out is a target that slept when nothing asked it to, and any bound
 // comfortably between a process start and the session's own ten-second default
-// budget proves the gate held. A two-second bound would additionally assert
+// budget proves the gate held. The *first* start of a freshly linked binary is
+// not such a process start — macOS hashes the whole image, which has measured
+// eight and a half seconds on a loaded machine — so the test pays that once in
+// a throwaway execution before it starts the clock. A two-second bound would additionally assert
 // that the runner was not busy, which is not a claim about go-mutants. It is
 // deliberately unmoved by the minute the gated sleep now lasts: an ungated
 // target that slept would be cut off at that default long before the minute
@@ -483,14 +486,41 @@ func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 		t.Fatalf("freshly prepared snapshot already changed: %+v", changes)
 	}
 
+	// The binary is run once before anything is timed, and the reason is the
+	// whole of why the two proofs below were flaky.
+	//
+	// Both of them need the target to reach its own `init` -- that is where it
+	// records its pid, and without a pid the cleanup proof is vacuous rather
+	// than failing. What stands between `exec` and `init` is the loader, and on
+	// the two platforms that inspect a freshly written executable the first time
+	// anything runs it -- macOS hashing the whole image for its signature,
+	// Windows scanning it -- that cost is a fact about the machine and its load
+	// rather than about this code. It was measured here at over two seconds
+	// under a full parallel suite, which is how a budget of two seconds came to
+	// decide whether a proof about process cleanup ran at all.
+	//
+	// So the cost is paid outside the window: `-test.run=^$` builds nothing,
+	// runs no test, and exits at once, leaving the image warm. What the budget
+	// below then has to cover is the target's own first few instructions, which
+	// is not a number that varies with the machine. This is the same discipline
+	// internal/testkit's step alarm states at length -- a bound may end a hang
+	// and must never decide whether something was fast enough.
+	if _, warmErr := session.Exec(t.Context(), gomutants.ExecRequest{
+		Mutant:  untested.ID,
+		Package: ".",
+		Args:    []string{"-test.run=^$"},
+		Timeout: time.Minute,
+	}); warmErr != nil {
+		t.Fatalf("warming the prepared test binary: %v", warmErr)
+	}
+
 	// Each blocking execution gets a pid file of its own, so that the second
 	// proof cannot be satisfied by what the first target wrote.
 	//
 	// Two seconds rather than the quarter of one this used to allow, because the
-	// target now has something to do before it is cut off: a freshly written test
-	// binary on a Windows runner is scanned before it runs, and a budget that
-	// expired during the loader would leave the pid unrecorded and the proof
-	// vacuous. It is still two orders below the minute the target sleeps for.
+	// target still has something to do before it is cut off, and the warm-up
+	// above is what keeps that something from being the loader. It is two orders
+	// below the minute the target sleeps for.
 	const blockingBudget = 2 * time.Second
 	timeoutPIDFile := filepath.Join(t.TempDir(), "timed-out.pid")
 	cancelPIDFile := filepath.Join(t.TempDir(), "cancelled.pid")
@@ -751,10 +781,17 @@ func TestSessionExecHonoursOutputLimit(t *testing.T) {
 	// The two targets together: one prints far past the budget and the other is
 	// what turns the suite red, so the capture that comes back is a *deciding*
 	// binary's and not merely a chatty one's.
+	//
+	// And both of them have to run. An execution stops at the first test that
+	// fails, and the one that fails here is registered first -- clamp_test.go
+	// sorts before session_test.go, which is the order a test binary registers
+	// its tests in -- so the chatty one would never start. Turning that off is
+	// what a caller does when it wants the whole binary anyway, and the flag
+	// lands after the engine's own, which is the documented way to say so.
 	result, err := session.Exec(t.Context(), gomutants.ExecRequest{
 		Mutant:      clamp.ID,
 		Package:     "fixture.example/killable",
-		Args:        []string{"-test.run=^TestPrintsALot$|^TestClamp$"},
+		Args:        []string{"-test.run=^TestPrintsALot$|^TestClamp$", "-test.failfast=false"},
 		OutputLimit: limit,
 	})
 	if err != nil {
@@ -850,6 +887,26 @@ func TestSessionBlocksOnlyWhenAsked(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = session.Close() })
 	mutant := mutantkit.APIMutantAt(t, session.Catalog(), "untested.go", "neq-to-eq")
+
+	// One throwaway execution first, selecting no test at all, so that the
+	// timed one below is not also paying for the first exec of a freshly
+	// linked binary.
+	//
+	// It is not a precaution about a slow machine. A test binary this session
+	// compiled has never been run, and on macOS the kernel hashes the whole
+	// image the first time one is — tens of megabytes of it — which measured
+	// eight and a half seconds here against a bound of five. What this test is
+	// about is whether a sleep happened, and a bound that a process start can
+	// exhaust cannot tell the two apart. The warm-up asserts nothing, on
+	// purpose: what it is for is the clock, and any claim about it would be a
+	// claim about the machine.
+	if _, warmErr := session.Exec(t.Context(), gomutants.ExecRequest{
+		Mutant:  mutant.ID,
+		Package: ".",
+		Args:    []string{"-test.run=^$"},
+	}); warmErr != nil {
+		t.Fatalf("warming the fixture's test binary: %v", warmErr)
+	}
 
 	started := time.Now()
 	quiet, err := session.Exec(t.Context(), gomutants.ExecRequest{
@@ -1148,14 +1205,21 @@ func copyFixtureTree(name, destination string) error {
 // it.
 const probeableModule = "fixture.example/probeable"
 
-// probeableRules names the fixture's three mutants by the rule that produced
-// each, which is how every test below picks one out of the catalogue: no two
+// probeableRules names the fixture's mutants by the rule that produced each,
+// which is how every test below picks one out of the catalogue: no two
 // functions in the fixture share an operator, so a rule names exactly one
 // mutant whatever order the catalogue settles on.
+//
+// doubledRule is the unprobed specimen. Its statement's operands are calls, so
+// no probe form may evaluate them a second time or skip one on the mutant's
+// behalf -- which is why it is the right mutant to state the "absence carries
+// no information" invariant against, and why it stays the right one as forms
+// are added.
 const (
-	widthRule = "return-zero-numeric"
-	labelRule = "return-empty-string"
-	readyRule = "true-to-false"
+	widthRule   = "return-zero-numeric"
+	labelRule   = "return-empty-string"
+	readyRule   = "true-to-false"
+	doubledRule = "add-to-sub"
 )
 
 // A preparedFixture is one workspace and session prepared over
@@ -1570,21 +1634,28 @@ func probeOf(t *testing.T, session *gomutants.Session, request gomutants.ProbeRe
 // TestPrepareWithProbeMarksProbedMutants pins which mutants the probe tree
 // speaks for.
 //
-// The distinction is the whole safety of the layer. A return-value mutant has a
-// probe form and its site was compiled into the probe tree, so its absence from
-// an infection log is a fact. The boolean literal has no form at all: the file
-// holding it comes out of the probe pass byte for byte, so it can never be
-// recorded, and a consumer reading its absence as "not infected" would skip the
-// test that kills it. Probed is what tells the two apart, and a validation that
-// merely accepted every mutant would say nothing about it.
+// The distinction is the whole safety of the layer. A mutant with a form had
+// its site compiled into the probe tree, so its absence from an infection log
+// is a fact. `add-to-sub` on a statement whose operands are calls has no form
+// and never will: a probe stands in for a mutant by evaluating what the
+// original evaluates, and an operand with an effect is one no rewrite may
+// evaluate twice or skip on the mutant's behalf. The file holding it comes out
+// of the probe pass with nothing written for it, so it can never be recorded,
+// and a consumer reading its absence as "not infected" would skip the test that
+// kills it. Probed is what tells the two apart, and a validation that merely
+// accepted every mutant would say nothing about it.
+//
+// The rule rather than the family decides, which is what the boolean form
+// changed: `true-to-false` is not a return-value rule and is measured all the
+// same, where it stands.
 func TestPrepareWithProbeMarksProbedMutants(t *testing.T) {
 	catalog := probeable(t).catalog
-	if len(catalog.Mutants) != 3 {
-		t.Fatalf("the fixture catalogues %d mutants, want 3: %+v", len(catalog.Mutants), catalog.Mutants)
+	if len(catalog.Mutants) != 4 {
+		t.Fatalf("the fixture catalogues %d mutants, want 4: %+v", len(catalog.Mutants), catalog.Mutants)
 	}
 	probed := 0
 	for _, mutant := range catalog.Mutants {
-		want := mutant.Family == "return-replacement"
+		want := mutant.Rule != doubledRule
 		if mutant.Probed != want {
 			t.Errorf("mutant %s (%s/%s) Probed = %v, want %v",
 				mutant.DisplayID, mutant.Family, mutant.Rule, mutant.Probed, want)
@@ -1593,8 +1664,8 @@ func TestPrepareWithProbeMarksProbedMutants(t *testing.T) {
 			probed++
 		}
 	}
-	if probed != 2 {
-		t.Errorf("%d mutants are probed, want the fixture's 2 return-value ones", probed)
+	if probed != 3 {
+		t.Errorf("%d mutants are probed, want the fixture's 3 with a form", probed)
 	}
 }
 
@@ -1693,16 +1764,22 @@ func TestProbeReportsTheMutantsATestInfected(t *testing.T) {
 // meaningful, and the fallback would silently stop being conservative.
 func TestProbeNeverReportsAnUnprobedMutant(t *testing.T) {
 	prepared := probeable(t)
-	ready := mutantkit.APIByRule(t, prepared.catalog, readyRule)
-	if ready.Probed {
-		t.Fatalf("the fixture's boolean literal %s is probed; it is the specimen for the unprobed case",
+	unprobed := mutantkit.APIByRule(t, prepared.catalog, doubledRule)
+	if unprobed.Probed {
+		t.Fatalf("the fixture's effectful statement %s is probed; it is the specimen for the unprobed case",
+			unprobed.DisplayID)
+	}
+	// And the literal beside it is probed, so that "unprobed" here is a fact
+	// about this mutant rather than about a build in which nothing is probed.
+	if ready := mutantkit.APIByRule(t, prepared.catalog, readyRule); !ready.Probed {
+		t.Fatalf("the fixture's boolean literal %s is not probed either, so the contrast is gone",
 			ready.DisplayID)
 	}
 
 	whole := probeOf(t, prepared.session, gomutants.ProbeRequest{Package: probeableModule})
-	if slices.Contains(whole.Infected, ready.Index) {
+	if slices.Contains(whole.Infected, unprobed.Index) {
 		t.Errorf("a whole-package probe reported %v, which holds the unprobed mutant %d",
-			whole.Infected, ready.Index)
+			whole.Infected, unprobed.Index)
 	}
 	byIndex := make(map[uint32]gomutants.Mutant, len(prepared.catalog.Mutants))
 	for _, mutant := range prepared.catalog.Mutants {
@@ -1732,7 +1809,7 @@ func TestProbeNeverReportsAnUnprobedMutant(t *testing.T) {
 // would then never have found.
 func TestEveryKillIsPrecededByAnInfection(t *testing.T) {
 	prepared := probeable(t)
-	tests := []string{"TestWidth", "TestLabel", "TestReady", "TestFlagged"}
+	tests := []string{"TestWidth", "TestLabel", "TestReady", "TestDoubled", "TestFlagged"}
 
 	probedKills := 0
 	for _, name := range tests {

@@ -150,13 +150,12 @@ func selfHelperProgram(args []string) int {
 }
 
 // TestHelperArgvTargetProcess is not a test: it is what
-// [TestHelperArgvReexecutesOnlyTheNamedTest] re-executes. It returns silently
-// when it was not asked for, so an ordinary run neither runs it nor reports it
-// as skipped.
+// [TestHelperArgvReexecutesOnlyTheNamedTest] re-executes. It skips when it was
+// not asked for: an ordinary run reports it as skipped rather than counting it
+// among the tests that passed, because a bare return is a pass and a pass is a
+// claim about work this process did not do.
 func TestHelperArgvTargetProcess(t *testing.T) {
-	if !HelperEnabled(argvTargetEnv) {
-		return
-	}
+	SkipUnlessHelper(t, argvTargetEnv)
 	t.Log("the named test ran")
 	_, _ = fmt.Fprintln(os.Stdout, "target-process-marker")
 }
@@ -165,9 +164,7 @@ func TestHelperArgvTargetProcess(t *testing.T) {
 // It exists only so that "only the named test" is an assertion rather than a
 // hope.
 func TestHelperArgvNeighbourProcess(t *testing.T) {
-	if !HelperEnabled(argvTargetEnv) {
-		return
-	}
+	SkipUnlessHelper(t, argvTargetEnv)
 	_, _ = fmt.Fprintln(os.Stdout, "neighbour-process-marker")
 }
 
@@ -178,9 +175,7 @@ func TestHelperArgvNeighbourProcess(t *testing.T) {
 // see it any other way, because the directory is gone by the time the child has
 // exited — and then leaves the way [argvTargetExitEnv] told it to.
 func TestHelperCoverRootTargetProcess(t *testing.T) {
-	if !HelperEnabled(argvTargetEnv) {
-		return
-	}
+	SkipUnlessHelper(t, argvTargetEnv)
 	_, _ = fmt.Fprintln(os.Stdout, coverRootMarker+HelperCoverRoot())
 	status := os.Getenv(argvTargetExitEnv)
 	if status == "" {
@@ -206,9 +201,7 @@ func TestHelperCoverRootTargetProcess(t *testing.T) {
 // teardown — so its exit hook fires, and what the hook does depends on whether
 // this suite gave it somewhere private to write.
 func TestHelperUnderTheGocoverdirFlagProcess(t *testing.T) {
-	if !HelperEnabled(gocoverdirProbeEnv) {
-		return
-	}
+	SkipUnlessHelper(t, gocoverdirProbeEnv)
 	_, _ = fmt.Fprintln(os.Stdout, coverRootMarker+HelperCoverRoot())
 
 	env := withEntries(Compose(t, t.TempDir()), selfHelperEnv+"=1")

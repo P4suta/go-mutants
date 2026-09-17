@@ -25,6 +25,28 @@ const GoflagsKey = "GOFLAGS"
 // `go build`, `go list` and `go tool`.
 const VetOff = "-vet=off"
 
+// CountOnce is the GOFLAGS entry that stops `go test` answering out of its own
+// result cache.
+//
+// It is here for one caller and one reason: a baseline run exists to be timed,
+// and a run the toolchain answered from its cache timed a lookup. `go test`
+// keeps a passing result and reprints it, so a baseline of three runs in a
+// fresh snapshot is one measurement and two lookups -- the first misses,
+// because the copied files carry timestamps the cache has never seen, and the
+// rest hit -- which leaves the per-mutant budget sized on the one run that
+// compiled. A mutant run compiles nothing.
+//
+// It is merged into GOFLAGS rather than written into the command, and the
+// difference is not cosmetic. internal/engine's scope reader recognises a test
+// command exactly when it is `go test` and package patterns and nothing else,
+// because a flag can change what a run means; a `-count=1` in `test.command`
+// would therefore switch off coverage narrowing and the outcome cache to buy a
+// budget. Through GOFLAGS the command is still the command, and the go command
+// ignores a GOFLAGS entry the current subcommand does not define -- so an
+// environment carrying this reaches `go test` and is inert for `go build`,
+// `go list` and `go tool`, exactly as [VetOff] is.
+const CountOnce = "-count=1"
+
 // AppendGoflags merges flag into the GOFLAGS entry of a child environment given
 // in "KEY=VALUE" form, and returns the result as a new slice.
 //

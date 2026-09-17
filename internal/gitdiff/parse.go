@@ -4,6 +4,7 @@
 package gitdiff
 
 import (
+	"cmp"
 	"slices"
 	"strconv"
 	"strings"
@@ -101,12 +102,17 @@ func targetPath(line string) (string, error) {
 // are new" and "something used to be here".
 func hunkLines(line string) (first, count int, err error) {
 	rest := strings.TrimPrefix(line, hunkMarker)
-	end := strings.Index(rest, " @@")
-	if end < 0 {
+	// Cut rather than Index and a slice: `@@  @@` puts the closing marker at
+	// offset zero, and `end < 0` and `end <= 0` are then the same refusal
+	// reached one line apart -- the empty field list below has nothing with a
+	// `+` in it either. One boundary that cannot be written two ways is worth
+	// more here than the offset, which nothing after this needs.
+	ranges, _, closed := strings.Cut(rest, " @@")
+	if !closed {
 		return 0, 0, malformedHunk(line)
 	}
 	var spec string
-	for _, field := range strings.Fields(rest[:end]) {
+	for _, field := range strings.Fields(ranges) {
 		if strings.HasPrefix(field, "+") {
 			spec = strings.TrimPrefix(field, "+")
 			break
@@ -147,9 +153,10 @@ func malformedHunk(line string) error {
 // relative maps a repository-relative path onto a workspace-relative one, and
 // returns "" for anything outside the workspace.
 func relative(path, prefix string) string {
-	if path == "" || prefix == "" {
-		return path
-	}
+	// An empty prefix needs no special case: CutPrefix always cuts it, and
+	// returns the path unchanged. Saying so twice would be two rules for one
+	// answer, and the second of them could not be told from its opposite by
+	// any path -- which is how this one was found.
 	rest, inside := strings.CutPrefix(path, prefix)
 	if !inside || rest == "" {
 		return ""
@@ -176,11 +183,15 @@ func relative(path, prefix string) string {
 // selecting the same mutants. The argument is sorted in place and the result
 // aliases its storage, so a caller that still needs the input passes a copy.
 func Merge(ranges []Range) []Range {
+	// cmp.Compare rather than a subtraction, in the one function whose own
+	// comment is about a Last of math.MaxInt: a difference of two ints is not
+	// an ordering when either end of the range is that number. It is also the
+	// only ordering the merge below cannot observe -- two ranges that share a
+	// First are joined by taking the larger Last whichever arrives first --
+	// so a tie-break written as arithmetic would be a mutant no input could
+	// decide.
 	slices.SortFunc(ranges, func(x, y Range) int {
-		if c := x.First - y.First; c != 0 {
-			return c
-		}
-		return x.Last - y.Last
+		return cmp.Or(cmp.Compare(x.First, y.First), cmp.Compare(x.Last, y.Last))
 	})
 	out := ranges[:0]
 	for _, r := range ranges {
@@ -233,9 +244,15 @@ func unquote(path string) string {
 			// A three-digit octal escape, which is how git writes a byte it
 			// will not print. Anything shorter is not one, and is written back
 			// as it was found rather than guessed at.
-			if i+2 < len(body) && isOctal(body[i+1]) && isOctal(body[i+2]) {
-				value, err := strconv.ParseUint(body[i:i+3], 8, 8)
-				if err == nil {
+			//
+			// ParseUint over exactly those three bytes is the whole test as
+			// well as the decoding: a digit that is not octal and a value past
+			// 255 are the same refusal and have the same answer, so a
+			// digits-are-octal check in front of it would be a second spelling
+			// of a rule this call already applies -- and one whose halves no
+			// path could tell apart.
+			if i+2 < len(body) {
+				if value, err := strconv.ParseUint(body[i:i+3], 8, 8); err == nil {
 					b.WriteByte(byte(value))
 					i += 2
 					continue
@@ -250,6 +267,3 @@ func unquote(path string) string {
 	}
 	return b.String()
 }
-
-// isOctal reports whether c is an octal digit.
-func isOctal(c byte) bool { return c >= '0' && c <= '7' }

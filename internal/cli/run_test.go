@@ -21,6 +21,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/gitdiff"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
+	"github.com/P4suta/go-mutants/internal/testkit"
 	"github.com/P4suta/go-mutants/internal/tui"
 )
 
@@ -33,6 +34,13 @@ import (
 func runWith(t *testing.T, args ...string) error {
 	t.Helper()
 	cmd := newRunCommand()
+	if args == nil {
+		// Explicitly empty rather than nil: cobra reads the process's own argv
+		// when SetArgs has never been called, and nil is indistinguishable
+		// from that. Under `go test -update` that argv holds a flag no
+		// go-mutants command has.
+		args = []string{}
+	}
 	cmd.SetArgs(args)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
@@ -183,11 +191,22 @@ const (
 func gitCommand(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	argv := append([]string{"-C", dir}, args...)
-	out, err := exec.Command("git", argv...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	command := exec.Command("git", argv...)
+	var stdout, stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		t.Fatalf("git %s: %v\n%s%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return strings.TrimSpace(string(out))
+	// Standard output alone, because the caller uses the answer: `git rev-parse
+	// --abbrev-ref HEAD` names a branch, and that name is passed straight back
+	// to `git branch --set-upstream-to=`. Git writes advice to standard error
+	// as a matter of course -- "hint: Using 'master' as the name for the initial
+	// branch" is the one every fresh `init` prints -- and a wrapper on somebody's
+	// PATH may write more, so folding the two streams together turns any of it
+	// into part of the value. The failure message still carries both, because a
+	// failure is when stderr is the interesting half.
+	return strings.TrimSpace(stdout.String())
 }
 
 // neutralGitEnvironment points git at configuration files that do not exist and
@@ -226,9 +245,10 @@ func neutralGitEnvironment(t *testing.T) {
 func TestBareChangedAsksForTheUpstreamAndSaysSoWhenThereIsNone(t *testing.T) {
 	// No t.Parallel and no parallel subtests: t.Chdir refuses to run in one,
 	// and the working directory is where the command finds its workspace.
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skipf("git is not on PATH, so --changed cannot be exercised here: %v", err)
-	}
+	// GitBinary rather than a bare lookup: a developer without git skips, and a
+	// runner without it fails, which is what GO_MUTANTS_TEST_REQUIRE_TOOLS is
+	// for and what a lookup cannot be told.
+	_ = testkit.GitBinary(t)
 	// Both spellings of the same request, driven through one body: the bare
 	// flag, and the notation a user writes out longhand because the help says
 	// the value takes an equals sign.
@@ -288,6 +308,13 @@ func overlayFrom(t *testing.T, args []string) config.Overlay {
 		o.report, _ = flags.GetString("report")
 		layer, fail = runOverlay(c, o)
 		return fail
+	}
+	if args == nil {
+		// Explicitly empty rather than nil: cobra reads the process's own argv
+		// when SetArgs has never been called, and nil is indistinguishable
+		// from that. Under `go test -update` that argv holds a flag no
+		// go-mutants command has.
+		args = []string{}
 	}
 	cmd.SetArgs(args)
 	cmd.SetOut(&bytes.Buffer{})

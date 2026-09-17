@@ -121,50 +121,64 @@ func TestDevelopmentDocNamesEveryMiseTestTask(t *testing.T) {
 	}
 }
 
-// TestEveryDevelopmentDocCommandIsAMiseTaskOrAGoCommand reads the page's own
+// commandPages are the pages whose `console` blocks are read back.
+//
+// A page that tells a contributor what to type is a page whose commands have to
+// exist. There are three, and they are named rather than globbed so that adding
+// one is a decision: the development guide, the CI page, and the working
+// protocol at the repository root.
+var commandPages = []string{developmentDoc, "docs/ci.md", "CLAUDE.md"}
+
+// documentedPrograms are the programs a reader of those pages is told to run.
+//
+// `go-mutants` is the tool itself, reached through `go run ./cmd/go-mutants` or
+// from a build; `git` is how a contributor inspects what a run left and what CI
+// refuses to let them commit; `du` reads the size of a directory the harness
+// owns.
+var documentedPrograms = []string{"mise", "go", "go-mutants", "git", "du"}
+
+// TestEveryDocumentedCommandIsAMiseTaskOrAGoCommand reads the pages' own
 // command blocks back.
 //
 // A documented command that does not exist is worse than no command: it costs
 // the reader the time to type it, the time to read the error, and the trust
 // they had in the rest of the page. Every `mise run` in a `console` block has
-// to name a real task, and every other command has to be one of the four
-// programs this repository documents — so a task renamed in mise.toml, or a
-// paste from somebody's shell history, fails here.
-func TestEveryDevelopmentDocCommandIsAMiseTaskOrAGoCommand(t *testing.T) {
+// to name a real task, and every other command has to be one of the programs
+// this repository documents — so a task renamed in mise.toml, or a paste from
+// somebody's shell history, fails here.
+func TestEveryDocumentedCommandIsAMiseTaskOrAGoCommand(t *testing.T) {
 	t.Parallel()
 
 	root := Root(t)
-	page := readDoc(t, filepath.Join(root, developmentDoc))
 	tasks := miseTasks(t, root)
 
-	commands := consoleCommands(page)
-	if len(commands) == 0 {
-		t.Fatalf("%s holds no ```console block, so this test is pinning nothing", developmentDoc)
-	}
-	// The programs a developer is told to run here. `go-mutants` is the tool
-	// itself, reached through `go run ./cmd/go-mutants` or from a build; `git`
-	// is how a contributor inspects what a run left; `du` reads the size of a
-	// directory the harness owns.
-	programs := []string{"mise", "go", "go-mutants", "git", "du"}
-	for _, command := range commands {
-		fields := strings.Fields(command)
-		program := fields[0]
-		if !slices.Contains(programs, program) {
-			t.Errorf("%s documents a command starting with %q, which is none of %v:\n\t%s",
-				developmentDoc, program, programs, command)
+	for _, doc := range commandPages {
+		page := readDoc(t, filepath.Join(root, filepath.FromSlash(doc)))
+		commands := consoleCommands(page)
+		if len(commands) == 0 {
+			t.Errorf("%s holds no ```console block, so it is pinning nothing", doc)
 			continue
 		}
-		if program != "mise" {
-			continue
-		}
-		if len(fields) < 3 || fields[1] != "run" {
-			t.Errorf("%s documents %q; the only mise invocation this repository uses is `mise run <task>`",
-				developmentDoc, command)
-			continue
-		}
-		if !slices.Contains(tasks, fields[2]) {
-			t.Errorf("%s documents `mise run %s`, which is not a task in %s: %v",
-				developmentDoc, fields[2], miseFile, tasks)
+		for _, command := range commands {
+			fields := strings.Fields(command)
+			program := fields[0]
+			if !slices.Contains(documentedPrograms, program) {
+				t.Errorf("%s documents a command starting with %q, which is none of %v:\n\t%s",
+					doc, program, documentedPrograms, command)
+				continue
+			}
+			if program != "mise" {
+				continue
+			}
+			if len(fields) < 3 || fields[1] != "run" {
+				t.Errorf("%s documents %q; the only mise invocation this repository uses is `mise run <task>`",
+					doc, command)
+				continue
+			}
+			if !slices.Contains(tasks, fields[2]) {
+				t.Errorf("%s documents `mise run %s`, which is not a task in %s: %v",
+					doc, fields[2], miseFile, tasks)
+			}
 		}
 	}
 }
@@ -244,16 +258,35 @@ func harnessEnvironmentVariables(t *testing.T, root string) []string {
 	return slices.Compact(names)
 }
 
-// constantsIn is every exported string constant in one file whose value names a
-// variable in one of the harness's namespaces.
-func constantsIn(t *testing.T, path string) []string {
+// A sourceConstant is one exported string constant as the source declares it:
+// its name, its value, the documentation above it, and the file it is in.
+//
+// The doc comment is the part that makes this worth having rather than a list
+// of values. A ledger over environment variables needs only the value; a ledger
+// over diagnostic codes needs the sentence beside each one, and that sentence
+// exists nowhere but the source -- it cannot be reached from a running program.
+type sourceConstant struct {
+	Name  string
+	Value string
+	Doc   string
+	File  string
+}
+
+// exportedStringConstants is every exported string constant one file declares,
+// with the documentation a reader would find above it.
+//
+// Parsed with parser.ParseComments so that Doc is populated, and the comment
+// taken from the ValueSpec when it has one and from the enclosing GenDecl
+// otherwise -- which is how a single-spec `const ( // doc \n Name = "v" )` and a
+// block of documented specs both read the way a reader reads them.
+func exportedStringConstants(t *testing.T, path string) []sourceConstant {
 	t.Helper()
 
-	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parsing %s: %v", path, err)
 	}
-	var names []string
+	var found []sourceConstant
 	for _, declaration := range file.Decls {
 		general, ok := declaration.(*ast.GenDecl)
 		if !ok || general.Tok != token.CONST {
@@ -263,6 +296,10 @@ func constantsIn(t *testing.T, path string) []string {
 			value, ok := spec.(*ast.ValueSpec)
 			if !ok {
 				continue
+			}
+			doc := value.Doc
+			if doc == nil && len(general.Specs) == 1 {
+				doc = general.Doc
 			}
 			for index, name := range value.Names {
 				if !name.IsExported() || index >= len(value.Values) {
@@ -276,10 +313,27 @@ func constantsIn(t *testing.T, path string) []string {
 				if err != nil {
 					continue
 				}
-				if hasPrefixIn(unquoted, harnessEnvPrefixes) {
-					names = append(names, unquoted)
-				}
+				found = append(found, sourceConstant{
+					Name:  name.Name,
+					Value: unquoted,
+					Doc:   doc.Text(),
+					File:  path,
+				})
 			}
+		}
+	}
+	return found
+}
+
+// constantsIn is every exported string constant in one file whose value names a
+// variable in one of the harness's namespaces.
+func constantsIn(t *testing.T, path string) []string {
+	t.Helper()
+
+	var names []string
+	for _, constant := range exportedStringConstants(t, path) {
+		if hasPrefixIn(constant.Value, harnessEnvPrefixes) {
+			names = append(names, constant.Value)
 		}
 	}
 	return names
@@ -407,4 +461,58 @@ func readDoc(t *testing.T, path string) string {
 		t.Fatalf("reading %s: %v", path, err)
 	}
 	return string(data)
+}
+
+// claudeDoc is the working protocol at the repository root.
+const claudeDoc = "CLAUDE.md"
+
+// ledgerHeading opens its table of which test pins which page.
+const ledgerHeading = "## The documentation ledger"
+
+// TestTheDocumentationLedgerNamesFilesThatExist keeps the index of ledgers from
+// becoming one more thing to go stale.
+//
+// The table in CLAUDE.md is what makes the discipline transmissible: it is
+// where somebody learns that a page which enumerates something gets a test in
+// the same change. A table naming a test file that has been renamed teaches the
+// opposite, and does it to the reader most likely to believe it.
+//
+// The check is that every file it names is there -- both columns, the pages and
+// the tests. What it cannot check is the other direction, because "this test
+// pins a page" is not a property a scan can see; that half is what the rule in
+// the paragraph under the table is for.
+func TestTheDocumentationLedgerNamesFilesThatExist(t *testing.T) {
+	t.Parallel()
+
+	root := Root(t)
+	page := readDoc(t, filepath.Join(root, claudeDoc))
+	start := strings.Index(page, ledgerHeading)
+	if start < 0 {
+		t.Fatalf("%s has no %q section", claudeDoc, ledgerHeading)
+	}
+	section := page[start:]
+	if end := strings.Index(section[len(ledgerHeading):], "\n## "); end >= 0 {
+		section = section[:len(ledgerHeading)+end]
+	}
+
+	named := 0
+	for _, line := range strings.Split(section, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "|") {
+			continue
+		}
+		for _, token := range backtickedTokens(trimmed) {
+			if !strings.HasSuffix(token, ".go") && !strings.HasSuffix(token, ".md") &&
+				!strings.HasSuffix(token, ".toml") {
+				continue
+			}
+			named++
+			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(token))); err != nil {
+				t.Errorf("%s's ledger names %s, which is not there: %v", claudeDoc, token, err)
+			}
+		}
+	}
+	if named < 20 {
+		t.Fatalf("the ledger names %d files, which is too few to be the table; the parser has stopped seeing it", named)
+	}
 }

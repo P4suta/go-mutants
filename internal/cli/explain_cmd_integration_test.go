@@ -18,6 +18,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/console"
 	"github.com/P4suta/go-mutants/internal/report"
+	"github.com/P4suta/go-mutants/internal/schemas"
 	"github.com/P4suta/go-mutants/trace"
 )
 
@@ -343,5 +345,188 @@ func TestExplainAPositionWithNoStoredRun(t *testing.T) {
 	}
 	if strings.Contains(account, "run 2026") {
 		t.Errorf("an account with no run behind it claims one:\n%s", account)
+	}
+}
+
+// explainDocumentOf drives `explain --json` in process, fails unless it exited
+// 0 and wrote a document its own schema accepts, and decodes it.
+func explainDocumentOf(t *testing.T, args ...string) map[string]any {
+	t.Helper()
+	stdout := explainOutput(t, append([]string{"--json"}, args...)...)
+	if err := schemas.Validate(schemas.ExplainV1, []byte(stdout)); err != nil {
+		t.Fatalf("`go-mutants explain --json %s` wrote a document %s rejects: %v\n%s",
+			strings.Join(args, " "), schemas.ExplainV1, err, stdout)
+	}
+	var document map[string]any
+	if err := json.Unmarshal([]byte(stdout), &document); err != nil {
+		t.Fatalf("decoding the document: %v\n%s", err, stdout)
+	}
+	return document
+}
+
+// reproduceOf lifts one field out of a document's reproduce block.
+func reproduceOf(t *testing.T, document map[string]any, field string) any {
+	t.Helper()
+	reproduce, ok := document["reproduce"].(map[string]any)
+	if !ok {
+		t.Fatalf("the document holds no reproduce block: %v", document)
+	}
+	value, held := reproduce[field]
+	if !held {
+		t.Fatalf("the reproduce block holds no %q: %v", field, reproduce)
+	}
+	return value
+}
+
+// TestExplainJSONReproducesTheKillingCommand is the same promise as
+// [TestExplainAfterATracedRunOfKillableReproducesTheKillingCommand], made of
+// the document rather than of the prose, and it is the reason the flag exists.
+//
+// A pasteable line is composed here and written down in neither source, so
+// there is nothing to compare it with but the machine: the only check on a
+// claim like "paste this and see the mutant caught" is to paste it. The
+// document is run twice over, and the two halves are the two things it is for.
+// `reproduce.argv` and `reproduce.dir` are the command as *data*, which the
+// prose form makes a reader recover by parsing a quoted line — that is the
+// whole reason a program would want this document — so they are executed
+// directly. `reproduce.command` is the same command rendered for a shell, and
+// it is pasted into one.
+func TestExplainJSONReproducesTheKillingCommand(t *testing.T) {
+	root, rep := explainAfterARun(t, "--keep-temp")
+	killed := mutantWith(t, rep, report.OutcomeKilled, false)
+
+	document := explainDocumentOf(t, killed.DisplayID[:8])
+	if available := reproduceOf(t, document, "available"); available != true {
+		t.Fatalf("reproduce.available = %v after a run that kept its temporaries", available)
+	}
+
+	dir, argv := killingCommand(t, root, rep, killed.ID)
+	activation := "GO_MUTANTS_ACTIVE=" + killed.ID
+
+	// The command as data, which is what a program reads this document for.
+	if got := reproduceOf(t, document, "dir"); got != dir {
+		t.Errorf("reproduce.dir = %v, want the recorded directory %q", got, dir)
+	}
+	published := stringsOf(t, reproduceOf(t, document, "argv"))
+	if !slices.Equal(published, argv) {
+		t.Errorf("reproduce.argv = %q, want the recorded command %q", published, argv)
+	}
+	activationOf(t, document, killed.ID)
+	if _, err := os.Stat(published[0]); err != nil {
+		t.Fatalf("the kept run's test binary is not there: %v", err)
+	}
+	child := exec.Command(published[0], published[1:]...)
+	child.Dir = dir
+	child.Env = append(os.Environ(), activation)
+	output, err := child.CombinedOutput()
+	if err == nil {
+		t.Errorf("running reproduce.argv passed, so the document did not reproduce the kill:\n%s", output)
+	}
+	if !strings.Contains(string(output), "FAIL") {
+		t.Errorf("running reproduce.argv did not fail as a Go test:\n%s", output)
+	}
+
+	// The same command as a line, pasted. The prose and the document are two
+	// renderings of one gathered value, so this line and the one the account
+	// prints are the same string — which is asserted rather than assumed.
+	command, ok := reproduceOf(t, document, "command").(string)
+	if !ok || command == "" {
+		t.Fatalf("reproduce.command is not a line: %v", reproduceOf(t, document, "command"))
+	}
+	if printed := reproduceCommand(t, explainOutput(t, killed.DisplayID[:8])); command != printed {
+		t.Errorf("the document and the prose print different reproductions\n json: %s\nprose: %s", command, printed)
+	}
+	checkPrintedReproduction(t, command, dir, activation, argv)
+	if runtime.GOOS != "windows" {
+		runPrintedReproduction(t, command)
+	}
+}
+
+// activationOf checks the document says which variable selects the mutant and
+// which value it takes.
+//
+// It is a field rather than something to read out of the line because that is
+// the difference this document is for: a program that wants to run the mutant
+// under a debugger sets one environment variable, and finding it by scanning a
+// quoted string for an `=` is the parsing this flag exists to spare it.
+func activationOf(t *testing.T, document map[string]any, id string) {
+	t.Helper()
+	activation, ok := reproduceOf(t, document, "activation").(map[string]any)
+	if !ok {
+		t.Fatalf("reproduce.activation is not an object: %v", reproduceOf(t, document, "activation"))
+	}
+	if activation["variable"] != "GO_MUTANTS_ACTIVE" {
+		t.Errorf("reproduce.activation.variable = %v, want the variable the runtime reads", activation["variable"])
+	}
+	if activation["value"] != id {
+		t.Errorf("reproduce.activation.value = %v, want the full identity %q", activation["value"], id)
+	}
+}
+
+// stringsOf decodes a document's list of strings.
+func stringsOf(t *testing.T, value any) []string {
+	t.Helper()
+	list, ok := value.([]any)
+	if !ok {
+		t.Fatalf("%v is not a list", value)
+	}
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		text, ok := item.(string)
+		if !ok {
+			t.Fatalf("%v is not a string", item)
+		}
+		out = append(out, text)
+	}
+	return out
+}
+
+// TestExplainJSONOfAPositionAfterARun drives the other form through a real
+// discovery pass.
+//
+// The position account is the only half of this command that measures anything
+// — it catalogues the workspace afresh — so the unit tests reach it through the
+// gatherer and this reaches it through the command. What it has to hold is both
+// halves of the answer: the mutants at that line with what became of them, and
+// the sites discovery declined.
+func TestExplainJSONOfAPositionAfterARun(t *testing.T) {
+	_, rep := explainAfterARun(t)
+	killed := mutantWith(t, rep, report.OutcomeKilled, false)
+
+	document := explainDocumentOf(t, killed.Path+":"+strconv.Itoa(killed.Line))
+	subject, ok := document["subject"].(map[string]any)
+	if !ok || subject["kind"] != "position" {
+		t.Fatalf("subject = %v, want a position", document["subject"])
+	}
+	if subject["path"] != killed.Path {
+		t.Errorf("subject.path = %v, want %q", subject["path"], killed.Path)
+	}
+	mutants, ok := document["mutants"].([]any)
+	if !ok || len(mutants) == 0 {
+		t.Fatalf("mutants = %v; the line the run caught a mutant on has none", document["mutants"])
+	}
+	found := false
+	for _, entry := range mutants {
+		row, ok := entry.(map[string]any)
+		if !ok || row["id"] != killed.ID {
+			continue
+		}
+		found = true
+		if row["outcome"] != string(report.OutcomeKilled) {
+			t.Errorf("mutants[].outcome = %v for a mutant the run killed", row["outcome"])
+		}
+	}
+	if !found {
+		t.Errorf("the listing at %s:%d does not hold the mutant the run killed there", killed.Path, killed.Line)
+	}
+	if _, ok := document["skip_sites"].([]any); !ok {
+		t.Errorf("skip_sites = %v, want a list even when it is empty", document["skip_sites"])
+	}
+	// The mutant form's fields are absent from a position account, which is
+	// what makes `subject.kind` worth branching on.
+	for _, absent := range []string{"verdict", "executions", "timeline", "reproduce"} {
+		if _, held := document[absent]; held {
+			t.Errorf("a position account carries %q, which only a mutant's account has", absent)
+		}
 	}
 }

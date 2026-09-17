@@ -51,9 +51,13 @@ type Overlay struct {
 	BaselineRuns Set[int]
 	// Narrowing is `test.narrowing`.
 	Narrowing Set[Narrowing]
+	// Probing is `test.probing`.
+	Probing Set[Probing]
 
 	// Jobs is `execution.jobs`, overridden by -j/--jobs.
 	Jobs Set[int]
+	// Isolate is `execution.isolate`, overridden by --isolate.
+	Isolate Set[bool]
 
 	// CacheMode is `cache.mode`, overridden by --cache.
 	CacheMode Set[CacheMode]
@@ -99,7 +103,9 @@ func (o Overlay) setsAnything() bool {
 		o.Memory.IsSet() ||
 		o.BaselineRuns.IsSet() ||
 		o.Narrowing.IsSet() ||
+		o.Probing.IsSet() ||
 		o.Jobs.IsSet() ||
+		o.Isolate.IsSet() ||
 		o.CacheMode.IsSet() ||
 		o.CacheDirectory.IsSet() ||
 		o.Strict.IsSet() ||
@@ -179,12 +185,18 @@ func apply(c *Config, o Overlay) {
 	if v, ok := o.BaselineRuns.Get(); ok {
 		c.Test.BaselineRuns = v
 	}
+	if v, ok := o.Probing.Get(); ok {
+		c.Test.Probing = v
+	}
 	if v, ok := o.Narrowing.Get(); ok {
 		c.Test.Narrowing = v
 	}
 
 	if v, ok := o.Jobs.Get(); ok {
 		c.Execution.Jobs = v
+	}
+	if v, ok := o.Isolate.Get(); ok {
+		c.Execution.Isolate = v
 	}
 
 	if v, ok := o.CacheMode.Get(); ok {
@@ -254,6 +266,7 @@ func (c Config) overlay() Overlay {
 		TestCommand:     Explicit(c.Test.Command),
 		BaselineRuns:    Explicit(c.Test.BaselineRuns),
 		Narrowing:       Explicit(c.Test.Narrowing),
+		Probing:         Explicit(c.Test.Probing),
 		Jobs:            Explicit(c.Execution.Jobs),
 		CacheMode:       Explicit(c.Cache.Mode),
 		Strict:          Explicit(c.Policy.Strict),

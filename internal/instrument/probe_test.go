@@ -82,20 +82,28 @@ func TestProbeRuntimeGolden(t *testing.T) {
 		}
 	}
 
-	if got, want := exportedNames(t, generated, out), []string{"Infect"}; !equalStrings(got, want) {
+	// Two exports and no third. Infect is what a form calls once it has decided
+	// its site's two readings disagree; Differs makes that decision for the one
+	// form that holds both as values. Everything else a probe tree could reach
+	// for -- the log, the guard array, the header -- stays unexported.
+	if got, want := exportedNames(t, generated, out), []string{"Differs", "Infect"}; !equalStrings(got, want) {
 		t.Errorf("the generated probe runtime exports %v, want %v", got, want)
 	}
 }
 
-// TestMutantRuntimeStillExportsOnlyM is the other half of that assertion, and
-// the reason the two runtimes can share a package name at all.
+// TestMutantRuntimeExportsWhatItsTreeSpells is the other half of that
+// assertion, and the reason the two runtimes can share a package name at all.
 //
 // They are generated into different snapshots, so the names never meet; what
-// keeps that true is that neither package grew a second export somebody started
-// depending on. The activation runtime's fixture is asserted here a second time
-// on purpose: this change adds a generator beside its own, and "the mutant tree
-// is byte-for-byte what it was" is the one claim that has to survive it.
-func TestMutantRuntimeStillExportsOnlyM(t *testing.T) {
+// keeps that true is that neither package grew an export nothing in its own
+// tree spells. The activation runtime's three are exactly the three names the
+// mutant rewrite writes: M, which a guard reads; Limit, which a counted loop
+// reads once on the way in; and Over, which that loop calls when its counter
+// passes the ceiling. The probe runtime has none of them and they have none of
+// its. The fixture is asserted here a second time on purpose: "the mutant tree
+// is what it was but for the counters" is the claim that has to survive every
+// change to the generator beside it.
+func TestMutantRuntimeExportsWhatItsTreeSpells(t *testing.T) {
 	t.Parallel()
 
 	root := testkit.Scratch(t)
@@ -106,7 +114,7 @@ func TestMutantRuntimeStillExportsOnlyM(t *testing.T) {
 	generated := filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go")
 	out := testkit.ReadFile(t, generated)
 
-	if got, want := exportedNames(t, generated, out), []string{"M"}; !equalStrings(got, want) {
+	if got, want := exportedNames(t, generated, out), []string{"Limit", "M", "Over"}; !equalStrings(got, want) {
 		t.Errorf("the generated activation runtime exports %v, want %v", got, want)
 	}
 	if want := testkit.ReadFile(t, filepath.Join("testdata", "runtime.golden")); !bytes.Equal(out, want) {
@@ -315,12 +323,15 @@ func TestInfectIsRaceFree(t *testing.T) {
 // TestProbeModeRewritesOnlyWhereItHasAProbeForm pins what a probe tree does
 // with a catalogue it cannot measure.
 //
-// Only the return-value family has a probe form so far, so a file of
-// comparisons comes out as the file the user wrote — no rewrite, no import, and
-// no entry in the result. That is worth asserting rather than leaving implied:
-// a mode that rewrote a file by accident would produce a tree whose sites are
-// guarded and whose runtime activates none of them, which is a program that
-// looks instrumented and proves nothing.
+// A file whose every mutant is unprobed comes out as the file the user wrote —
+// no rewrite, no import, and no entry in the result. That is worth asserting
+// rather than leaving implied: a mode that rewrote a file by accident would
+// produce a tree whose sites are guarded and whose runtime activates none of
+// them, which is a program that looks instrumented and proves nothing.
+//
+// The fixture declares its one comparison unprobeable, which is how a mutant of
+// a boolean site ends up with no form: the site is measured by evaluating both
+// readings of it, so one holding an effect or a possible panic is refused.
 func TestProbeModeRewritesOnlyWhereItHasAProbeForm(t *testing.T) {
 	t.Parallel()
 
@@ -332,7 +343,7 @@ func TestProbeModeRewritesOnlyWhereItHasAProbeForm(t *testing.T) {
 	testkit.WriteFile(t, filepath.Join(root, "other.go"), other)
 
 	catalog := catalogOf(t, candidatesFor(t, nil, in))
-	result := probeSnapshot(t, root, catalog)
+	result := probeSnapshotWith(t, root, catalog, hintOptions{unprobedSites: []string{"a > b"}})
 
 	if got := testkit.ReadFile(t, filepath.Join(root, sampleFile)); !bytes.Equal(got, in) {
 		t.Errorf("the catalogued file was rewritten in probe mode:\n%s", got)

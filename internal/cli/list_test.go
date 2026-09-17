@@ -507,7 +507,8 @@ func branchProofDiscovery(t *testing.T) discovered {
 		t.Fatalf("cataloguing: %v", err)
 	}
 	return discovered{
-		result:          result,
+		modules:         []discover.WorkspaceModule{{Dir: ".", Path: result.ModulePath}},
+		results:         []discover.Result{result},
 		catalog:         catalog,
 		workspaceDigest: strings.Repeat("ab", 32),
 	}
@@ -576,7 +577,7 @@ func TestCatalogDocumentJoinsCoordinatesOntoTheCatalogue(t *testing.T) {
 // whose coordinates point at nothing.
 func TestCatalogDocumentRefusesAMutantItCannotLocate(t *testing.T) {
 	found := oneMutantDiscovery(t)
-	found.result.Candidates = nil
+	found.results[0].Candidates = nil
 
 	_, err := found.document(config.Defaults(), "")
 	var coded *Error
@@ -621,7 +622,8 @@ func oneMutantDiscovery(t *testing.T) discovered {
 		t.Fatalf("cataloguing: %v", err)
 	}
 	return discovered{
-		result:          result,
+		modules:         []discover.WorkspaceModule{{Dir: ".", Path: result.ModulePath}},
+		results:         []discover.Result{result},
 		catalog:         catalog,
 		workspaceDigest: strings.Repeat("ab", 32),
 	}

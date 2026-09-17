@@ -34,7 +34,7 @@ const envPrefix = "GO_MUTANTS_"
 //
 // The profiling pass is where the leak would hurt most, because it is the one
 // pass that is *about* coverage. [CollectCoverage] gives each binary a
-// directory of its own through [coverDirFlag] and reads back what is in it; an
+// profile of its own through [coverProfileFlag] and reads back what is in it; an
 // inherited GOCOVERDIR beside that flag is a second directory nobody chose,
 // holding data from a different program. go-mutants says where a child's
 // coverage goes and an ambient setting does not get a vote — the same rule the
@@ -95,17 +95,27 @@ func baseEnvFrom(source []string, scratch string) []string {
 // rather than invented here, because the package set `go list` enumerates has
 // to be the package set discovery type-checked:
 //
-//   - GOWORK=off. The go command searches every parent directory for a
-//     `go.work` and obeys $GOWORK, so a snapshot placed one level below
-//     somebody's workspace would otherwise resolve against a file the snapshot
-//     does not contain — and every digest and identity this run mints assumes
-//     the snapshot is the whole truth.
+//   - GOWORK. The go command searches every parent directory for a `go.work`
+//     and obeys $GOWORK, so a snapshot placed one level below somebody's
+//     workspace would otherwise resolve against a file the snapshot does not
+//     contain — and every digest and identity this run mints assumes the
+//     snapshot is the whole truth. So it is off, unless the snapshot carries a
+//     workspace file of its own and the run is measuring it: then it is
+//     *removed*, and the go command finds the workspace file of the tree it is
+//     running in by walking up from its own working directory. That is the
+//     snapshot's own, or the worker's copy of it under `--isolate`, and in both
+//     cases it is the file beside the code being built — which a named path
+//     cannot promise, because a path has a spelling and a working directory has
+//     another. Either way the caller's own $GOWORK decides nothing.
 //   - The located toolchain's directory in front of PATH. It does not decide
 //     which `go` runs — os/exec resolved that from [gocmd.Toolchain.GoBin]
 //     already — it decides what that `go` sees, because a toolchain that finds
 //     a different one ahead of it on PATH can hand work to it.
-func toolchainEnvFrom(source []string, toolchain gocmd.Toolchain, scratch string) []string {
+func toolchainEnvFrom(source []string, toolchain gocmd.Toolchain, scratch string, workspace bool) []string {
 	env := setEnv(baseEnvFrom(source, scratch), "GOWORK", "off")
+	if workspace {
+		env = unsetEnv(baseEnvFrom(source, scratch), "GOWORK")
+	}
 	return prependPath(env, toolchain)
 }
 
@@ -176,6 +186,20 @@ func isTempKey(key string) bool {
 // appended: os/exec resolves a duplicate by keeping the last, so appending
 // would work, and an environment whose meaning depends on knowing that rule is
 // one a maintainer reads wrong.
+// unsetEnv removes every entry naming a variable, which is not the same as
+// setting it to the empty string: an empty value is a value, and the go command
+// reads an empty GOWORK as "no workspace" rather than as "decide for yourself".
+func unsetEnv(env []string, name string) []string {
+	out := make([]string, 0, len(env))
+	for _, existing := range env {
+		if key, _, ok := strings.Cut(existing, "="); ok && sameEnvKey(key, name) {
+			continue
+		}
+		out = append(out, existing)
+	}
+	return out
+}
+
 func setEnv(env []string, name, value string) []string {
 	entry := name + "=" + value
 	out := make([]string, 0, len(env)+1)

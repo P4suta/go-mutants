@@ -95,6 +95,73 @@ type probeCase struct {
 // temporaries want.
 func probeCases() []probeCase {
 	return []probeCase{{
+		name:       "probe-reach",
+		input:      "reach.input",
+		candidates: probeReachEdits,
+		hints:      hintOptions{valueTypes: map[string]string{"total + i": "int"}},
+		sites:      3,
+		extra: func(t *testing.T, _, out []byte) {
+			// Nothing is evaluated twice and nothing is compared: the statement
+			// runs as it always did, with the call in front of it.
+			assertContains(t, out, "{ __gm.Infect(0); note(i) }")
+			// And a statement whose expression has a form of its own carries
+			// both, one inside the other: the deletion records that the
+			// statement ran, the operand records whether its value differed.
+			assertContains(t, out, "{ __gm.Infect(1); total = func() int { var __gm_r0 int = (total + i);"+
+				" if __gm_r0 != (total-i) { __gm.Infect(2) }; return __gm_r0 }() }")
+		},
+	}, {
+		name:       "probe-value",
+		input:      "value.input",
+		candidates: probeValueEdits,
+		hints: hintOptions{
+			declared:   map[string]string{"k": "Kind", "total": "int"},
+			valueTypes: map[string]string{"Kind(a + b)": "Kind", "a*b + a": "int"},
+		},
+		sites: 2,
+		extra: func(t *testing.T, _, out []byte) {
+			// The closure's result type is the expression's own, spelled, so a
+			// named type is written out rather than collapsed to its
+			// underlying one — which is what makes the value legal where it
+			// stood.
+			assertContains(t, out, "func() Kind { var __gm_r0 Kind = (Kind(a + b));")
+			// Two mutants of one expression are two comparisons over one
+			// temporary, and the original is evaluated once whatever they are.
+			assertContains(t, out, "var __gm_r0 int = (a*b + a);"+
+				" if __gm_r0 != (a/b+a) { __gm.Infect(1) };"+
+				" if __gm_r0 != (a*b-a) { __gm.Infect(2) }; return __gm_r0 }()")
+			// No mutant is ever active in a probe tree.
+			if bytes.Contains(out, []byte(".M[")) {
+				t.Errorf("the probe tree reads an activation flag:\n%s", out)
+			}
+		},
+	}, {
+		name:       "probe-bool",
+		input:      "bool.input",
+		candidates: probeBoolEdits,
+		sites:      4,
+		extra: func(t *testing.T, _, out []byte) {
+			// Each half of the conjunction is its own site, measured through
+			// its own call, and the conjunction is a site around them: the
+			// original reading it compares against is the one carrying both
+			// inner calls, while its own mutated reading is the pristine
+			// bytes with one edit -- so an inner mutant is recorded once, from
+			// the reading the program actually evaluates.
+			assertContains(t, out, "__gm.Differs(1, "+
+				"(__gm.Differs(0, (v > lo), (v>=lo)) && __gm.Differs(2, (v < hi), (v<=hi))), "+
+				"(v>lo||v<hi))")
+			// Two mutants of one site chain, innermost first, and each call
+			// yields its second argument -- so what the expression evaluates to
+			// is the original whatever the chain around it records. Each
+			// mutated reading comes back from Flatten, which is why they carry
+			// no spaces while the original does.
+			assertContains(t, out, "__gm.Differs(4, __gm.Differs(3, (a == b), (!(a==b))), (a!=b))")
+			// No mutant is ever active in a probe tree.
+			if bytes.Contains(out, []byte(".M[")) {
+				t.Errorf("the probe tree reads an activation flag:\n%s", out)
+			}
+		},
+	}, {
 		name:       "probe-statement",
 		input:      "statement.input",
 		candidates: probeStatementEdits,
@@ -281,7 +348,7 @@ func probeWrittenLines(
 
 	written := make(map[int]bool)
 	for _, m := range catalog.Mutants() {
-		site := hints[m.ID].Return
+		site := hints[m.ID].Probe
 		if site == nil {
 			continue
 		}
@@ -361,7 +428,7 @@ func TestProbeModeLeavesTheMutantGoldensAlone(t *testing.T) {
 	}
 }
 
-// TestProbeSkipsAMutantWithoutAReturnSite pins what a probe tree does with the
+// TestProbeSkipsAMutantWithoutAProbeSite pins what a probe tree does with the
 // families whose probe form is not written yet.
 //
 // It does not probe them, and it does not touch the file they are in. A file
@@ -369,7 +436,7 @@ func TestProbeModeLeavesTheMutantGoldensAlone(t *testing.T) {
 // compile; a file rewritten with a guard would be a mutant tree pretending to
 // be a probe one. Doing nothing is the only answer that is honest about the
 // mutant simply not being measured.
-func TestProbeSkipsAMutantWithoutAReturnSite(t *testing.T) {
+func TestProbeSkipsAMutantWithoutAProbeSite(t *testing.T) {
 	t.Parallel()
 
 	in := testkit.ReadFile(t, filepath.Join("testdata", "comparison.input"))
@@ -377,7 +444,11 @@ func TestProbeSkipsAMutantWithoutAReturnSite(t *testing.T) {
 	testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 
 	catalog := catalogOf(t, candidatesFor(t, nil, in))
-	result := probeSnapshotWith(t, root, catalog, hintOptions{})
+	// The comparison is declared unprobeable, which is what the fixture stands
+	// for: its own operands are inert, but a site the boolean form may not
+	// evaluate twice is the ordinary way a mutant of one ends up unprobed, and
+	// a file made only of those has to come out untouched.
+	result := probeSnapshotWith(t, root, catalog, hintOptions{unprobedSites: []string{"a > b"}})
 
 	if got := testkit.ReadFile(t, filepath.Join(root, sampleFile)); !bytes.Equal(got, in) {
 		t.Errorf("a file whose every mutant is unprobed was rewritten:\n%s", got)
@@ -622,7 +693,13 @@ func TestNothingDiffers(t *testing.T) {
 // on, because a guard keeps the original in one of its branches. A probe tree
 // keeps no branch — the statement is rewritten into the program it always was,
 // with its operands folded onto one line — so what is asserted here is that the
-// rewrite parses, holds its lines, and calls Infect once per mutant.
+// rewrite parses, holds its lines, and names every mutant exactly once.
+//
+// "Names" rather than "calls Infect for", because the two forms report through
+// different calls: the return form writes the comparison itself and calls
+// Infect, while the boolean form hands both readings to Differs and lets it
+// decide. Either way the mutant's index appears in exactly one call, which is
+// what a reader of the log depends on.
 func assertProbeWellFormed(t *testing.T, in, out []byte, catalog *mutation.Catalog) {
 	t.Helper()
 
@@ -638,8 +715,9 @@ func assertProbeWellFormed(t *testing.T, in, out []byte, catalog *mutation.Catal
 		t.Error("the rewrite is not line-preserving")
 	}
 	for _, m := range catalog.Mutants() {
-		call := fmt.Sprintf("__gm.Infect(%d)", m.Index)
-		if !bytes.Contains(out, []byte(call)) && !bytes.Contains(out, []byte(fmt.Sprintf(".Infect(%d)", m.Index))) {
+		infect := fmt.Sprintf(".Infect(%d)", m.Index)
+		differs := fmt.Sprintf(".Differs(%d, ", m.Index)
+		if !bytes.Contains(out, []byte(infect)) && !bytes.Contains(out, []byte(differs)) {
 			t.Errorf("mutant %s: nothing in the probe tree reports it", m.DisplayID)
 		}
 	}
@@ -648,6 +726,41 @@ func assertProbeWellFormed(t *testing.T, in, out []byte, catalog *mutation.Catal
 // The catalogues of the probe fixtures. Each states the rule, the bytes it
 // replaces located by a snippet that holds them, and what it writes — exactly
 // as internal/discover's return-value family would have proposed them.
+
+// probeReachEdits catalogues the reachability fixture: two deleted statements,
+// one of them also holding an operand a stronger form measures.
+func probeReachEdits(t *testing.T, src []byte) []mutation.Candidate {
+	t.Helper()
+	return editsIn(t, src,
+		editSpec{rule: "delete-call-statement", in: "note(i)", with: ""},
+		editSpec{rule: "delete-assignment", in: "total = total + i", with: ""},
+		editSpec{rule: "add-to-sub", in: "total = total + i", find: "+", with: "-"},
+	)
+}
+
+// probeValueEdits catalogues the value fixture: an operand of a named type, and
+// one expression carrying two mutants at once.
+func probeValueEdits(t *testing.T, src []byte) []mutation.Candidate {
+	t.Helper()
+	return editsIn(t, src,
+		editSpec{rule: "add-to-sub", in: "k := Kind(a + b)", find: "+", with: "-"},
+		editSpec{rule: "mul-to-div", in: "total := a*b + a", find: "*", with: "/"},
+		editSpec{rule: "add-to-sub", in: "total := a*b + a", find: "+", with: "-"},
+	)
+}
+
+// probeBoolEdits catalogues the boolean fixture: a conjunction and each of its
+// halves, and a comparison carrying two mutants of one site.
+func probeBoolEdits(t *testing.T, src []byte) []mutation.Candidate {
+	t.Helper()
+	return editsIn(t, src,
+		editSpec{rule: "and-to-or", in: "v > lo && v < hi", find: "&&", with: "||"},
+		editSpec{rule: "gt-to-ge", in: "v > lo && v < hi", find: ">", with: ">="},
+		editSpec{rule: "lt-to-le", in: "v > lo && v < hi", find: "<", with: "<="},
+		editSpec{rule: "eq-to-neq", in: "return a == b", find: "==", with: "!="},
+		editSpec{rule: "negate-condition", in: "return a == b", find: "a == b", with: "!(a == b)"},
+	)
+}
 
 // probeStatementEdits catalogues the statement fixture: a `return` carrying two
 // families at once over two results, and a single-result `return` beside it.

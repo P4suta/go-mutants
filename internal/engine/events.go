@@ -108,9 +108,22 @@ const (
 	// MemorySourceExplicit is the configured `test.memory` or `--memory`.
 	MemorySourceExplicit MemorySource = "explicit"
 	// MemorySourceUnavailable is no bound: either nothing measured a peak to
-	// derive one from, or this platform cannot enforce one. Both are reported
-	// once, as a [Warning], because a user who thinks a runaway mutant will be
-	// stopped and is wrong should be told by the run rather than by the machine.
+	// derive one from, or this platform cannot enforce one.
+	//
+	// Neither is a [Warning], and the omission is argued rather than forgotten:
+	// a derived bound that cannot be enforced was never asked for, and a run
+	// without one is exactly the run go-mutants made before the bound existed,
+	// so warning about it would put a line on every clean macOS run forever --
+	// which is how a warning stops being read and takes the ones that matter
+	// with it. What is warned about is an *explicit* `test.memory` that this
+	// platform will not hold anybody to, because that one the user did ask for.
+	// See the engine's unenforcedMemoryReason, which is the rule, and
+	// TestOnlyAnExplicitBoundNobodyWillHoldIsWorthAWarning, which pins it.
+	//
+	// The fact is still reported, where a fact belongs rather than where an
+	// action belongs: this value in the event and in the run report, and one
+	// word on the `-v` line. A run that is not bounded says so; it does not
+	// interrupt to say it.
 	MemorySourceUnavailable MemorySource = "unavailable"
 )
 
@@ -405,6 +418,29 @@ type CoverageMapped struct {
 	Widened int
 }
 
+// Probed reports what the probe pass established, and is published only by a
+// run that made one: a run with probing off publishes nothing at all, and a run
+// whose probe was unavailable publishes a [Warning] saying why.
+//
+// It arrives after the coverage mapping and before the first mutant is
+// executed, in the same place and for the same reason [CoverageMapped] does:
+// the two narrowings compose, and this is the number that says how much of what
+// coverage left is about to be skipped as well.
+type Probed struct {
+	// Binaries is how many test binaries were probed.
+	Binaries int
+	// Settled is how many mutants no covering binary could observe. They are
+	// reported as survivors without being executed, and unlike an uncovered
+	// mutant they are survivors a test binary really did run the lines of.
+	Settled int
+	// Narrowed is how many mutants kept fewer covering binaries than coverage
+	// gave them, because the ones dropped had established they could not see
+	// the mutant. It is the second saving and usually the larger one.
+	Narrowed int
+	// Remaining is how many mutants the run will execute after both.
+	Remaining int
+}
+
 // A MutantResult is one mutant's settled outcome, with everything a renderer
 // needs in order to describe it without holding the catalogue.
 //
@@ -418,6 +454,15 @@ type MutantResult struct {
 	DisplayID string
 	// Path is the '/'-normalized module-relative source path.
 	Path string
+	// ModuleDir is where the module Path is relative to sits within the tree
+	// the user is looking at, and is empty for a run over one module -- where
+	// the module *is* the tree.
+	//
+	// It is what a renderer joins onto Path to name a file somebody can open.
+	// Path stays module-relative because that is what the identity and the
+	// module's own report are keyed on, and in a workspace `app.go` on its own
+	// is a sentence about two files. See [WorkspaceLocation].
+	ModuleDir string
 	// Line and Column are the 1-based coordinates discovery reported, with the
 	// column measured in bytes.
 	Line   int
@@ -507,7 +552,17 @@ type MutantResult struct {
 	// MemoryExceeded is only ever set alongside [mutation.OutcomeKilled].
 	PeakMemory     int64
 	MemoryExceeded bool
-	MemoryLimit    int64
+
+	// Diverged reports that a counted loop of this mutant went past the ceiling
+	// the run derived for it from what the original program did, which is how a
+	// mutant that does not return is settled without a stopwatch.
+	//
+	// It is only ever set alongside [mutation.OutcomeTimedOut], and it is what
+	// lets a renderer say "did not return" where it would otherwise have to say
+	// "hung", which is a guess about a machine. The loop and the two counts are
+	// in the retained output. See ADR 0013.
+	Diverged    bool
+	MemoryLimit int64
 }
 
 // clone returns a copy that shares no slice with the receiver, so that a
@@ -530,9 +585,12 @@ type MutantStarted struct {
 	ID string
 	// DisplayID is the short form.
 	DisplayID string
-	// Path and Line locate the mutant for a progress line.
-	Path string
-	Line int
+	// Path and Line locate the mutant for a progress line, with ModuleDir
+	// saying which module of a workspace Path is relative to. See
+	// [WorkspaceLocation].
+	Path      string
+	ModuleDir string
+	Line      int
 	// Rule is the operator that proposed the edit.
 	Rule string
 	// Worker is the worker that claimed it.
@@ -810,6 +868,7 @@ func (Discovered) event()        {}
 func (Validated) event()         {}
 func (SelectionNarrowed) event() {}
 func (CoverageMapped) event()    {}
+func (Probed) event()            {}
 func (MutantStarted) event()     {}
 func (MutantFinished) event()    {}
 func (CacheHit) event()          {}
@@ -823,4 +882,17 @@ func (RunCompleted) event()      {}
 func (e BaselineCompleted) clone() BaselineCompleted {
 	e.Runs = slices.Clone(e.Runs)
 	return e
+}
+
+// WorkspaceLocation is where a mutant's file sits in the tree a person is
+// looking at: under its module's own directory inside a workspace, and exactly
+// its own path outside one.
+//
+// It is the one place the join is spelled, so that a console line, a progress
+// line and a dashboard row cannot disagree about what a file is called.
+func WorkspaceLocation(moduleDir, path string) string {
+	if moduleDir == "" || moduleDir == "." {
+		return path
+	}
+	return moduleDir + "/" + path
 }

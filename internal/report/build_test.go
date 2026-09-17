@@ -70,6 +70,21 @@ func TestBuildRefuses(t *testing.T) {
 			},
 		},
 		{
+			// The other half of the same guard, and the half that is not
+			// implied by the row above. A missing *finish* is caught twice
+			// over -- the zero time is also before the start -- so the row
+			// above passes even against a build that only asked whether both
+			// were missing. A missing *start* is caught once: the zero time is
+			// not after the finish, so nothing downstream objects, and the
+			// document would go out claiming a run that began at the zero
+			// instant of the year 1.
+			name: "no start time",
+			want: report.CodeInvalidTimestamps,
+			break_: func(_ *testing.T, o *report.Options, _ []mutation.Mutant) {
+				o.Started = time.Time{}
+			},
+		},
+		{
 			name: "a run that finished before it started",
 			want: report.CodeInvalidTimestamps,
 			break_: func(_ *testing.T, o *report.Options, _ []mutation.Mutant) {

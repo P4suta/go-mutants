@@ -1,0 +1,148 @@
+---
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# The composite action is how a project puts go-mutants in its own CI without
+# writing the six steps by hand, and the reason it exists is the last two of
+# them: a mutation run produces a *score*, and a workflow that cannot read that
+# score can only branch on the exit code.
+#
+# Everything it does is something a caller could write themselves. What it adds
+# is that the numbers come out as step outputs, read from the run report rather
+# than scraped off the console, so a job can comment them on a pull request or
+# compare them with a previous run without parsing prose.
+#
+# The run's own policy decides the exit code -- `policy.strict` and
+# `policy.minimum_score` in the caller's `.go-mutants.toml`, or the flags they
+# pass. This action does not add a threshold of its own: a second place to
+# configure "how good is good enough" is a second answer to a question the
+# configuration file already answers, and the two would disagree the first time
+# somebody changed one.
+name: go-mutants
+description: Measure a Go module with go-mutants and report what it found.
+
+inputs:
+  version:
+    description: >-
+      The go-mutants version to install with `go install`, as a module version:
+      a tag such as v0.1.0, or `latest`. The literal `skip` installs nothing and
+      expects `go-mutants` to be on PATH already, which is what this
+      repository's own smoke test uses to measure the checkout it is testing.
+    required: false
+    default: latest
+  working-directory:
+    description: The module root to run in.
+    required: false
+    default: .
+  args:
+    description: >-
+      Extra arguments for `go-mutants run`, as one shell word list. `--json` is
+      supplied by this action and must not be repeated: it is how the outputs
+      below are read.
+    required: false
+    default: ""
+  report:
+    description: >-
+      Where to write the run report. It is relative to the working directory
+      unless it is absolute, and the path is an output so a later step can
+      upload it.
+    required: false
+    default: go-mutants-report.json
+  fail:
+    description: >-
+      Whether a run that exits non-zero fails the step. `true` is the default
+      and is what a gate wants; `false` reports the numbers and leaves the
+      decision to a later step, which is what a pull-request comment wants.
+      Either way the exit code is an output.
+    required: false
+    default: "true"
+
+outputs:
+  score:
+    description: >-
+      The mutation score as a percentage, or the empty string for a run that
+      scored nothing.
+    value: ${{ steps.measure.outputs.score }}
+  total:
+    description: How many mutants the run catalogued.
+    value: ${{ steps.measure.outputs.total }}
+  killed:
+    description: How many mutants a test caught.
+    value: ${{ steps.measure.outputs.killed }}
+  survived:
+    description: How many mutants no test caught.
+    value: ${{ steps.measure.outputs.survived }}
+  timed-out:
+    description: >-
+      How many mutants a timeout settled, which the score counts as detected.
+    value: ${{ steps.measure.outputs.timed-out }}
+  status:
+    description: The run's own status - completed, interrupted, or failed.
+    value: ${{ steps.measure.outputs.status }}
+  exit-code:
+    description: What `go-mutants run` exited with, whatever `fail` was set to.
+    value: ${{ steps.measure.outputs.exit-code }}
+  report:
+    description: The path the run report was written to.
+    value: ${{ steps.measure.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install go-mutants
+      if: inputs.version != 'skip'
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: go install "github.com/P4suta/go-mutants/cmd/go-mutants@$VERSION"
+
+    - name: Measure
+      id: measure
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        EXTRA_ARGS: ${{ inputs.args }}
+        REPORT: ${{ inputs.report }}
+        FAIL: ${{ inputs.fail }}
+      run: |
+        set -uo pipefail
+        # Not `set -e`: the exit code is the product here, and a policy failure
+        # is a result rather than a step that went wrong. It is re-raised at the
+        # end when `fail` says so.
+        go-mutants run --json $EXTRA_ARGS > "$REPORT"
+        code=$?
+        {
+          echo "exit-code=$code"
+          echo "report=$REPORT"
+        } >> "$GITHUB_OUTPUT"
+
+        # A run that failed before it could publish leaves no document, and a
+        # missing document is reported as missing rather than as zeroes: "0
+        # mutants, 0 killed" is a number a job would compare against last
+        # week's.
+        if [ ! -s "$REPORT" ]; then
+          echo "::warning::go-mutants exited $code and wrote no report:" \
+            "there are no numbers to report"
+          exit "$code"
+        fi
+
+        read -r status total killed survived timedout score < <(
+          jq -r '[.status, .summary.total, .summary.killed, .summary.survived,
+                  .summary.timed_out, (.summary.score_percent // empty)]
+                 | @tsv' "$REPORT")
+        {
+          echo "status=$status"
+          echo "total=$total"
+          echo "killed=$killed"
+          echo "survived=$survived"
+          echo "timed-out=$timedout"
+          echo "score=$score"
+        } >> "$GITHUB_OUTPUT"
+
+        printf 'go-mutants: %s  %s mutants  %s killed  %s survived  %s %s\n' \
+          "$status" "$total" "$killed" "$survived" \
+          "$timedout timed out" "score ${score:-none}"
+
+        if [ "$FAIL" = "true" ]; then
+          exit "$code"
+        fi

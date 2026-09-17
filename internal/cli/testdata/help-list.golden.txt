@@ -1,0 +1,49 @@
+List the mutants a run would execute, without executing them.
+
+The workspace root is the current directory, and .go-mutants.toml is read from
+there. Flags override the file; the file overrides the built-in defaults.
+
+Discovery runs against a disposable snapshot of the workspace, exactly as `run`
+does, so the coordinates and the ids printed here are the ones a run will use.
+Your own tree is only ever read, and no test is built or executed.
+
+--operator names families or rules from the whole v1 catalogue rather than from
+the profile: `--operator bitwise` lists that family even though the balanced
+profile would not select it. The profile decides the selection only when no
+operator is named at all, so a --profile that .go-mutants.toml's own
+mutation.operators has already made inert is reported as a GOM1008 warning
+rather than quietly ignored.
+
+--mutant is a filter, not a selector. A prefix matching several mutants lists
+all of them instead of failing, which is what makes it useful for narrowing a
+listing down to one file's worth of ids. The mutant and file counts underneath
+describe the filtered listing; the skip breakdown describes the whole discovery
+pass, because a suppressed candidate never had an id to filter on.
+
+--json writes the catalog-v1 document to standard output and nothing else;
+warnings and errors go to standard error, so the document can be piped straight
+into a validator. --explain is the opposite half and the two are refused
+together: it expands the skip breakdown underneath the listing, saying what each
+reason means and which files it accounted for.
+
+Usage:
+  go-mutants list [flags]
+
+Flags:
+      --exclude GLOB       GLOB that removes a file again; repeat for more (default: mutation.exclude)
+      --explain            after the listing, expand the skip breakdown: what each reason means, and the files it accounted for
+  -h, --help               help for list
+      --include GLOB       GLOB a file must match to be mutated; repeat for more (default: mutation.include, or **/*.go)
+      --json               write the catalog-v1 document to standard output and nothing else
+      --mutant ID_PREFIX   list only mutants whose id starts with ID_PREFIX; a prefix matching several lists all of them
+      --no-color           never colourise output, even on a terminal
+      --operator NAME      NAME of an operator family or rule, from the whole catalogue rather than from the profile; repeat for more
+      --profile NAME       operator tier NAME: balanced, strong, or all (default: mutation.profile, or balanced)
+  -q, --quiet              drop the header line; the mutants, the counts, and the skip breakdown are the listing itself
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)

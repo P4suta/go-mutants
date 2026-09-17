@@ -70,25 +70,29 @@ file, on a dumb terminal, under `--no-tui`, `--json`, `--quiet`, or
 byte-identical either way, because a dashboard run replays it through the plain
 renderer rather than formatting its own.
 
-All eleven operator families and all forty-two rules are discovered,
+All fourteen operator families and all forty-nine rules are discovered,
 instrumented, compile-validated, executed, and scored. A score from go-mutants
 is a score against the whole v1 catalogue, narrowed only by the profile you
 chose. The tiers are monotonically inclusive: `balanced` is the default and
-leaves out `bitwise`, `arithmetic-assignment`, and `statement-deletion`;
-`strong` adds the first two; `all` adds the third, statement deletion being the
-classic source of equivalent mutants. [`docs/operators.md`](docs/operators.md)
+holds eight families; `strong` adds `arithmetic-assignment`, `bitwise`,
+`branch-replacement` and `neutral-value`; `all` adds `labeled-branch` and
+`statement-deletion`, statement deletion being the classic source of equivalent
+mutants. [`docs/operators.md`](docs/operators.md)
 is the table.
 
 The honest limits:
 
-- **No `switch`/`select` case mutation, and no `if`-branch replacement.** They
-  are v2: each needs a guard form or a neutral-value model the instrumenter
-  does not build. Package-level `var` initialisers, `const` declarations, array
-  lengths, and generic type parameter lists are excluded for reasons that are
-  not going to change, and cgo packages and generated files are excluded
-  wholesale. Every one of those is a recorded skip with a reason rather than a
-  silent omission.
-- **A rewrite site none of the three guard forms can express is skipped**, with
+- **A tagged switch's case labels are not mutated, and neither are a type
+  switch's, and there is no `if`-branch replacement.** A label of `switch x` is
+  compared against the tag, where no guard form can stand; a type switch's
+  labels hold types rather than values. A **tagless** `switch { case a > b: }`
+  is the opposite case and *is* mutated — its labels are exactly `bool`, so
+  they are ordinary conditions. Package-level `var` initialisers, `const`
+  declarations, array lengths, and generic type parameter lists are excluded
+  for reasons that are not going to change, and cgo packages and generated
+  files are excluded wholesale. Every one of those is a recorded skip with a
+  reason rather than a silent omission.
+- **A rewrite site no guard form can express is skipped**, with
   the reason `unnameable-decl-type`. The commonest are a `:=` that redeclares
   rather than declares, a declared type the file cannot spell with the imports
   it has, and a statement in a `for` post or an `if` initialiser, where a block
@@ -580,11 +584,21 @@ validate and promote a killing input without retaining session scratch.
 
 | Code | Meaning |
 | ---: | --- |
-| 0 | Run completed; no policy failure |
-| 1 | Opt-in gate failure only (`--strict`, `policy.minimum_score`, `init --check`) |
-| 2 | Infrastructure, configuration, baseline, or expectation failure |
-| 130 | Interrupted (Ctrl-C); a partial report is published first |
-| 143 | Terminated (SIGTERM); a partial report is published first |
+| `0` | the run completed and no policy gate failed |
+| `1` | an opt-in gate failed (`--strict`, `policy.minimum_score`, `init --check`) |
+| `2` | an infrastructure, configuration, baseline, or expectation failure |
+| `130` | interrupted (Ctrl-C) |
+| `143` | terminated (SIGTERM) |
+
+These are the words `--help` prints, and they are the same words because
+`internal/cli`'s `TestEveryExitCodeTableSaysWhatTheHelpSays` compares this table
+with the constant the help is built from — and compares both against the exit
+codes `internal/mutation` declares, so a code that exists is one this table
+names.
+
+**130 and 143 publish a partial report first.** A run that is interrupted or
+terminated writes what it had measured before it exits, so the id of every
+mutant already settled is on disk rather than lost.
 
 `strict` defaults to **false**: go-mutants does not fail your build unless you
 ask it to, in a terminal, a pipe, and CI alike. A confirmed timeout counts as
@@ -593,15 +607,20 @@ results, and not-run mutants are excluded from the score denominator.
 
 ## Documentation
 
+- [Command line](docs/command-line.md)
 - [Architecture](docs/architecture.md)
 - [Engine API](docs/library.md)
 - [Operators](docs/operators.md)
 - [Configuration](docs/configuration.md)
+- [Diagnostic codes](docs/errors.md)
+- [Limitations](docs/limitations.md)
+- [Roadmap](docs/roadmap.md)
 - [JSON contracts](docs/json-schema.md)
 - [Run trace v1](docs/trace-v1.md)
 - [Stryker report ecosystem compatibility](docs/stryker-compatibility.md)
 - [Architecture decision records](docs/adr/README.md)
 - [Development guide](docs/development.md)
+- [Continuous integration](docs/ci.md)
 - [Release checklist](docs/release-checklist.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)

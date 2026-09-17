@@ -142,8 +142,6 @@ func equalStrings(t *testing.T, got, want []string) {
 // results to zero. That is the point of an exact table — a rule that starts
 // firing somewhere new shows up here rather than in a count.
 var wantCandidates = []string{
-	// arith: every arithmetic rule, and the two operand types that keep them
-	// away from operators they must not claim.
 	"arith/arith.go delete-assignment out[0] = a + b->",
 	"arith/arith.go add-to-sub +->-",
 	"arith/arith.go delete-assignment out[1] = a - b->",
@@ -166,13 +164,9 @@ var wantCandidates = []string{
 	"arith/arith.go add-to-sub +->-",
 	"arith/arith.go delete-assignment temps[0] = c * d->",
 	"arith/arith.go fmul-to-fdiv *->/",
-	// The three statements below hold a `+` and a `*` each and no arithmetic
-	// rule claims either: their operands are strings and complex numbers.
-	// Only the assignment deletion remains.
 	"arith/arith.go delete-assignment out[0] = a + b->",
 	"arith/arith.go delete-assignment out[0] = a + b->",
 	"arith/arith.go delete-assignment out[1] = a * b->",
-	// assign: the arithmetic-assignment family, and `s += "!"` excluded.
 	"assign/assign.go add-assign-to-sub-assign +=->-=",
 	"assign/assign.go sub-assign-to-add-assign -=->+=",
 	"assign/assign.go delete-incdec n++->",
@@ -183,8 +177,6 @@ var wantCandidates = []string{
 	"assign/assign.go delete-assignment out[0] = n->",
 	"assign/assign.go delete-assignment out[1] = int(f)->",
 	"assign/assign.go delete-assignment out[0] = s->",
-	// bits: the bitwise family. The shift rules move the operator and leave
-	// the count alone, which is why `n` never appears as an edit here.
 	"bits/bits.go delete-assignment out[0] = a & b->",
 	"bits/bits.go band-to-bor &->|",
 	"bits/bits.go delete-assignment out[1] = a | b->",
@@ -199,24 +191,39 @@ var wantCandidates = []string{
 	"bits/bits.go shr-to-shl >>-><<",
 	"bits/bits.go delete-assignment out[0] = a & b->",
 	"bits/bits.go band-to-bor &->|",
-	// compare: the comparison family, now with the condition negation that
-	// sits on the same conditions and the empty strings the returns admit.
+	// The package import completion draws on: exported, named, and imported
+	// by one file of package split and not the other.
+	"carrier/carrier.go return-zero-numeric Extent(b.n)->0",
+	"carrier/carrier.go return-zero-numeric int(e)->0",
+	"carrier/carrier.go return-zero-numeric deeper.Of(n)->0",
 	"compare/compare.go negate-condition a == b->!(a == b)",
+	"compare/compare.go condition-to-true a == b->true",
+	"compare/compare.go condition-to-false a == b->false",
 	"compare/compare.go eq-to-neq ==->!=",
 	"compare/compare.go return-empty-string \"eq\"->\"\"",
 	"compare/compare.go negate-condition a != b->!(a != b)",
+	"compare/compare.go condition-to-true a != b->true",
+	"compare/compare.go condition-to-false a != b->false",
 	"compare/compare.go neq-to-eq !=->==",
 	"compare/compare.go return-empty-string \"ne\"->\"\"",
 	"compare/compare.go negate-condition a < b->!(a < b)",
+	"compare/compare.go condition-to-true a < b->true",
+	"compare/compare.go condition-to-false a < b->false",
 	"compare/compare.go lt-to-le <-><=",
 	"compare/compare.go return-empty-string \"lt\"->\"\"",
 	"compare/compare.go negate-condition a <= b->!(a <= b)",
+	"compare/compare.go condition-to-true a <= b->true",
+	"compare/compare.go condition-to-false a <= b->false",
 	"compare/compare.go le-to-lt <=-><",
 	"compare/compare.go return-empty-string \"le\"->\"\"",
 	"compare/compare.go negate-condition a > b->!(a > b)",
+	"compare/compare.go condition-to-true a > b->true",
+	"compare/compare.go condition-to-false a > b->false",
 	"compare/compare.go gt-to-ge >->>=",
 	"compare/compare.go return-empty-string \"gt\"->\"\"",
 	"compare/compare.go negate-condition a >= b->!(a >= b)",
+	"compare/compare.go condition-to-true a >= b->true",
+	"compare/compare.go condition-to-false a >= b->false",
 	"compare/compare.go ge-to-gt >=->>",
 	"compare/compare.go return-empty-string \"ge\"->\"\"",
 	"compare/compare.go return-empty-string \"none\"->\"\"",
@@ -228,9 +235,9 @@ var wantCandidates = []string{
 	"compare/compare.go return-false off->false",
 	"compare/compare.go return-zero-numeric m[true]->0",
 	"compare/compare.go true-to-false true->false",
-	// deletion: the statement-deletion family. `panic("negative")` is absent
-	// and is the one call this family refuses, and `(panic)(reason)` is absent
-	// for the same reason written the one way a parenthesis hides.
+	// The package that is one edge too far: nothing in split imports it.
+	"deeper/deeper.go return-zero-numeric Thing(n)->0",
+	"deeper/deeper.go return-zero-numeric int(t)->0",
 	"deletion/deletion.go delete-call-statement Log(\"start\")->",
 	"deletion/deletion.go delete-assignment total = total + n->",
 	"deletion/deletion.go add-to-sub +->-",
@@ -240,54 +247,71 @@ var wantCandidates = []string{
 	"deletion/deletion.go delete-assignment out[0] = total->",
 	"deletion/deletion.go delete-assignment xs = append(xs, n)->",
 	"deletion/deletion.go return-nil xs->nil",
+	"deletion/deletion.go return-empty-slice xs->[]int{}",
 	"deletion/deletion.go negate-condition n < 0->!(n < 0)",
+	"deletion/deletion.go condition-to-true n < 0->true",
+	"deletion/deletion.go condition-to-false n < 0->false",
 	"deletion/deletion.go lt-to-le <-><=",
 	"deletion/deletion.go return-zero-numeric n->0",
-	// errs: the error-swallowing family, and the line it draws. `err` is an
-	// error value and goes to return-err-to-nil; `&Wrapped{Op: op}` is a
-	// concrete pointer and goes to return-nil; `p != nil` is not an error
-	// comparison and gets no nil-error-branch.
 	"errs/errs.go return-empty-string w.Op->\"\"",
 	"errs/errs.go return-err-to-nil err->nil",
 	"errs/errs.go return-nil &Wrapped{Op: op}->nil",
 	"errs/errs.go negate-condition err != nil->!(err != nil)",
 	"errs/errs.go nil-error-branch err != nil->false",
+	"errs/errs.go condition-to-true err != nil->true",
+	"errs/errs.go condition-to-false err != nil->false",
 	"errs/errs.go neq-to-eq !=->==",
 	"errs/errs.go delete-assignment out[0] = 1->",
 	"errs/errs.go negate-condition nil != err->!(nil != err)",
 	"errs/errs.go nil-error-branch nil != err->false",
+	"errs/errs.go condition-to-true nil != err->true",
+	"errs/errs.go condition-to-false nil != err->false",
 	"errs/errs.go neq-to-eq !=->==",
 	"errs/errs.go delete-assignment out[1] = 2->",
 	"errs/errs.go negate-condition p != nil->!(p != nil)",
+	"errs/errs.go condition-to-true p != nil->true",
+	"errs/errs.go condition-to-false p != nil->false",
 	"errs/errs.go neq-to-eq !=->==",
 	"errs/errs.go delete-assignment out[0] = 1->",
-	// forms: the guard-form fixture. Four of its edits are refused outright
-	// and appear in wantSkips instead — see the package's own documentation.
 	"forms/forms.go add-to-sub +->-",
 	"forms/forms.go return-zero-numeric sum->0",
 	"forms/forms.go mul-to-div *->/",
 	"forms/forms.go return-zero-numeric product->0",
 	"forms/forms.go negate-condition err != nil->!(err != nil)",
 	"forms/forms.go nil-error-branch err != nil->false",
+	"forms/forms.go condition-to-true err != nil->true",
+	"forms/forms.go condition-to-false err != nil->false",
 	"forms/forms.go neq-to-eq !=->==",
 	"forms/forms.go return-err-to-nil err->nil",
+	"forms/forms.go add-to-sub +->-",
 	"forms/forms.go return-zero-numeric second->0",
 	"forms/forms.go return-err-to-nil err->nil",
 	"forms/forms.go return-zero-numeric a->0",
 	"forms/forms.go negate-loop-condition i < n->!(i < n)",
+	"forms/forms.go loop-condition-to-false i < n->false",
 	"forms/forms.go lt-to-le <-><=",
 	"forms/forms.go add-assign-to-sub-assign +=->-=",
+	"forms/forms.go add-assign-to-sub-assign +=->-=",
+	"forms/forms.go delete-assignment half = n / 2->",
+	"forms/forms.go div-to-mul /->*",
 	"forms/forms.go negate-condition half > 0->!(half > 0)",
+	"forms/forms.go condition-to-true half > 0->true",
+	"forms/forms.go condition-to-false half > 0->false",
+	"forms/forms.go gt-to-ge >->>=",
+	"forms/forms.go delete-assignment out[0] = half->",
+	"forms/forms.go return-zero-numeric half->0",
+	"forms/forms.go div-to-mul /->*",
+	"forms/forms.go negate-condition half > 0->!(half > 0)",
+	"forms/forms.go condition-to-true half > 0->true",
+	"forms/forms.go condition-to-false half > 0->false",
 	"forms/forms.go gt-to-ge >->>=",
 	"forms/forms.go return-zero-numeric half->0",
+	"forms/forms.go add-to-sub +->-",
 	"forms/forms.go return-empty-string \"zero\"->\"\"",
 	"forms/forms.go return-empty-string \"other\"->\"\"",
 	"forms/forms.go add-to-sub +->-",
 	"forms/forms.go sub-to-add -->+",
 	"forms/forms.go mul-to-div *->/",
-	// The same three statements again, around a call whose result is the
-	// universe bool. The edits are the same edits; only the guard form the
-	// next table pins is different.
 	"forms/forms.go delete-call-statement ok(a + b)->",
 	"forms/forms.go add-to-sub +->-",
 	"forms/forms.go sub-to-add -->+",
@@ -295,22 +319,29 @@ var wantCandidates = []string{
 	"forms/forms.go return-true n > 0->true",
 	"forms/forms.go return-false n > 0->false",
 	"forms/forms.go gt-to-ge >->>=",
-	// The five Form D refusals at the end of the file. Every edit inside one of
-	// those declarations is a skip; what is left here is the ordinary code
-	// around them, which is still mutated — a refused site removes its own
-	// candidates and nothing else in the function.
+	"forms/forms.go mul-to-div *->/",
 	"forms/forms.go delete-assignment n = total->",
 	"forms/forms.go return-zero-numeric n->0",
+	"forms/forms.go add-to-sub +->-",
+	"forms/forms.go mul-to-div *->/",
 	"forms/forms.go return-zero-numeric Limit->0",
+	"forms/forms.go add-to-sub +->-",
+	"forms/forms.go mul-to-div *->/",
+	"forms/forms.go add-to-sub +->-",
 	"forms/forms.go return-zero-numeric a + Limit->0",
 	"forms/forms.go add-to-sub +->-",
+	"forms/forms.go add-to-sub +->-",
 	"forms/forms.go return-zero-numeric scale(n)->0",
+	"forms/forms.go add-to-sub +->-",
 	"forms/forms.go delete-assignment total.hi = start->",
 	"forms/forms.go return-zero-numeric total.hi->0",
-	// generics: neither `return a` nor `return b` in Max is a candidate. A
-	// type parameter's underlying type is its constraint, which is an
-	// interface, and `return nil` would not compile for it.
+	"forms/forms.go negate-condition f->!(f)",
+	"forms/forms.go condition-to-true f->true",
+	"forms/forms.go condition-to-false f->false",
+	"forms/forms.go return-zero-numeric n->0",
 	"generics/generics.go negate-condition a > b->!(a > b)",
+	"generics/generics.go condition-to-true a > b->true",
+	"generics/generics.go condition-to-false a > b->false",
 	"generics/generics.go gt-to-ge >->>=",
 	"generics/generics.go return-zero-numeric sized[[len([1]bool{false})]byte](v)[0]->0",
 	"generics/generics.go return-zero-numeric b.v[0]->0",
@@ -318,33 +349,74 @@ var wantCandidates = []string{
 	"generics/generics.go add-to-sub +->-",
 	"hidden/hidden.go return-nil &counter{n: n}->nil",
 	"hidden/hidden.go return-zero-numeric c.n->0",
+	"hidden/hidden.go return-zero-numeric tally(n)->0",
+	"hidden/hidden.go return-zero-numeric int(t)->0",
+	"labels/labels.go negate-condition v == want->!(v == want)",
+	"labels/labels.go condition-to-true v == want->true",
+	"labels/labels.go condition-to-false v == want->false",
+	"labels/labels.go eq-to-neq ==->!=",
+	"labels/labels.go drop-break-label break outer->break",
+	"labels/labels.go false-to-true false->true",
+	"labels/labels.go return-true false->true",
+	"labels/labels.go negate-condition v == bad->!(v == bad)",
+	"labels/labels.go condition-to-true v == bad->true",
+	"labels/labels.go condition-to-false v == bad->false",
+	"labels/labels.go eq-to-neq ==->!=",
+	"labels/labels.go drop-continue-label continue outer->continue",
+	"labels/labels.go add-assign-to-sub-assign +=->-=",
+	"labels/labels.go return-zero-numeric total->0",
+	"labels/labels.go lt-to-le <-><=",
+	"labels/labels.go drop-break-label break loop->break",
+	"labels/labels.go eq-to-neq ==->!=",
+	"labels/labels.go add-assign-to-sub-assign +=->-=",
+	"labels/labels.go return-zero-numeric total->0",
+	"labels/labels.go negate-condition v == want->!(v == want)",
+	"labels/labels.go condition-to-true v == want->true",
+	"labels/labels.go condition-to-false v == want->false",
+	"labels/labels.go eq-to-neq ==->!=",
+	"labels/labels.go false-to-true false->true",
+	"labels/labels.go return-true false->true",
+	"labels/labels.go delete-incdec n++->",
+	"labels/labels.go incr-to-decr ++->--",
+	"labels/labels.go negate-condition n < attempts->!(n < attempts)",
+	"labels/labels.go condition-to-true n < attempts->true",
+	"labels/labels.go condition-to-false n < attempts->false",
+	"labels/labels.go lt-to-le <-><=",
+	"labels/labels.go return-zero-numeric n->0",
+	"labels/labels.go return-empty-string out->\"\"",
 	"legacy/legacy.go return-true a == b->true",
 	"legacy/legacy.go return-false a == b->false",
 	"legacy/legacy.go eq-to-neq ==->!=",
-	// negate: the condition-negation and boolean-connective families. `if f`
-	// is missing because a named boolean condition has no guard form.
 	"negate/negate.go negate-condition ok && a > b->!(ok && a > b)",
+	"negate/negate.go condition-to-true ok && a > b->true",
+	"negate/negate.go condition-to-false ok && a > b->false",
 	"negate/negate.go and-to-or &&->||",
 	"negate/negate.go gt-to-ge >->>=",
 	"negate/negate.go delete-assignment out[0] = 1->",
 	"negate/negate.go negate-condition ok || a < b->!(ok || a < b)",
+	"negate/negate.go condition-to-true ok || a < b->true",
+	"negate/negate.go condition-to-false ok || a < b->false",
 	"negate/negate.go or-to-and ||->&&",
 	"negate/negate.go lt-to-le <-><=",
 	"negate/negate.go delete-assignment out[1] = 2->",
 	"negate/negate.go negate-condition !ok->!(!ok)",
 	"negate/negate.go remove-negation !ok->ok",
+	"negate/negate.go condition-to-true !ok->true",
+	"negate/negate.go condition-to-false !ok->false",
 	"negate/negate.go delete-assignment out[0] = 1->",
 	"negate/negate.go negate-loop-condition a < b->!(a < b)",
+	"negate/negate.go loop-condition-to-false a < b->false",
 	"negate/negate.go lt-to-le <-><=",
 	"negate/negate.go delete-incdec a++->",
 	"negate/negate.go incr-to-decr ++->--",
 	"negate/negate.go delete-assignment out[0] = a->",
+	"negate/negate.go negate-condition f->!(f)",
+	"negate/negate.go condition-to-true f->true",
+	"negate/negate.go condition-to-false f->false",
 	"negate/negate.go delete-assignment out[0] = 1->",
 	"negate/negate.go ge-to-gt >=->>",
 	"negate/negate.go return-true f->true",
 	"negate/negate.go return-false f->false",
-	// returns: the return-replacement family. Zero, None, Bare, and Multi
-	// contribute no return candidate at all, each for its own reason.
 	"returns/returns.go return-zero-numeric a->0",
 	"returns/returns.go return-zero-numeric a->0",
 	"returns/returns.go return-empty-string a->\"\"",
@@ -354,7 +426,9 @@ var wantCandidates = []string{
 	"returns/returns.go return-false a->false",
 	"returns/returns.go return-nil p->nil",
 	"returns/returns.go return-nil s->nil",
+	"returns/returns.go return-empty-slice s->[]int{}",
 	"returns/returns.go return-nil m->nil",
+	"returns/returns.go return-empty-map m->map[string]int{}",
 	"returns/returns.go return-nil c->nil",
 	"returns/returns.go return-nil f->nil",
 	"returns/returns.go return-nil v->nil",
@@ -362,42 +436,66 @@ var wantCandidates = []string{
 	"returns/returns.go return-zero-numeric 1->0",
 	"returns/returns.go return-zero-numeric 2->0",
 	"runes/runes.go negate-condition a > b->!(a > b)",
+	"runes/runes.go condition-to-true a > b->true",
+	"runes/runes.go condition-to-false a > b->false",
 	"runes/runes.go gt-to-ge >->>=",
 	"runes/runes.go return-empty-string label->\"\"",
 	"runes/runes.go negate-condition a < b->!(a < b)",
+	"runes/runes.go condition-to-true a < b->true",
+	"runes/runes.go condition-to-false a < b->false",
 	"runes/runes.go lt-to-le <-><=",
 	"runes/runes.go return-empty-string label->\"\"",
 	"runes/runes.go return-empty-string \"…\"->\"\"",
-	// The two shadowed `true`s in this file are absent as boolean literals on
-	// purpose: one is a package-level constant of the package's own, the other
-	// a local variable, and neither is the universe constant the rule is
-	// about. Both are still integers being returned, and the return family
-	// reads the declared result rather than the spelling.
 	"shadow/shadow.go return-zero-numeric true->0",
 	"shadow/shadow.go add-to-sub +->-",
 	"shadow/shadow.go return-zero-numeric true->0",
 	"shadow/shadow.go false-to-true false->true",
 	"shadow/shadow.go return-true false->true",
+	// Widest is the site import completion exists for: its `+` has the type
+	// carrier.Extent, and only the file beside it imports carrier. Deepest
+	// below it is the same shape one package further out, and is a skip.
+	"split/sayable.go return-zero-numeric carrier.Count(boxed(a).Size()) + b->0",
+	"split/sayable.go add-to-sub +->-",
+	"split/unsayable.go add-to-sub +->-",
+	"split/unsayable.go return-zero-numeric a->0",
+	"split/unsayable.go return-zero-numeric a->0",
 	"suppressed/suppressed.go return-zero-numeric len(Buffer{})->0",
 	"suppressed/suppressed.go negate-condition limit->!(limit)",
+	"suppressed/suppressed.go condition-to-false limit->false",
 	"suppressed/suppressed.go return-zero-numeric a->0",
+	"suppressed/suppressed.go eq-to-neq ==->!=",
 	"suppressed/suppressed.go negate-condition ok == true->!(ok == true)",
+	"suppressed/suppressed.go condition-to-true ok == true->true",
+	"suppressed/suppressed.go condition-to-false ok == true->false",
 	"suppressed/suppressed.go eq-to-neq ==->!=",
 	"suppressed/suppressed.go true-to-false true->false",
 	"suppressed/suppressed.go return-empty-string \"equal and ok\"->\"\"",
+	"suppressed/suppressed.go eq-to-neq ==->!=",
+	"suppressed/suppressed.go false-to-true false->true",
 	"suppressed/suppressed.go return-empty-string \"not ok\"->\"\"",
+	"suppressed/suppressed.go add-to-sub +->-",
+	"suppressed/suppressed.go return-empty-string \"one more\"->\"\"",
+	"suppressed/suppressed.go mul-to-div *->/",
+	"suppressed/suppressed.go return-empty-string \"twice\"->\"\"",
 	"suppressed/suppressed.go negate-condition v > b->!(v > b)",
+	"suppressed/suppressed.go condition-to-true v > b->true",
+	"suppressed/suppressed.go condition-to-false v > b->false",
 	"suppressed/suppressed.go gt-to-ge >->>=",
 	"suppressed/suppressed.go return-empty-string \"greater\"->\"\"",
 	"suppressed/suppressed.go return-empty-string v->\"\"",
 	"suppressed/suppressed.go return-empty-string \"none\"->\"\"",
+	"suppressed/suppressed.go lt-to-le <-><=",
 	"suppressed/suppressed.go return-empty-string \"sent\"->\"\"",
 	"suppressed/suppressed.go negate-condition v == true->!(v == true)",
+	"suppressed/suppressed.go condition-to-true v == true->true",
+	"suppressed/suppressed.go condition-to-false v == true->false",
 	"suppressed/suppressed.go eq-to-neq ==->!=",
 	"suppressed/suppressed.go true-to-false true->false",
 	"suppressed/suppressed.go return-empty-string \"received\"->\"\"",
 	"suppressed/suppressed.go return-empty-string \"none\"->\"\"",
+	"unnameable/unnameable.go add-to-sub +->-",
 	"unnameable/unnameable.go return-zero-numeric c.Value()->0",
+	"unnameable/unnameable.go return-zero-numeric a->0",
 }
 
 // wantSkips is every recorded reason for the same run.
@@ -410,24 +508,29 @@ var wantSkips = []string{
 	// that shadows and reads what it shadows, two in the `var` that does the
 	// same, three across the `var` block whose specs refer to each other, and
 	// one each for the two multi-line cuts.
-	"forms/forms.go unnameable-decl-type 12",
 	"generated/generated.go generated 1",
 	// One for the generic function's constraint, one for the generic type's,
 	// one for the single explicit type argument, and two for the list form.
 	"generics/generics.go type-param 5",
+	"labels/labels.go label-or-goto 1",
+	// Import completion's own boundary: a type whose package *no* file of this
+	// one imports. The sibling file beside it has no path to it either, which
+	// is what makes this a refusal while Widest in the same file is a site.
+	"split/unsayable.go unnameable-decl-type 1",
 	// The condition of a named boolean type: negatable Go, and no guard form.
-	"negate/negate.go unnameable-decl-type 1",
 	"suppressed/suppressed.go array-length 2",
-	"suppressed/suppressed.go case-label 4",
 	"suppressed/suppressed.go const-decl 4",
-	"suppressed/suppressed.go package-var-init 5",
+	// Four rather than five: the function literal in the last initialiser
+	// returns a constant comparison, so one of its two return replacements is
+	// the program it would mutate and was never an edit to decline.
+	"suppressed/suppressed.go package-var-init 4",
 	// The reason the reserved name was chosen for: a Form D site whose
 	// declared type is another package's unexported one.
 	"unnameable/unnameable.go unnameable-decl-type 1",
 }
 
 func TestDiscoverFindsEveryImplementedRule(t *testing.T) {
-	result := discoverFixture(t, "mainmod", Options{})
+	result := wholeFixture(t)
 	equalStrings(t, summarize(result.Candidates), wantCandidates)
 }
 
@@ -438,7 +541,7 @@ func TestDiscoverFindsEveryImplementedRule(t *testing.T) {
 // It reads the rules out of [SupportedRules] rather than out of a list here, so
 // a rule that lands without a fixture fails in the commit that lands it.
 func TestTheFixtureModuleFiresEveryRule(t *testing.T) {
-	result := discoverFixture(t, "mainmod", Options{})
+	result := wholeFixture(t)
 	fired := make(map[string]bool, len(result.Candidates))
 	for _, c := range result.Candidates {
 		fired[c.Rule.Name] = true
@@ -451,12 +554,12 @@ func TestTheFixtureModuleFiresEveryRule(t *testing.T) {
 }
 
 func TestDiscoverRecordsEverySkippedContext(t *testing.T) {
-	result := discoverFixture(t, "mainmod", Options{})
+	result := wholeFixture(t)
 	equalStrings(t, summarizeSkips(result.Skips), wantSkips)
 }
 
 func TestDiscoverReportsTheModule(t *testing.T) {
-	result := discoverFixture(t, "mainmod", Options{})
+	result := wholeFixture(t)
 	if result.ModulePath != "example.com/mini" {
 		t.Errorf("module path = %q, want example.com/mini", result.ModulePath)
 	}
@@ -532,7 +635,7 @@ func sourceLine(t *testing.T, src []byte, c Located) (string, bool) {
 // rests on, checked here against the bytes on disk rather than against the
 // syntax tree the candidate came from.
 func TestDiscoverSpansCoverTheOriginalText(t *testing.T) {
-	result := discoverFixture(t, "mainmod", Options{})
+	result := wholeFixture(t)
 	if len(result.Candidates) == 0 {
 		t.Fatal("no candidates to check")
 	}
@@ -623,17 +726,34 @@ var wantFormsGuards = []string{
 	"return-zero-numeric product | S return product []",
 	"negate-condition err != nil | C err != nil []",
 	"nil-error-branch err != nil | C err != nil []",
+	"condition-to-true err != nil | C err != nil []",
+	"condition-to-false err != nil | C err != nil []",
 	"neq-to-eq != | C err != nil []",
 	"return-err-to-nil err | S return 0, err []",
+	"add-to-sub + | E first + 1 []",
 	"return-zero-numeric second | S return second, err []",
 	"return-err-to-nil err | S return second, err []",
 	"return-zero-numeric a | S return a, nil []",
 	"negate-loop-condition i < n | C i < n []",
+	"loop-condition-to-false i < n | C i < n []",
 	"lt-to-le < | C i < n []",
+	"add-assign-to-sub-assign += | F i += 2 []",
 	"add-assign-to-sub-assign += | S out[0] += i []",
+	"delete-assignment half = n / 2 | F half = n / 2 []",
+	"div-to-mul / | F half = n / 2 []",
 	"negate-condition half > 0 | C half > 0 []",
+	"condition-to-true half > 0 | C half > 0 []",
+	"condition-to-false half > 0 | C half > 0 []",
+	"gt-to-ge > | C half > 0 []",
+	"delete-assignment out[0] = half | S out[0] = half []",
+	"return-zero-numeric half | S return half []",
+	"div-to-mul / | E n / 2 []",
+	"negate-condition half > 0 | C half > 0 []",
+	"condition-to-true half > 0 | C half > 0 []",
+	"condition-to-false half > 0 | C half > 0 []",
 	"gt-to-ge > | C half > 0 []",
 	"return-zero-numeric half | S return half []",
+	"add-to-sub + | E a + b []",
 	"return-empty-string \"zero\" | S return \"zero\" []",
 	"return-empty-string \"other\" | S return \"other\" []",
 	"add-to-sub + | S ch <- a + b []",
@@ -646,22 +766,26 @@ var wantFormsGuards = []string{
 	"return-true n > 0 | C n > 0 []",
 	"return-false n > 0 | C n > 0 []",
 	"gt-to-ge > | C n > 0 []",
-	// The tail of the file is five declarations Form D refuses, and not one of
-	// their sites is here: every hint below belongs to the ordinary code beside
-	// them. That is the claim those functions exist to make — a refusal removes
-	// its own candidates and leaves the rest of the function mutable — and it is
-	// only visible as an absence, so the entries that would be here if a
-	// refusal stopped working are `mul-to-div * | D total := total * 2`,
-	// `add-to-sub + | D var Limit = Limit + n*2`, the `var` block of CrossSpec,
-	// and the two multi-line cuts in Widen and Widest.
+	"mul-to-div * | E total * 2 []",
 	"delete-assignment n = total | S n = total []",
 	"return-zero-numeric n | S return n []",
+	"add-to-sub + | E Limit + n*2 []",
+	"mul-to-div * | E n*2 []",
 	"return-zero-numeric Limit | S return Limit []",
+	"add-to-sub + | E Limit + n*2 []",
+	"mul-to-div * | E n*2 []",
+	"add-to-sub + | E a + 1 []",
 	"return-zero-numeric a + Limit | S return a + Limit []",
 	"add-to-sub + | S return a + Limit []",
+	"add-to-sub + | E n + 1 []",
 	"return-zero-numeric scale(n) | S return scale(n) []",
+	"add-to-sub + | E n + 1 []",
 	"delete-assignment total.hi = start | S total.hi = start []",
 	"return-zero-numeric total.hi | S return total.hi []",
+	"negate-condition f | C' f []",
+	"condition-to-true f | C' f []",
+	"condition-to-false f | C' f []",
+	"return-zero-numeric n | S return n []",
 }
 
 // TestDiscoverEmitsTheGuardHints pins the Form D site hint contract on the
@@ -697,18 +821,27 @@ func TestDiscoverNamesADeclaredTypeFromItsOwnPackage(t *testing.T) {
 // package written to exercise it.
 func TestEveryCandidateCarriesAUsableGuard(t *testing.T) {
 	root := fixture(t, "mainmod")
-	result := discoverFixture(t, "mainmod", Options{})
+	result := wholeFixture(t)
 	if len(result.Candidates) == 0 {
 		t.Fatal("no candidates to check")
 	}
 	forms := make(map[GuardForm]int)
 	for _, c := range result.Candidates {
 		switch c.Guard.Form {
-		case GuardFormC, GuardFormS, GuardFormD:
+		case GuardFormC, GuardFormS, GuardFormD, GuardFormCPrime, GuardFormF, GuardFormE:
 			forms[c.Guard.Form]++
 		default:
-			t.Errorf("%s %s: guard form %q is not one of the three", c.Path, c.Span, c.Guard.Form)
+			t.Errorf("%s %s: guard form %q is not one this build emits", c.Path, c.Span, c.Guard.Form)
 			continue
+		}
+		// A site type belongs to the two forms that write one: Form C' converts
+		// its selector back to it and Form E returns it. The other three
+		// produce a statement or an untyped expression and have no type of
+		// their own.
+		carriesType := c.Guard.Form == GuardFormCPrime || c.Guard.Form == GuardFormE
+		if (c.Guard.SiteType != "") != carriesType {
+			t.Errorf("%s %s: a Form %s site carries SiteType %q",
+				c.Path, c.Span, c.Guard.Form, c.Guard.SiteType)
 		}
 		if !c.Guard.SiteSpan.Contains(c.Span) {
 			t.Errorf("%s: the guard site %s does not contain the edit %s", c.Path, c.Guard.SiteSpan, c.Span)
@@ -742,6 +875,10 @@ func TestEveryCandidateCarriesAUsableGuard(t *testing.T) {
 // two passes over the same bytes agree field for field, maps and directory
 // order included.
 func TestDiscoverIsDeterministic(t *testing.T) {
+	// The two passes here are deliberately not the shared one every other
+	// whole-fixture test reads: what this asserts is that discovery run twice
+	// agrees, and a cached result compared with itself would agree whatever
+	// discovery did.
 	first := discoverFixture(t, "mainmod", Options{})
 	second := discoverFixture(t, "mainmod", Options{})
 	if !reflect.DeepEqual(first, second) {
@@ -753,7 +890,7 @@ func TestDiscoverIsDeterministic(t *testing.T) {
 // structural: a test file is built, type-checked, and run, is never mutated,
 // and is never recorded as a skip either, because it was never a decision.
 func TestDiscoverNeverMutatesTestFiles(t *testing.T) {
-	result := discoverFixture(t, "mainmod", Options{})
+	result := wholeFixture(t)
 	for _, c := range result.Candidates {
 		if strings.HasSuffix(c.Path, "_test.go") {
 			t.Errorf("test file produced a candidate: %s", c.Path)
@@ -949,8 +1086,8 @@ func TestDiscoverIncludeNarrowsToOnePackage(t *testing.T) {
 			t.Errorf("candidate outside the include set: %s", c.Path)
 		}
 	}
-	if len(result.Candidates) != 27 {
-		t.Errorf("got %d candidates, want the 27 in compare: %v", len(result.Candidates), summarize(result.Candidates))
+	if len(result.Candidates) != 39 {
+		t.Errorf("got %d candidates, want the 39 in compare: %v", len(result.Candidates), summarize(result.Candidates))
 	}
 	// Everything else becomes an excluded skip rather than disappearing.
 	for _, path := range []string{
@@ -989,8 +1126,15 @@ func TestDiscoverAppliesOnlyTheSelectedRules(t *testing.T) {
 			t.Errorf("unselected rule produced a candidate: %s at %s", c.Rule.Name, c.Path)
 		}
 	}
-	if len(result.Candidates) != 4 {
-		t.Errorf("got %d eq-to-neq candidates, want 4: %v", len(result.Candidates), summarize(result.Candidates))
+	// Ten, and two of them are the tagless switch's own labels: `a == b` and
+	// the `==` of `ok == false`. A label of a switch with no tag is exactly
+	// `bool`, so it is an ordinary boolean context rather than a suppressed
+	// one -- see the corpus module's Switch for the three shapes. Four more are
+	// in the labels package, whose functions each compare a value before
+	// branching; they are incidental to what that package is for, which is
+	// what a whole-module count of one rule looks like.
+	if len(result.Candidates) != 10 {
+		t.Errorf("got %d eq-to-neq candidates, want 10: %v", len(result.Candidates), summarize(result.Candidates))
 	}
 }
 
@@ -1032,7 +1176,7 @@ func TestDiscoverRefusesAWorkspace(t *testing.T) {
 	if CodeOf(err) != CodeWorkspace {
 		t.Fatalf("code = %q, want %s (err %v)", CodeOf(err), CodeWorkspace, err)
 	}
-	if !strings.Contains(err.Error(), "multi-module workspaces are not yet supported") {
+	if !strings.Contains(err.Error(), "a single-module discovery cannot measure one") {
 		t.Errorf("message does not say what is unsupported: %v", err)
 	}
 }
@@ -1131,7 +1275,7 @@ func TestDiscoverSkipsCgoPackages(t *testing.T) {
 	for _, enabled := range []string{"0", "1"} {
 		t.Run("CGO_ENABLED="+enabled, func(t *testing.T) {
 			t.Setenv("CGO_ENABLED", enabled)
-			result := discoverFixture(t, "mainmod", Options{})
+			result := wholeFixture(t)
 			for _, path := range []string{"cgopkg/cgo.go", "cgopkg/pure.go"} {
 				if !hasSkip(result.Skips, path, SkipCgo, 1) {
 					t.Errorf("no cgo skip for %s: %v", path, summarizeSkips(result.Skips))
@@ -1183,7 +1327,7 @@ func TestDiscoverRejectsARootThatIsNotAModuleRoot(t *testing.T) {
 // and asserted here, because a duplicate arising for any *other* reason would
 // mean two rules quietly doing one rule's work.
 func TestBuildCatalogAcceptsEveryCandidate(t *testing.T) {
-	result := discoverFixture(t, "mainmod", Options{})
+	result := wholeFixture(t)
 	catalog, err := BuildCatalog(result)
 	if err != nil {
 		t.Fatalf("BuildCatalog: %v", err)
@@ -1325,5 +1469,86 @@ func TestResultCarriesTheDigestOfEveryScannedFile(t *testing.T) {
 	if len(result.SourceDigests) <= len(catalogued) {
 		t.Errorf("discovery recorded %d digests for %d catalogued files, want a digest for the"+
 			" files it read and found nothing in", len(result.SourceDigests), len(catalogued))
+	}
+}
+
+// TestTheLoaderParsesEachSourceFileOnceAndNoTestFile is the counted form of
+// what discovery is for.
+//
+// Discovery walks non-test files, once each. The loader it walks them with
+// decides how much type-checking that costs, and the two are not the same
+// number unless somebody says so: asking go/packages for the test variants of
+// every package makes it parse and type-check each package twice — once as
+// itself and once with its in-package test files — and then again for the
+// external test package and the generated test main. On this module that is
+// three files parsed for every one walked, every one of them type-checked, on
+// the critical path of every run.
+//
+// The two claims below are the whole of that waste, and neither is about the
+// loader's spelling: a file discovery parses twice is a file it type-checked
+// twice, and a test file it parses is one it will not walk. Counting them here
+// rather than timing anything is deliberate — how much work a phase does is a
+// property of the phase, how long that takes is a property of the machine.
+func TestTheLoaderParsesEachSourceFileOnceAndNoTestFile(t *testing.T) {
+	t.Parallel()
+	root := fixture(t, "mainmod")
+	loaded, err := load(context.Background(), root, toolchain(t), nil, false, nil)
+	if err != nil {
+		t.Fatalf("loading the fixture module: %v", err)
+	}
+	seen := make(map[string]string)
+	var tests, twice []string
+	for _, pkg := range loaded.packages {
+		for _, file := range pkg.Syntax {
+			tokFile := loaded.fset.File(file.Package)
+			if tokFile == nil {
+				continue
+			}
+			name := tokFile.Name()
+			if isTestFile(name) {
+				tests = append(tests, pkg.ID+": "+name)
+			}
+			if first, ok := seen[name]; ok {
+				twice = append(twice, name+" in "+first+" and in "+pkg.ID)
+				continue
+			}
+			seen[name] = pkg.ID
+		}
+	}
+	if len(tests) != 0 {
+		t.Errorf("the loader parsed %d test files discovery will not walk:\n\t%s",
+			len(tests), strings.Join(tests, "\n\t"))
+	}
+	if len(twice) != 0 {
+		t.Errorf("the loader parsed %d files more than once:\n\t%s",
+			len(twice), strings.Join(twice, "\n\t"))
+	}
+}
+
+// TestDiscoverReadsATreeWhoseTestFilesDoNotCompile draws the boundary of the
+// compiling-tree precondition where the precondition's own argument puts it.
+//
+// A package that does not type-check is refused because discovery reads its
+// types: a rule that cannot tell the universe's `true` from a shadowed one
+// would produce a smaller catalogue instead of an error. Not one of those reads
+// is of a test file. A test file is built and run and never mutated, so a
+// compiler error in one says nothing about the type information this phase
+// takes its answers from, and refusing the whole tree for it refuses a run the
+// tree can perfectly well support -- one whose test command names other
+// packages entirely.
+//
+// The failure is still reported, by the phase whose business it is: the
+// baseline builds and runs the test command, and a test file inside that scope
+// that does not compile fails there, naming the file, before a mutant exists.
+func TestDiscoverReadsATreeWhoseTestFilesDoNotCompile(t *testing.T) {
+	t.Parallel()
+	result := discoverFixture(t, "brokentests", Options{})
+	if len(result.Candidates) == 0 {
+		t.Fatal("no candidate came out of the package beside the broken test file")
+	}
+	for _, candidate := range result.Candidates {
+		if candidate.Path != "count.go" {
+			t.Errorf("candidate in %q, which is not the file the fixture mutates", candidate.Path)
+		}
 	}
 }

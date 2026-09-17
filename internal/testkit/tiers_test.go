@@ -6,7 +6,10 @@ package testkit
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"go/build/constraint"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"maps"
 	"os"
@@ -35,12 +38,21 @@ const AllowlistPath = "internal/testkit/testdata/unit-toolchain-allowlist.txt"
 // They are the spellings this repository actually uses rather than a general
 // analysis: gomutants.Open probes a toolchain and snapshots a module,
 // gocmd.Locate runs `go version` and `go env`, an os/exec lookup of the go
-// binary is the hand-rolled form that predates the harness, and the three
-// harness helpers are how everything migrated onto it asks for a toolchain or a
-// git. A file containing any of them cannot run on a machine without Go, and —
-// far more to the point — it costs a process tree rather than a function call.
+// binary — and the same lookup of git — is the hand-rolled form that predates
+// the harness, and the six harness
+// helpers are how everything migrated onto it asks for a toolchain or a git. A
+// file containing any of them cannot run on a machine without Go or without
+// git, and — far more to the point — it costs a process tree rather than a
+// function call.
 //
-// The last three are matched *unqualified*, which is the difference between a
+// The three git runners were missing from this list until a gate that reads
+// `git ls-files` was written against it and slipped through. GitBinary resolves
+// the tool and applies the policy, but Git, GitInit and GitCommit each start a
+// child on their own, and a file may call any of them without ever naming
+// GitBinary. A needle list that names the resolver and not the runners is a
+// list that catches the polite spelling.
+//
+// The last six are matched *unqualified*, which is the difference between a
 // rule and a rule with a hole in it. Written as `testkit.GoBinary(` they would
 // never match a call inside package testkit, so the one package whose whole
 // subject is which tools a test may reach would be exempt from the tier policy
@@ -54,10 +66,14 @@ const AllowlistPath = "internal/testkit/testdata/unit-toolchain-allowlist.txt"
 var toolchainNeedles = []string{
 	"gomutants." + "Open(",
 	"exec." + `LookPath("go")`,
+	"exec." + `LookPath("git")`,
 	"gocmd." + "Locate(",
 	"GoBinary" + "(",
 	"GitBinary" + "(",
 	"Toolchain" + "(",
+	"Git" + "(",
+	"GitInit" + "(",
+	"GitCommit" + "(",
 }
 
 // fakeableNeedles are the calls that can be handed a toolchain instead of
@@ -513,8 +529,15 @@ func toolchainDrivingTests(root string) ([]drivingFile, error) {
 		if readErr != nil {
 			return readErr
 		}
-		text := string(source)
-		needle, drives := drivingNeedle(text)
+		// Two readings of one file, and they are not interchangeable. The
+		// needles are looked for in code, so comments are blanked first: a
+		// paragraph naming a call is not a call. The build constraint *is* a
+		// comment, so it is read from the source as written.
+		code, blankErr := withoutComments(path, string(source))
+		if blankErr != nil {
+			return blankErr
+		}
+		needle, drives := drivingNeedle(code)
 		if !drives {
 			return nil
 		}
@@ -525,7 +548,7 @@ func toolchainDrivingTests(root string) ([]drivingFile, error) {
 		found = append(found, drivingFile{
 			path:   filepath.ToSlash(rel),
 			needle: needle,
-			tagged: hasIntegrationTag(text),
+			tagged: hasIntegrationTag(string(source)),
 		})
 		return nil
 	})
@@ -534,6 +557,49 @@ func toolchainDrivingTests(root string) ([]drivingFile, error) {
 	}
 	slices.SortFunc(found, func(a, b drivingFile) int { return strings.Compare(a.path, b.path) })
 	return found, nil
+}
+
+// withoutComments blanks every comment in one file, keeping every byte where it
+// was.
+//
+// The scan looks for the spelling of a call, and a comment explaining the rule
+// spells it too: the paragraph above [drivingNeedle] names three needles, and a
+// file that described its own use of one would be reported for the sentence. The
+// allowlist can hold such a file, and holding it is the wrong fix -- the entry
+// would say "this file drives a toolchain" about a file that does not, and the
+// next file to explain itself pays the same price.
+//
+// Parsing the comments out is not the parsing this scan avoids. What it avoids
+// is type information, which needs the module loaded, which needs the toolchain
+// this tier does not have. go/parser reads one file and needs nothing.
+//
+// Bytes are replaced rather than removed so that offsets do not move, which is
+// what keeps [containsCall]'s look at the preceding byte meaning what it means:
+// a comment ends up as spaces, and a space does not continue an identifier.
+func withoutComments(path, text string) (string, error) {
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, path, text, parser.ParseComments)
+	if err != nil {
+		// A file this scan cannot parse is not a file it can read honestly
+		// either, and reading it as "no toolchain here" is the quiet pass this
+		// gate exists to refuse.
+		return "", fmt.Errorf("parsing %s to blank its comments: %w", path, err)
+	}
+
+	blanked := []byte(text)
+	base := fileSet.File(parsed.Pos()).Base()
+	for _, group := range parsed.Comments {
+		for _, comment := range group.List {
+			start := int(comment.Pos()) - base
+			end := int(comment.End()) - base
+			for i := start; i < end && i < len(blanked); i++ {
+				if blanked[i] != '\n' {
+					blanked[i] = ' '
+				}
+			}
+		}
+	}
+	return string(blanked), nil
 }
 
 // containsCall reports whether text calls needle, as opposed to merely ending a
@@ -685,4 +751,47 @@ func readAllowlist(path string) ([]string, error) {
 		allowed = append(allowed, entry)
 	}
 	return allowed, nil
+}
+
+// TestTheScanReadsCodeAndNotTheProseAboutIt is the other half of blanking
+// comments before the needles are looked for.
+//
+// [TestEveryToolchainDrivingTestIsIntegrationTagged] passes when no unit-tier
+// file drives a toolchain, and it would pass just as quietly if blanking had
+// removed the calls along with the sentences. So both directions are shown
+// here: a call in a comment stops counting, a call in code goes on counting,
+// and the byte before a call is still the byte that was before it — which is
+// what [containsCall] looks at to tell `AnyGoBinary(` from `GoBinary(`.
+func TestTheScanReadsCodeAndNotTheProseAboutIt(t *testing.T) {
+	t.Parallel()
+
+	const source = `package example
+
+// This paragraph explains the rule by naming testkit.GoBinary( in prose, which
+// is what a file describing its own tiering has to do.
+func drives() {
+	_ = testkit.GoBinary(nil)
+	_ = mutantkit.AnyGoBinary(nil)
+}
+`
+
+	code, err := withoutComments("example_test.go", source)
+	if err != nil {
+		t.Fatalf("blanking comments: %v", err)
+	}
+
+	if strings.Count(code, "testkit.GoBinary(") != 1 {
+		t.Errorf("the code holds %d call(s) to the needle after blanking, want the one in code:\n%s",
+			strings.Count(code, "testkit.GoBinary("), code)
+	}
+	if len(code) != len(source) {
+		t.Errorf("blanking moved bytes: %d before, %d after; containsCall reads the byte before a "+
+			"match, so a shifted offset changes what it decides", len(source), len(code))
+	}
+	if !containsCall(code, "GoBinary(") {
+		t.Error("the call in code stopped counting, which is the failure that would make the scan pass by seeing nothing")
+	}
+	if strings.Contains(code, "explains the rule") {
+		t.Error("the prose survived blanking")
+	}
 }

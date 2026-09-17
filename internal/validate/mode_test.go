@@ -108,14 +108,16 @@ func validateModeFixture(t *testing.T, mode instrument.Mode) []byte {
 		catalog:  catalog,
 		hints:    hints,
 		mode:     mode,
+		modules:  []Module{{Dir: ".", Path: "example.com/mini"}},
 		byPath:   make(map[string][]mutation.Mutant),
 		pristine: make(map[string][]byte),
 		guards:   make(map[string]int),
+		files:    make(map[string]fileRef),
 	}
 	v.apply = v.instrumentFile
 	v.build = func(context.Context) (verdict, error) { return verdict{}, nil }
 
-	result, err := v.run(context.Background(), "example.com/mini")
+	result, err := v.run(context.Background())
 	if err != nil {
 		t.Fatalf("validating in mode %d: %v", mode, err)
 	}
@@ -170,7 +172,11 @@ func modeCatalog(t *testing.T, rel string) (*mutation.Catalog, instrument.Hints)
 	return catalog, instrument.Hints{id: discover.Guard{
 		Form:     discover.GuardFormS,
 		SiteSpan: statement,
-		Return: &discover.ReturnSite{
+		Probe: &discover.ProbeSite{
+			// The form is stated rather than left zero: the rewriter branches
+			// on it before reading anything else, so a hand-built hint that
+			// omitted it would be one no renderer claims.
+			Form:  discover.ProbeFormReturn,
 			Span:  statement,
 			Types: []string{"int", "error"},
 			Index: 0,

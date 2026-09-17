@@ -66,6 +66,10 @@ type MutantResult struct {
 	// its rows instead.
 	MemoryExceeded bool
 	PeakMemory     int64
+	// Diverged says a counted loop is what settled this mutant rather than the
+	// deadline. It is here for MemoryExceeded's reason and no other: a cached
+	// mutant has no execution rows to read it off.
+	Diverged bool
 	// Executions are the passes this run made over the test binaries for this
 	// mutant, in attempt order. Nil becomes the empty list, which is what a
 	// mutant nothing executed carries.
@@ -91,6 +95,17 @@ type MutantResult struct {
 	// a document that recorded a killed mutant as uncovered would be describing
 	// a detection nothing performed.
 	Uncovered bool
+	// Unobserved says the run established that no test binary *could observe*
+	// this mutant and therefore did not execute it. Such a result is a survivor
+	// with no attempts, exactly as an uncovered one is, and [Build] refuses any
+	// other combination for the same reason.
+	//
+	// It is the other half of a pair a reader has to be able to tell apart. An
+	// uncovered mutant's lines are never run; an unobserved one's are run, and
+	// running them changes nothing any test looks at. "Uncovered" for the
+	// second would send somebody to write a test for a line that is already
+	// tested.
+	Unobserved bool
 	// Cached says the outcome was adopted from the outcome cache rather than
 	// measured by this run. The rest of the fields are then the ones the run
 	// that measured it recorded. See [Mutant.Cached] for what [Build] refuses.
@@ -140,6 +155,23 @@ type Options struct {
 	// stated rather than counted, because "selected but never reached" — an
 	// interrupted run — is a real state that no count of results can express.
 	Selected int
+
+	// Module is which module of the catalogue this document is about, and is
+	// empty for a run over one module -- which is every run that is not a
+	// workspace run.
+	//
+	// A workspace is measured as one run over one catalogue that spans its
+	// modules and reported one module at a time, because `workspace.module_path`
+	// is required of a run report and a workspace has no single answer for it.
+	// See ADR 0012. So the catalogue given here is the whole one and this says
+	// whose document is being built: the mutants of the other modules belong to
+	// their own documents, and counting them here would make every module's
+	// score the workspace's.
+	//
+	// It is the value a catalogued mutant's own ModulePath carries, which for a
+	// single-module catalogue is the empty string -- so a run that is not a
+	// workspace run selects everything by leaving this alone.
+	Module string
 
 	// ModulePath, GoVersion and WorkspaceDigest name the tree that was read.
 	// The digest is required and checked; the other two fall back to "unknown".
@@ -506,7 +538,13 @@ func partition(opts Options, results map[string]MutantResult, rejections map[str
 	mutants := make([]Mutant, 0, len(catalogued))
 	rejected := make([]Rejected, 0, len(rejections))
 	for _, m := range catalogued {
-		where, ok := located[locationKey{path: m.Path, span: m.Span, rule: m.Rule.Name}]
+		// One module's document holds one module's mutants. Everything else in
+		// the catalogue belongs to a sibling's, and for a run over one module
+		// the two strings are both empty and nothing is skipped.
+		if m.ModulePath != opts.Module {
+			continue
+		}
+		where, ok := located[keyOf(m.ModulePath, m.Path, m.Span, m.Rule.Name)]
 		if !ok {
 			return nil, nil, &Error{
 				Code: CodeMissingLocation,
@@ -574,9 +612,11 @@ func partition(opts Options, results map[string]MutantResult, rejections map[str
 			CoveringTestPackages: stringList(result.CoveringTestPackages),
 			CoveringTests:        testRefs(result.CoveringTests),
 			Uncovered:            result.Uncovered,
+			Unobserved:           result.Unobserved,
 			Cached:               result.Cached,
 			MemoryExceeded:       result.MemoryExceeded || anyExecutionExceeded(result.Executions),
 			PeakMemoryBytes:      max(result.PeakMemory, highestExecutionPeak(result.Executions)),
+			Diverged:             result.Diverged || anyExecutionDiverged(result.Executions),
 		})
 	}
 	if err := checkAccountedFor(opts, len(mutants), len(rejected)); err != nil {
@@ -651,6 +691,12 @@ func checkExecutions(m mutation.Mutant, result MutantResult, outcome Outcome) er
 		return &Error{
 			Code: CodeInvalidExecutions,
 			Message: fmt.Sprintf("mutant %s is marked uncovered and carries %s: coverage settles a mutant without starting a process",
+				m.DisplayID, countNoun(len(result.Executions), "execution")),
+		}
+	case result.Unobserved:
+		return &Error{
+			Code: CodeInvalidExecutions,
+			Message: fmt.Sprintf("mutant %s is marked unobserved and carries %s: a probe settles a mutant without starting a process",
 				m.DisplayID, countNoun(len(result.Executions), "execution")),
 		}
 	case outcome == OutcomeNotRun:
@@ -738,53 +784,77 @@ func joinReasons() string {
 	return strings.Join(names, ", ")
 }
 
-// checkAccountedFor proves that every result and every rejection was consumed
-// by the catalogue walk.
+// checkAccountedFor proves that every result and every rejection names a
+// catalogued mutant, and that every one of them belonging to this document was
+// consumed by the catalogue walk.
 //
-// It is a counting argument rather than a second lookup loop: the walk consumed
-// one distinct id per row it produced, the maps hold distinct ids, so equal
-// counts mean equal sets. What it catches is a result or a rejection naming a
-// mutant the catalogue does not have — which means two phases are looking at
-// different catalogues, and everything downstream of that is fiction.
+// A row naming a mutant the catalogue does not have means two phases are
+// looking at different catalogues, and everything downstream of that is
+// fiction, so it is named where it is found. The rest is a counting argument
+// rather than a second lookup loop: the walk consumed one distinct id per row
+// it produced, the rows hold distinct ids, so equal counts mean equal sets.
+//
+// "Belonging to this document" is what makes the count right in a workspace,
+// where one run's results span the modules and one document holds one module's.
+// A row for another module's mutant is not unaccounted for; it is accounted for
+// in that module's document. For a run over one module every row belongs here,
+// exactly as it always did.
 func checkAccountedFor(opts Options, mutants, rejected int) error {
-	if len(opts.Results) != mutants {
-		return unknownMutant("result", opts.Results, func(r MutantResult) string { return r.ID }, opts.Catalog)
+	if err := checkRowsOf(opts, "result", opts.Results,
+		func(r MutantResult) string { return r.ID }, mutants); err != nil {
+		return err
 	}
-	if len(opts.Rejections) != rejected {
-		return unknownMutant("rejection", opts.Rejections, func(r Rejection) string { return r.ID }, opts.Catalog)
-	}
-	return nil
+	return checkRowsOf(opts, "rejection", opts.Rejections,
+		func(r Rejection) string { return r.ID }, rejected)
 }
 
-// unknownMutant names the first row whose id the catalogue does not know. The
-// rows are already known to be distinct, so there is one.
-func unknownMutant[T any](kind string, rows []T, id func(T) string, catalog *mutation.Catalog) error {
+// checkRowsOf is [checkAccountedFor] for one kind of row.
+func checkRowsOf[T any](opts Options, kind string, rows []T, id func(T) string, consumed int) error {
+	mine := 0
 	for _, row := range rows {
-		if _, known := catalog.ByID(id(row)); !known {
+		m, known := opts.Catalog.ByID(id(row))
+		if !known {
 			return &Error{
 				Code: CodeUnknownMutant,
 				Message: fmt.Sprintf("the %s for mutant %s names an id that is not in this run's catalogue",
 					kind, display(id(row))),
 			}
 		}
+		if m.ModulePath == opts.Module {
+			mine++
+		}
 	}
-	// Unreachable: the counts only disagree when a row was not consumed, and a
-	// row is consumed exactly when its id is catalogued. Reported rather than
-	// returned as nil, because a nil here would silently produce a report that
-	// has lost a mutant.
+	if mine == consumed {
+		return nil
+	}
+	// Unreachable: the counts only disagree when a row of this module was not
+	// consumed, and such a row is consumed exactly when its id is catalogued --
+	// which the loop above has just established of every row. Reported rather
+	// than returned as nil, because a nil here would silently produce a report
+	// that has lost a mutant.
 	return &Error{
 		Code:    CodeUnknownMutant,
 		Message: "internal error: a " + kind + " could not be matched to the catalogue",
 	}
 }
 
-// locationKey identifies a candidate by everything the catalogue keeps, which
-// is what lets a catalogued mutant be joined back to the coordinates discovery
-// found it at. It is the same join internal/cli makes for `list --json`.
+// A locationKey is what identifies one candidate among the discovery's: the
+// module it belongs to, the file within that module, the span, and the rule.
+//
+// The module is part of it for the reason it is part of the identity: two
+// modules of one workspace can each hold an `app.go`, and an edit at one span
+// by one rule in each is two candidates. A key without it would hand one
+// module's coordinates to the other module's mutant, silently.
 type locationKey struct {
-	path string
-	span mutation.Span
-	rule string
+	module string
+	path   string
+	span   mutation.Span
+	rule   string
+}
+
+// keyOf is the location key of one candidate.
+func keyOf(module, path string, span mutation.Span, rule string) locationKey {
+	return locationKey{module: module, path: path, span: span, rule: rule}
 }
 
 // branchOf converts discovery's branch proof into the document's. Nil stays
@@ -808,7 +878,7 @@ func branchOf(proof *discover.BranchProof) *Branch {
 func locate(candidates []discover.Located) map[locationKey]discover.Located {
 	out := make(map[locationKey]discover.Located, len(candidates))
 	for _, candidate := range candidates {
-		key := locationKey{path: candidate.Path, span: candidate.Span, rule: candidate.Rule.Name}
+		key := keyOf(candidate.ModulePath, candidate.Path, candidate.Span, candidate.Rule.Name)
 		if _, seen := out[key]; !seen {
 			out[key] = candidate
 		}
@@ -1027,6 +1097,11 @@ func coverageBlock(mode CoverageMode, binaryCount, testCount int, mutants []Muta
 		}
 		uncovered++
 	}
+	for _, m := range mutants {
+		if err := checkUnobserved(m); err != nil {
+			return Coverage{}, err
+		}
+	}
 
 	coverage := Coverage{Mode: mode}
 	if !mode.Narrowed() {
@@ -1053,6 +1128,35 @@ func coverageBlock(mode CoverageMode, binaryCount, testCount int, mutants []Muta
 	tests := testCount
 	coverage.Tests = &tests
 	return coverage, nil
+}
+
+// checkUnobserved refuses the combinations an unobserved mutant cannot be in.
+//
+// The same two the uncovered check makes, for the same reason -- a mutant the
+// run did not execute is a survivor with no attempts -- and one more that is
+// this pair's own: a mutant cannot be both. Coverage settles what nothing
+// reaches before a probe is asked about it, so a mutant marked both would be
+// one two phases each claim to have settled, and a reader could not tell which
+// remedy to reach for.
+func checkUnobserved(m Mutant) error {
+	if !m.Unobserved {
+		return nil
+	}
+	switch {
+	case m.Uncovered:
+		return &Error{
+			Code: CodeInvalidCoverage,
+			Message: fmt.Sprintf("mutant %s is marked both uncovered and unobserved: coverage settles a mutant "+
+				"nothing reaches before a probe is asked whether anything could see it", m.DisplayID),
+		}
+	case m.Outcome != OutcomeSurvived || m.Attempts != 0:
+		return &Error{
+			Code: CodeInvalidCoverage,
+			Message: fmt.Sprintf("mutant %s is marked unobserved but is %s after %s: an unobserved mutant is a "+
+				"survivor the run never executed", m.DisplayID, m.Outcome, countNoun(m.Attempts, "attempt")),
+		}
+	}
+	return nil
 }
 
 // checkCoverageFacts refuses a row that names tests in a run that never
@@ -1370,8 +1474,8 @@ func joinMemorySources() string {
 	return strings.Join(names, ", ")
 }
 
-// anyExecutionExceeded and highestExecutionPeak fold a mutant's rows into the
-// two facts the mutant itself carries.
+// anyExecutionExceeded, highestExecutionPeak and anyExecutionDiverged fold a
+// mutant's rows into the three facts the mutant itself carries.
 //
 // They are folded rather than required of the caller because the caller already
 // said it once per pass, and a second hand-maintained copy is a second thing to
@@ -1382,6 +1486,18 @@ func joinMemorySources() string {
 func anyExecutionExceeded(executions []Execution) bool {
 	for _, execution := range executions {
 		if execution.MemoryExceeded {
+			return true
+		}
+	}
+	return false
+}
+
+// anyExecutionDiverged is the same fold for the other thing that ends a target
+// without a test failing: a counted loop past the ceiling the run derived for
+// it. See ADR 0013.
+func anyExecutionDiverged(executions []Execution) bool {
+	for _, execution := range executions {
+		if execution.Diverged {
 			return true
 		}
 	}

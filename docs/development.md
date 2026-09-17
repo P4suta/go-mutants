@@ -5,6 +5,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Development
 
+**Status: implemented, and checked.** Every task, environment variable and
+command this page names exists; `internal/testkit/devdocs_test.go` fails when
+one stops existing or when this page stops naming one.
+
 How the developer infrastructure of this repository fits together: what a test
 gets from the harness, which tier it belongs in, where it writes, what a failure
 leaves behind, and how to read the account a run keeps of itself.
@@ -319,20 +323,13 @@ test's output rather than only a failure's.
 
 ### The CI jobs
 
-`.github/workflows/ci.yml`, on every push and pull request:
+[Continuous integration](ci.md) is the page for what runs where: the six gates
+of `ci.yml`, the four nightly searches, and the one aggregate job branch
+protection names. `internal/testkit/cidoc_test.go` keeps it equal to the
+workflows, so it is the one to read rather than this one.
 
-| Job | What it runs |
-| --- | --- |
-| `quality` | `mise run check`, the corpus gate, `committed` over the range |
-| `platform-tests` | `mise run test-cost` and `test-cost-integration` on ubuntu, windows and macos |
-| `race` | `mise run test-race`, ubuntu |
-| `coverage` | `mise run cover-integration`, ubuntu, not on pull requests |
-| `dogfood` | `mise run dogfood` |
-| `artifacts` | `mise run package`, and the snapshot archives |
-
-`.github/workflows/nightly.yml`, at 02:17 UTC: `fuzz` (five minutes per target),
-`property` (the `rapid` suites deepened and repeated with random seeds),
-`race-integration` (`mise run test-integration-race`) and `bench`.
+Two conventions belong here as well as there, because they are about the
+harness rather than about the jobs.
 
 Both workflows set `GO_MUTANTS_TEST_REQUIRE_TOOLS: "1"` at the workflow level, so
 a missing `go` or `git` fails a job rather than silently narrowing it to the
@@ -965,7 +962,7 @@ command can be pointed at.
 conventions in prose and carries one table row per fixture saying what that
 fixture is *for* — `simple/` is the happy path, `killable/` is the end-to-end
 kill with thirteen predetermined fates, `families/` holds at least one live
-candidate for each of the 42 rules, `selfwriting/` is the suite that writes into
+candidate for each of the 49 rules, `selfwriting/` is the suite that writes into
 the tree it runs in, and so on.
 
 The conventions, each of which is a rule somebody would otherwise break
@@ -1056,6 +1053,33 @@ recording are already the machine-readable forms.
 `trace/docs_test.go` fails when an `ExecKind` exists in the code and nowhere on
 that page.
 
+### Auditing a run against its own recording
+
+A run publishes two documents about itself: the report is the claim and the
+recording is the account. `internal/devtools/traceaudit` reads both and asks
+whether they agree, with code that never calls the engine's — the shapes it
+decodes are declared in the package rather than reused from `internal/report`,
+because a re-derivation that shared the code would agree for the same reasons
+rather than for independent ones.
+
+```console
+go run ./internal/devtools/traceaudit REPORT TRACE
+```
+
+It exits 0 when they agree and 1 when they do not. Findings the recording
+cannot settle — a mutant it holds no events for, a stream that dropped events, a
+run that was interrupted — are printed as `unaudited` and do not change the exit
+code, because turning "I cannot check this" into "this is fine" and into "this
+is broken" are both wrong, and the second is what makes a gate get switched off.
+
+Two runs are committed under the package's `testdata/`, so a change that makes
+the two documents disagree fails in `mise run test` rather than in a job nobody
+is watching. Regenerate them from a copy of the fixture when the documents
+change shape, and note that a trace is still not evidence
+([ADR 0001](adr/0001-trace-is-not-evidence.md)): the question here is whether
+the two agree, and a disagreement is a bug in go-mutants rather than a verdict
+about anybody's code.
+
 ### Tracing from a test
 
 `mutantkit.Trace(t)` returns a recorder and `mutantkit.TraceSink(t)` the sink
@@ -1100,12 +1124,14 @@ no bundle at all. Either way, it holds:
 | `doctor.txt` | the `doctor` table for the machine |
 | `trace.jsonl` | the run's own account, out of the in-memory ring — only when the run was not traced, because a traced run's stream is already in this directory and writing the ring out beside it would be the same run told twice with one telling truncated |
 | `report.json` | the run report, if there was one |
+| `manifest.json` | the index: which files are here, which failure this is, and which run — the one file in the bundle a program reads, answering [`schema/diagnostics-v1.schema.json`](json-schema.md#go-mutantsdiagnostics-v1) |
 | `preserved-paths.txt` | what the run left on disk, or a line saying it left nothing |
 
-`error.txt` is written first and `preserved-paths.txt` last, and the presence of
-the last one — never empty, so a reader is never left wondering whether the run
-kept nothing or the writer stopped — is what says the bundle is finished. That is
-how the collector tells a finished bundle from a run still writing one. The
+`error.txt` is written first, `manifest.json` second to last and
+`preserved-paths.txt` last, and the presence of the last one — never empty, so a
+reader is never left wondering whether the run kept nothing or the writer
+stopped — is what says the bundle is finished. That is how the collector tells a
+finished bundle from a run still writing one. The
 newest ten are kept, `go-mutants trace clean` sweeps them with the recordings, an
 interrupted run writes none, and a bundle that cannot be written is a `GOM1014`
 warning rather than a different exit code.
@@ -1209,25 +1235,55 @@ anything that shells out to `go`.
 undeclared survivor fails the build. It is the gate on whether the tests *catch*
 anything, which is why coverage is allowed to be a signal.
 
+`mise run dogfood-audit` is the same run with `--trace`, followed by
+`internal/devtools/traceaudit` re-deriving the report from the recording beside
+it. It answers a different question: not whether the tests catch a mutant, but
+whether the document saying they did agrees with the account of what ran. The
+report is written by the run it describes, so until two documents are read
+separately the run is the only witness to its own honesty. A finding the
+recording cannot settle is counted apart from a disagreement, and only
+disagreements change the exit code.
+
 The scope, the measured score and the floor live in `.go-mutants.toml`, next to
-the settings they justify. It covers eleven whole packages:
+the settings they justify. It covers seventeen whole packages:
 
 | package | mutants | what it is |
 | --- | --- | --- |
-| `internal/report` | 1095 | what a run writes down — the RunReport v1 document, the history store, the projection into the published format, the self-contained page, and the merge that puts a split run back together |
-| `internal/config` | 461 | the reader of the file above — decoding, validation, precedence, the byte-size vocabulary, and the walk that locates a diagnostic in it |
-| `internal/mutation` | 450 | the mutation model everything downstream is built on — catalogue, identity, rule set, scoring, sharding, exit policy |
-| `internal/coverage` | 146 | the profile reader, and the mapping that decides which suites a mutant is measured against |
-| `internal/gocmd` | 106 | the toolchain wrapper — locating `go`, probing and parsing its version, the GOFLAGS merge, and the typed failures of all three |
+| `internal/report` | 1361 | what a run writes down — the RunReport v1 document, the history store, the projection into the published format, the self-contained page, and the merge that puts a split run back together |
+| `internal/config` | 505 | the reader of the file above — decoding, validation, precedence, the byte-size vocabulary, and the walk that locates a diagnostic in it |
+| `internal/mutation` | 477 | the mutation model everything downstream is built on — catalogue, identity, rule set, scoring, sharding, exit policy |
+| `internal/cache` | 422 | the outcomes a later run may reuse — the key that identifies a run, the entries, and the three commands that survey, collect and clear them |
+| `internal/validate` | 369 | which mutants are real — the compile that proves it, and the search that finds the ones that are not |
+| `internal/snapshot` | 329 | the disposable copy every run is measured in — the walk, the copy, the ownership of the directory, and the drift report that proves the copy is still what it was |
+| `internal/gitdiff` | 257 | what `--changed` selects by — the git commands, their diagnostics, and the unified-diff reader underneath |
+| `internal/coverage` | 162 | the profile reader, and the mapping that decides which suites a mutant is measured against |
+| `internal/tempowner` | 121 | which temporary directory a run owns, and which a later run may reclaim — the marker, the advisory lock, and the sweep |
+| `internal/gocmd` | 111 | the toolchain wrapper — locating `go`, probing and parsing its version, the GOFLAGS merge, and the typed failures of all three |
 | `internal/schemas` | 89 | the JSON schema validation every published document goes through |
-| `internal/glob` | 68 | the glob engine those identities depend on |
-| `internal/interval` | 48 | the five-way span relation the interval forest is built on |
+| `internal/glob` | 71 | the glob engine those identities depend on |
+| `internal/interval` | 50 | the five-way span relation the interval forest is built on |
+| `internal/drift` | 21 | which change to an instrumented snapshot the instrumentation did not make |
 | `internal/operatorselect` | 16 | which rules a profile or an `--operator` name selects |
-| `internal/drift` | 11 | which change to an instrumented snapshot the instrumentation did not make |
+| `internal/testlog` | 15 | the reader of the action log a test binary writes under `-test.testlogfile` |
 | `internal/testflag` | 7 | which argument names a test-binary flag |
 
-Nine of the ten are pure arithmetic, pure text matching, a pure filter over a
-digest table, or a pure decision over values handed in, with no clock and no
+Those counts are what this platform catalogues, and the qualifier is load-bearing
+for one of them: `internal/tempowner/lock_windows.go` is not built where this
+gate runs, so discovery never opens it and none of its lines are in the 121. A
+gate that said nothing about what it does not cover would be a number wearing a
+gate's clothes.
+
+The other thing a count does not say is what it needs. 257 of these mutants are
+killed by a suite that drives a real `git`, so on a machine without one they all
+survive and the gate reports that rather than the missing tool.
+`GO_MUTANTS_TEST_REQUIRE_TOOLS` is what turns such a skip into a failure and it
+cannot reach a mutant run: `internal/execute` strips every `GO_MUTANTS_`
+variable from every child, which is the rule that stops an exported
+`GO_MUTANTS_ACTIVE` from running a mutant as the baseline. Survivors all in one
+package means a missing tool, not a regression.
+
+Ten of the seventeen are pure arithmetic, pure text matching, a pure filter over
+a digest table, or a pure decision over values handed in, with no clock and no
 network, so a mutant either changes an answer or it does not. `internal/config`
 reaches the filesystem in exactly one place — `os.ReadFile` in `LoadFile` — and
 everything under it takes bytes and returns an answer.
@@ -1262,6 +1318,130 @@ fails" and "a marker appeared between the read and the create" are staged by
 failing the *n*-th file creation, or by acting just before it. A test that uses
 any of this cannot be `t.Parallel`.
 
+`internal/tempowner` is the other one that writes, and it is the only one that
+takes a lock. It owns the directory a run works in — a marker file, an advisory
+`flock` on a second file beside it, and a sweep that reclaims what an earlier run
+left behind — so a survivor there is a syscall nobody made fail. Every one of
+them was killed, and the widening cost no declared row at all, which took five
+tests and one shape change. The three syscall answers a lock can give are
+separated at the wrapper that really calls `flock`, with a closed descriptor
+standing in for "the filesystem would not answer"; an unlock the kernel refuses
+is forwarded rather than swallowed; `Claim` is handed a clock RFC 3339 cannot
+write down, which is the one way this package's `json.Marshal` can fail and the
+one way to prove the lock does not outlive the marker that failed to be written;
+the sweep is given a lock it cannot give back, and spares the directory; and
+`directorySize` is given a directory that lists its names and refuses to stat
+them, which is `read` without `execute` and the only way to make
+`fs.DirEntry.Info` fail without racing a removal. Two of those reach the code
+through seams the package already had the shape for — `sweeper` holds its
+removal in a field, and now its acquire as well — and one through `acquire`,
+which takes its two syscalls as arguments so that a test refusing a lock does not
+reach every other test running beside it.
+
+The shape change is the one place the gate changed the source rather than the
+tests. `errors.Is(err, EWOULDBLOCK) || errors.Is(err, EAGAIN)` is two readings of
+one predicate wherever those errnos are equal, which is Linux and macOS, so
+`||` and `&&` select the same branch on every input: a mutant no test can kill,
+and one no ledger row could honestly declare, since the argument would hold only
+on the platforms this project's own gate happens to run on. Two cases of one
+`switch` say the same thing to a reader and propose nothing to mutate.
+
+`internal/gitdiff` is the third that reaches outside itself, and the widening
+this section used to call the hard one. Everything about *reading* git is what
+git actually prints — which commit a merge base resolves to, how a hunk header
+is spelled, what a missing upstream says — so its tests drive a real git and a
+stand-in would be a second implementation of the thing under test. That argument
+does not reach the other half of the package. "`git ls-files` exited non-zero
+while the diff succeeded", "the diff parsed and the file it named cannot be
+read", "the merge base came back empty" are facts about go-mutants' own code,
+and no repository state produces them on demand, so the command runner became a
+field and those are scripted through it — the same trade `internal/gocmd` made
+when it left the toolchain allowlist. The file that does it is named in that
+ledger too, for the one test in it that still starts a git: what environment a
+command sees is a claim about a child process, and the only way to ask it is to
+start one.
+
+`internal/snapshot` is the fourth that reaches outside itself, and the one that
+is almost nothing else: it walks a tree, copies it, owns a directory while the
+run uses it, and reports whether the copy is still what it was. Almost every
+mutant in it sits on a failure path, and almost every one of those is staged for
+real — a source root that cannot be listed, an entry that cannot be stat-ed
+because its directory is readable and not searchable, a destination parent that
+refuses new directories, a source file that cannot be read, a destination that
+already exists, a directory where a file has to go. What cannot be staged is
+listed in one place, `internal/snapshot/seams.go`: eight operating-system calls,
+each named for what it does, each with the reason a test cannot make it fail.
+Seven of them run inside a directory this process created and locked moments
+before, and the eighth fails only when the process has lost its working
+directory, which is not a thing one test may do to the others beside it. A test
+that replaces a seam is not `t.Parallel`, which is the same rule
+`internal/report`'s seams carry.
+
+`internal/cache` is the fourth that writes, and the only one that *deletes* —
+in a directory it shares with every other program on the machine, which is why
+every removal goes through a containment check proved against what the
+filesystem resolves rather than against how a path is spelled. Almost all of its
+mutants sit on a failure path, and almost all of those are staged for real: a
+cache root that cannot be listed, a workspace directory carrying somebody else's
+marker, an entry file that cannot be read, a context directory that lists its
+names and refuses to stat them, a rename onto a name a directory already holds.
+Six calls it cannot be made to fail are named in `internal/cache/seams.go` — two
+about the running executable, whose digest is what stops a rebuilt go-mutants
+from adopting its predecessor's answers, three that put an entry's bytes on disk
+before the rename that names them, and one listing that happens twice in one
+function, where a failure is another process changing the directory between
+them.
+
+Three comparisons came out of it rather than being declared, the same shape as
+`internal/gitdiff`'s four: a truncation boundary that returns the same string
+cut or uncut, a clamp written as a guard over a duration that is zero either
+way, and a pair of sorts restating an ordering `os.ReadDir` already guarantees.
+So did one double computation of the cache key, which had made a second failure
+path out of a call that could only fail where the first already had. The eight
+rows that remain are four claims: the 32-bit length prefix of the hashing
+encoding, an `encoding/json` failure a struct of strings and integers cannot
+produce, a `filepath.Rel` refusal only two different volume names reach, and two
+guards that something else answers for a step later.
+
+`internal/validate` is the one that spawns processes, and it was kept for last
+for that reason — but it cost four declared rows and no timeouts, because the
+phase already had the two seams that matter. The compiler and the rewriter are
+fields on the validator, so "this machine stopped being able to build" is a
+table rather than a state a test has to produce: the whole search runs against a
+fake that answers "does this subset compile" from a set of indices, and the
+dozen places the phase asks the filesystem or the compiler are swept rather than
+named — a run that works is counted first, and then the same run is made again
+failing exactly the *n*th call, for every *n*.
+
+Thirteen never-returning mutants came off with that widening rather than into
+it. The search's outer loop was `for {}` and its exit rested on a lemma about
+another function — that blame never answers an empty list while anything is
+pending — so every edit to a condition inside it produced a phase that never
+returned, and the gate paid a per-mutant timeout twice for each. Bounded at one
+pass per catalogued file, the same edits come back as wrong answers a test can
+state, and what is left is a return past the bound that nothing reaches: two
+ledger rows for thirteen timeouts, which is the trade written down rather than
+felt.
+
+Four more mutants that never returned went with the `internal/snapshot` widening
+rather than into it.
+The walk had two path helpers with a guard each — `pathOf` returning the root
+for the empty path, and `walk` joining a name onto an empty parent — and the
+other reading of both walks the root again at every depth. `filepath.Join` and
+`path.Join` already answer the empty case, so the guards were two spellings of
+one answer and one of the spellings was an infinite recursion.
+
+Four boundary comparisons came out of `internal/gitdiff` rather than being
+declared, and they are worth naming because they are one shape. `len(lines) > outputLines`
+before `lines[len(lines)-outputLines:]`, `len(hash) <= width` before
+`hash[:width]`, `first > last` before a swap, and `end < 0` after a
+`strings.Index` all have a second reading — `>=`, `<`, `>=`, `<=` — that no
+input can tell from the first, because at the boundary the two branches do the
+same thing. Each is now the answer without the branch: `max`, `min`, `min`/`max`
+and a `strings.Cut`. A comparison whose two readings agree everywhere is not a
+mutant somebody should have to argue about in a ledger; it is a line with one
+spelling too many.
+
 Determinism survives that, and it is worth saying how. Every path those tests
 touch is under a `t.TempDir`; the failures are real errors from the real
 operating system, not sentinels; nothing asserts a wall clock or a directory
@@ -1270,12 +1450,13 @@ skips where a platform or a user is not stopped by it, rather than naming
 Windows or asking `os.Getuid`; and the tests that create symbolic links skip
 where a platform refuses to create one.
 
-The numbers the gate is sized against: 2497 mutants catalogued, 2432 detected —
-2428 killed, two of them by the memory bound, and four caught by the per-mutant
-timeout — sixty-five declared expectations, **a score of 100.00%**, at
-`--jobs 4` against a warm test-owned build cache. `policy.minimum_score = 99.5`
-is compared on every run, `--strict` or not, and at this size it does not fail
-until the thirteenth unexpected survivor — so `--strict` is the thing that
+The numbers the gate is sized against: 4396 mutants catalogued, 4321 detected —
+4318 killed, two of them by the memory bound, and three caught by a counted loop
+rather than by the clock — seventy-five declared expectations, **a score of
+100.00%**, at `--jobs 4` against a warm test-owned build cache.
+`policy.minimum_score = 99.75` is compared on every run, `--strict` or not, and
+at this size it does not fail
+until the eleventh unexpected survivor — so `--strict` is the thing that
 actually fails this job, on the first.
 
 The wall clock, on the shared machine that widened the scope: warm, with the
@@ -1297,6 +1478,20 @@ records the paired before-and-after that makes them a comparison. Whether this
 scope wants an explicit `test.timeout` was the open question the first two
 runs left; on the floor the tally is exact, so the timeout stays derived.
 
+Every reading above predates one more change to the derivation, and the change
+moves them. `go test` without `-count=1` keeps a passing result and reprints
+it, so of three baseline runs in a fresh snapshot only the first runs the tests:
+the copied files carry timestamps the cache has never seen, and the two after it
+are lookups. The rule that takes the runs after the first was therefore taking
+the lookups, and a mutant run — instrumented binary, environment naming a
+mutant — never hits that cache. The budget is now taken from the runs that ran
+the tests, which for this gate's `test.command` means the first one, and the
+floor readings above are from before that. What it buys is not speed: it is that
+work is reported as work. A scoped measurement of four files in
+`internal/discover` read eight confirmed timeouts and fourteen `inconclusive`
+verdicts out of 174 mutants on the old derivation, and none of either on the
+new. A baseline every run of which was a cache lookup says so as `GOM4048`.
+
 Six of those mutants never return, and they are worth knowing about because
 they, rather than the catalogue, are much of what sets this gate's wall clock.
 **Four spin**: `negate-loop-condition` on `internal/coverage/textfmt.go`'s `for
@@ -1308,6 +1503,21 @@ written. A spinning mutant holds nothing, so only the clock can catch it, and a
 timeout is measured a second time before it is believed — two ten-second waits
 each, eighty seconds of worker time.
 
+That second wait is now paid only where discovery could not answer the question
+in advance. A loop whose measure an edit removes is decided from the syntax and
+the types before anything runs, and a timeout the proof predicted is believed
+the first time; see [Termination proof](operators.md#termination-proof) for the
+shapes it reads and the ones it refuses.
+
+**None of the four above is one of them**, and it is worth saying which way that
+cuts. `for parser.NextExpression()`, `for pair.Next()` and the replace loop all
+test a *call* rather than a variable against a bound, and `lineStarts` is a
+`for offset := 0; ;` with no condition at all — so this gate still pays the
+second wait for every one of them. What the proof buys is for the shape it
+reads, and `fixtures/runaway` is the fixture that holds one: its
+`negate-loop-condition` mutant is proved `unbounded` and measured once, which
+the work ceiling records as `mutant-run 3` where it was 4.
+
 **Two allocate**, and they are the reason a mutant is now bounded in memory as
 well as in time. `internal/config`'s `lineStarts`, with `i < 0` negated or its
 stride turned into a subtraction, appends to a slice instead of advancing
@@ -1315,10 +1525,23 @@ through the file. Before the bound existed those two were the most expensive
 mutants in the run and their verdict was a race — killed when the allocator
 reached them first, timed out when the clock did — and on a GitHub runner the
 job did not go red so much as disappear, with "The runner has received a
-shutdown signal". Now each is stopped at about 1.1 GiB after a second and a half
-and reported as `killed`, once, with no second attempt: a memory kill is a kill
-rather than a verdict to confirm. See
+shutdown signal". Now, **where the bound can be enforced**, each is stopped at
+about 1.1 GiB after a second and a half and reported as `killed`, once, with no
+second attempt: a memory kill is a kill rather than a verdict to confirm. See
 [ADR 0009](adr/0009-a-mutant-is-bounded-in-memory-as-in-time.md).
+
+That qualifier is not decoration. The bound here is derived rather than
+configured, and a derived bound this platform cannot hold anybody to is dropped
+and recorded as `memory_source: unavailable` — deliberately without a warning,
+because a line on every clean run of an unsupported platform is how a warning
+stops being read. macOS is such a platform: it can say what a process cost once
+it is gone and cannot watch one while it runs. So on a macOS machine these two
+are not stopped at 1.1 GiB; measured on 2026-09-14 they reached resident peaks
+of 19.1 GiB and 10.5 GiB before the 20-second timeout ended them, and the report
+carries those peaks. The verdict is the same either way — a timeout is detected
+exactly as a memory kill is — but if you run `mise run dogfood` on a Mac, that
+is where the memory goes, and the run says so in `test.memory_source` rather
+than interrupting to tell you.
 
 There were nearly seven. Negating `timeout <= 0` in `internal/gocmd`'s
 `LocateContext` replaces a probe's configured deadline with the thirty-second
@@ -1336,21 +1559,26 @@ The bound is derived from the same baseline runs the timeout is, as
 resolved to:
 
 ```text
-memory: baseline peak 157.5 MiB, bound 1.0 GiB (derived)
+memory: baseline peak 171.4 MiB, bound 1.0 GiB (derived)
 ```
 
-157.5 MiB × 4 is 630 MiB, so the 1 GiB floor still applies and the bound is
+171.4 MiB × 4 is 686 MiB, so the 1 GiB floor still applies and the bound is
 about six times what the unmutated suite needs — far enough above anything
 legitimate that it catches runaways rather than honest tests. The peak itself is
 one reading rather than a constant: the nine-package scope read 125.2 MiB, the
-ten-package one 141.5–147.4 MiB across three runs, and this one 157.5 MiB —
-each suite that starts processes or writes documents moved the number the bound
-is derived from, and none of them moved the bound, because the floor was always
-the larger of the two. `-v` also names the bound on each mutant it stops
+ten-package one 141.5–147.4 MiB across three runs, the twelve-package one
+157.5 MiB, the thirteen-package one 174.2 MiB, the fourteen-package one
+168.5 MiB, the fifteen-package one 168.7 MiB, the sixteen-package one
+169.1 MiB and this one 171.4 MiB — five scopes that grew and a peak that did
+not, which is what "one reading" means.
+Each suite that starts processes or writes documents moved the number the bound
+is derived from, and none of them
+moved the bound, because the floor was always the larger of the two. `-v` also
+names the bound on each mutant it stops
 (`killed by … (memory: 1.1 GiB > 1.0 GiB bound)`), and the JSON report carries
 `memory_exceeded` and `peak_memory_bytes` on the mutant and on each execution.
 
-With that in place the whole summary is stable: the same 2497 / 2428 / 4 / 65 on
+With that in place the whole summary is stable: the same 4396 / 4318 / 3 / 75 on
 every run, killed-versus-timed-out included, except for the two kills a loaded
 machine reported as inconclusive. It was not before, and a widening that makes
 a gate's own tally a coin flip is a widening that is not finished.
@@ -1392,9 +1620,18 @@ from 120 scored mutants to 544, where the old number would have bought
 twenty-one survivors of slack instead of four; it then stayed at 99 through six
 widenings, because one percent of 549, 583, 809, 1266 and 1371 is five, five,
 eight, twelve and thirteen — always short of the twenty-one that moved it the
-time before. One percent of 2432 is twenty-four, which is not short of it, so
-with the eleventh package the same rule moved the number again, to 99.5: twelve
+time before, which is the same number it is measured against every time. One
+percent of 2432 is twenty-four, which is not short of it, so with the eleventh
+package the same rule moved the number again, to 99.5: twelve
 survivors of slack (2420/2432 clears, 2419/2432 does not) where 99 bought
-thirteen before the widening. The floor is a fixed number of survivors rather
-than a fixed percentage of a growing catalogue. Do the arithmetic, write the
-answer next to the number, and only then decide whether it moves.
+thirteen before the widening. It then stayed at 99.5 through five more, and that
+was the same arithmetic once more: half a percent of 2822, 2943, 3200, 3527 and
+3941 is fourteen, fourteen, sixteen, seventeen and nineteen survivors — growing,
+and still short of twenty-one.
+
+Half a percent of 4321 is 21.61, and twenty-one is the number that was judged
+too much at 544, so the rule cashes in a second time: **99.75**, which buys ten
+survivors (4311/4321 clears, 4310/4321 does not) where 99.5 bought twelve when
+it was set. The floor is a fixed number of survivors rather than a fixed
+percentage of a growing catalogue. Do the arithmetic, write the answer next to
+the number, and only then decide whether it moves.

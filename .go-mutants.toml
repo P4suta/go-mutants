@@ -37,8 +37,8 @@
 #
 # That is what `test.memory` and the derived max(1GiB, largest baseline peak x 4)
 # exist for, and with the bound in place the split is a fact again rather than a
-# race: 2480 killed, four caught by the timeout, sixty-five declared, 100.00%,
-# identical on every run measured under [policy]. The two that allocate are
+# race: 4318 killed, three caught by a counted loop, seventy-five declared, 100.00%,
+# identical on every run measured under [policy]. The mutants that allocate are
 # stopped in about a second and a half each, and the ledger below did not grow a
 # row for them, because a mutant the bound stops is killed rather than excused:
 # the original program was measured under the budget the bound came from, so a
@@ -111,24 +111,180 @@ profile = "balanced"
 #
 # The numbers this gate is sized against, from the run that produced them:
 #
-#   internal/report/*.go         1124 mutants
-#   internal/config/*.go          476
-#   internal/mutation/*.go        450
-#   internal/coverage/*.go        154
-#   internal/gocmd/*.go           106
+#   internal/report/*.go         1365 mutants
+#   internal/config/*.go          505
+#   internal/mutation/*.go        477
+#   internal/cache/*.go           427
+#   internal/validate/*.go        370
+#   internal/snapshot/*.go        329
+#   internal/gitdiff/*.go         257
+#   internal/coverage/*.go        164
+#   internal/tempowner/*.go       121
+#   internal/gocmd/*.go           112
 #   internal/schemas/*.go          89
-#   internal/glob/*.go             68
-#   internal/interval/*.go         48
+#   internal/glob/*.go             71
+#   internal/interval/*.go         50
+#   internal/drift/*.go            21
 #   internal/operatorselect/*.go   16
-#   internal/drift/*.go            11
+#   internal/testlog/*.go          15
 #   internal/testflag/*.go          7
 #
-# catalogues 2549 mutants and detects 2484 of them -- 2480 killed and four
-# caught by the timeout -- leaving the sixty-five rows declared below and a
-# score of 100.00%, in the wall clock recorded under [policy]. The count grew
-# from 2497 when the test-level narrowing feature added its own code to the
-# gated packages (2026-09-08); the score held because every new mutant is
-# killed or declared.
+# catalogues 4396 mutants and detects 4321 of them -- 4318 killed and three
+# caught by a counted loop -- leaving the seventy-five rows declared below and a
+# score of 100.00%, in the wall clock recorded under [policy].
+#
+# Two things the table does not say, and both are worth saying here rather than
+# being inferred from a number.
+#
+# Windows is not in it and cannot be. internal/tempowner/lock_windows.go is not
+# built on the platforms this gate runs on, so discovery never opens it and not
+# one of its lines is in the 121 above. A gate that said nothing about what it
+# does not cover would be a number wearing a gate's clothes.
+#
+# And 257 of these mutants need `git` on PATH. internal/gitdiff's suite drives a
+# real git, because everything about reading git is what git actually prints,
+# and without one those tests skip -- so on a machine with no git this gate
+# reports two hundred and fifty-seven survivors rather than naming the missing
+# tool. GO_MUTANTS_TEST_REQUIRE_TOOLS is what turns such a skip into a failure,
+# and it cannot reach here: internal/execute strips every GO_MUTANTS_ variable
+# from every child a run starts, which is the rule that keeps a developer's
+# exported GO_MUTANTS_ACTIVE from running a mutant as the baseline. So the
+# symptom is written down instead: survivors concentrated in one package, all of
+# them in internal/gitdiff, means git rather than a regression. The count has grown eight
+# times without the score moving, and every time for the same reason: code the
+# gate already covered started producing mutants it had not produced before.
+# Once it has fallen, for the opposite and better reason:
+#
+#   4014 to 4383   internal/validate joined the gate (2026-09-15): 369 new
+#                  mutants and four declared rows. It was the widening this
+#                  file's own prose kept for last, because the phase spawns
+#                  processes -- and the seams it already had are why it cost
+#                  four rows and no timeouts: the compiler and the rewriter are
+#                  fields, so "the machine stopped being able to build" is a
+#                  table rather than a state a test has to produce. Thirteen
+#                  never-returning mutants came off with it, by bounding the
+#                  search's loop at one pass per catalogued file instead of
+#                  resting its exit on a lemma about another function.
+#
+#   3592 to 4014   internal/cache joined the gate (2026-09-15): 422 new
+#                  mutants and eight declared rows. It is the package that
+#                  deletes files in a directory it shares with every other
+#                  program on the machine, and most of its mutants sit on a
+#                  failure path: a cache root that cannot be listed, a workspace
+#                  carrying somebody else's marker, an entry that cannot be
+#                  read, a rename that cannot land. Six operating-system calls
+#                  it cannot be made to fail are named in
+#                  internal/cache/seams.go. Three comparisons came out rather
+#                  than being declared -- a truncation boundary that cuts the
+#                  same string either way, a clamp written as a guard, and a
+#                  pair of sorts restating an ordering os.ReadDir already
+#                  guarantees -- and one double computation of the cache key
+#                  with it.
+#
+#   3263 to 3592   internal/snapshot joined the gate (2026-09-15): 329 new
+#                  mutants and two declared rows, both of them one branch that
+#                  no configured value reaches. Most of this package is
+#                  filesystem failure paths, and most of those are staged for
+#                  real -- a source root that cannot be listed, an entry that
+#                  cannot be stat-ed, a destination parent that refuses writes,
+#                  a destination that already exists. The eight that cannot be
+#                  staged are named in internal/snapshot/seams.go, which is the
+#                  whole list of operating-system calls this package cannot be
+#                  made to fail. Four mutants that never returned went with the
+#                  widening rather than into it: the walk's two path helpers had
+#                  a guard each whose other reading walked the root again at
+#                  every depth.
+#
+#   3006 to 3263   internal/gitdiff joined the gate (2026-09-15): 257 new
+#                  mutants, every one of them killed, and not one declared row.
+#                  It was the widening this file's own prose called the hard
+#                  one, and most of the work was in two places rather than in
+#                  the count: the failures a repository cannot be put into now
+#                  go through a seam on the command runner, and four boundary
+#                  comparisons that had two spellings and one answer were
+#                  rewritten as the one answer.
+#
+#   2885 to 3006   internal/tempowner joined the gate (2026-09-14): 121 new
+#                  mutants, every one of them killed, and not one declared row.
+#                  The widening cost five tests -- the flock wrapper's three
+#                  answers, an unlock the kernel refuses, a clock RFC 3339
+#                  cannot write down, a lock the sweep cannot give back, and a
+#                  file inside a listable directory that cannot be stat-ed --
+#                  and one shape change: the two errnos that mean "somebody
+#                  else holds it" are two cases of one switch rather than the
+#                  two halves of an `||`, because where they are equal the `||`
+#                  and an `&&` are the same expression.
+#
+#   2888 to 2885   refusing an edit whose replacement is the constant the source
+#                  already holds (2026-09-14): three fewer mutants, and three
+#                  fewer rows in the ledger below. `return Disjoint`, `return
+#                  OutcomeNotRun` and `return mutation.OutcomeNotRun` were each
+#                  the head of an iota block returned where the rule proposes
+#                  `0`; go/types folds both readings to the same constant, so
+#                  there were never two programs there. Nothing that was killed
+#                  stopped being killed: the detected count is the same 2822 it
+#                  was, and only the denominator lost the three mutants that
+#                  could never have been in it.
+#
+#   2736 to 2873   measuring a `go.work` as one run over every module it joins
+#                  (2026-09-14): 137 new mutants, most of them the workspace
+#                  report and the parts of internal/report, internal/coverage
+#                  and internal/schemas that learned which module a path is
+#                  relative to. Two of them are declared and the rest are killed
+#                  by the tests written with them. The declared rows are two
+#                  lines of one unreachable branch, which is one place rather
+#                  than three because both constructors of a workspace report
+#                  return through it.
+#
+#   2722 to 2736   the module coordinate a workspace mutant is catalogued under
+#                  (2026-09-14): fourteen new mutants in internal/mutation --
+#                  the module in the digest, original-text and deduplication
+#                  keys, in the canonical order, and the refusal of a catalogue
+#                  that mixes the two recipes -- of which five survived until
+#                  the tests that kill them were written. Six rows naming a
+#                  mutant of catalog.go were reissued, because the digest of the
+#                  file changed and no existing identity did.
+#   2497 to 2549   the test-level narrowing feature added its own code to the
+#                  gated packages (2026-09-08).
+#   2549 to 2677   discovery reached the case labels of a tagless switch, which
+#                  it had been suppressing before it ever consulted the guard
+#                  chooser -- 128 mutants in code nobody added, spread across
+#                  every package here, of which six survived until the tests
+#                  that kill them were written (2026-09-14).
+#   2716 to 2722   the second identity domain, for a mutant measured as part of
+#                  a multi-module workspace (2026-09-14): six new mutants in
+#                  internal/mutation, all killed by the tests written with it.
+#                  The nine-field recipe is unchanged, so not one existing
+#                  identity moved -- what moved is the digest of the file the
+#                  recipe lives in, which is why the five rows naming a mutant
+#                  of it were reissued.
+#   2689 to 2716   `test.probing` and the report field it settles mutants into
+#                  (2026-09-14): twenty-seven new mutants across
+#                  internal/config and internal/report, seventeen of which
+#                  survived until the tests that kill them were written. The
+#                  probe layer's own code is in internal/probe and
+#                  internal/engine, neither of which the gate covers yet.
+#   2684 to 2689   `execution.isolate` and the code that reads it (2026-09-14):
+#                  five new mutants in internal/config, all killed by the
+#                  tests written with the feature. A widening the gate pays
+#                  for on its own.
+#   2677 to 2684   two new guard forms reached seven sites that had been
+#                  recorded refusals: a `:=` in a `for` initialiser, in six
+#                  places, and one that redeclares. Every one of the seven was
+#                  killed by tests that already existed, which is what a refusal
+#                  being lifted usually looks like -- the code was covered, only
+#                  the mutant was missing. This scope now records no
+#                  `unnameable-decl-type` skip at all.
+#
+# The declared rows went from sixty-five to sixty-three on 2026-09-14: seven
+# internal/schemas rows were reissued under new identities when that file gained
+# a schema registration, and two rows at the store's path resolution turned out
+# to describe macOS rather than the code. They went back to sixty-five the same
+# day, and for the reason the paragraph above gives rather than against it: a
+# workspace report is assembled by two constructors that return through one
+# line, and the total that line derives has already been counted once by every
+# module's own document -- so the two rows are one unreachable branch, declared
+# in one place rather than at each of them.
 #
 # internal/report is nearly as large as the other ten together, and that is
 # what a lossless document costs: every field of it is checked on the way in,
@@ -139,26 +295,54 @@ profile = "balanced"
 # below. A scope that catches what it costs is a scope that then has to be
 # measured again, which is what happened here, twice.
 #
-# The six that never return are worth naming, because they are a real cost
-# rather than a curiosity, and because they are no longer one kind of thing.
-# Four spin: negating ParseTextfmt's scanner loop turns an empty document into
-# an endless one, negating either loop of the position walk does the same to a
-# TOML document, and negating the loop that neutralises a double hyphen inside
-# the HTML report's attribution comment never stops replacing what it has just
-# written. There is no way to catch those but to wait, and to wait
-# twice, since a timeout is not believed the first time -- so each costs two full
-# per-mutant timeouts of worker time while the others finish everything else.
-# That timeout is max(10s, slowest baseline x 5), so what they cost is a fact
-# about the machine as much as about them.
+# The three that never return are worth naming, because there used to be six and
+# because what they cost has changed by three orders of magnitude.
 #
-# The other two allocate. lineStarts, negated or with its stride turned into a
-# subtraction, stops making progress through the file and appends to a slice
-# instead, and the memory bound stops each of them at about 1.1 GiB in a second
-# and a half -- once, with no second attempt, because a memory kill is a kill
-# rather than a verdict to confirm. Before there was a bound they were the two
-# most expensive mutants in the run and one of them was fatal to a CI runner;
-# they are now cheaper than the three that spin. See the paired measurements
-# under [policy].
+# They are settled by counting rather than by waiting now. Every loop of the
+# instrumented tree carries a counter, the ceiling is what the original program
+# did in that tree under this suite as the instrumented baseline measured it,
+# and a loop that passes its own ends the process naming itself and both counts.
+# Measured here: 17ms, 28ms and 228ms, against a derived budget of 53s that each
+# of them used to pay twice. The verdict is the one it always was; what changed
+# is that it is a fact about the program rather than an observation about the
+# machine, and that the report says which loop. See ADR 0013.
+#
+# Two spin: negating ParseTextfmt's scanner loop turns an empty document into an
+# endless one, and negating the loop that neutralises a double hyphen inside the
+# HTML report's attribution comment never stops replacing what it has just
+# written. The third allocates: lineStarts with its stride turned into a
+# subtraction stops making progress through the file and appends to a slice
+# instead, and where the memory bound can be enforced it is stopped at about 1.1
+# GiB in a second and a half -- once, with no second attempt, because a memory
+# kill is a kill rather than a verdict to confirm. Where the bound cannot be
+# enforced, which is macOS, the counter is what ends it, in the same
+# milliseconds as the other two.
+#
+# The three that stopped being among them are the reason this paragraph was
+# rewritten, and they were not fixed: they were measured differently. A mutant
+# run stops at the first test that fails, because one failure is its whole
+# answer, and each of these three fails a test before it reaches the input that
+# hangs it. Negating lineStarts' own exit condition returns after the first
+# newline, which every test with a newline in it catches in milliseconds; only a
+# document with no newline at all reaches the endless append, and the binary is
+# gone before that test starts. The verdict is a kill instead of a timeout,
+# which is the more precise of the two and is scored the same -- and it is three
+# mutants no longer paying two full budgets each. See CHANGELOG.md.
+#
+# "Where the bound can be enforced" is load-bearing and used not to be written
+# down. The bound is derived rather than configured here, and a *derived* bound
+# this platform cannot hold anybody to is dropped and reported as
+# `memory_source: unavailable` -- deliberately without a warning, because a line
+# on every clean run of an unsupported platform is how a warning stops being
+# read (internal/engine's unenforcedMemoryReason argues it in full). macOS is
+# such a platform: it can say what a process cost once it is gone and cannot
+# watch one while it runs. So on a macOS developer's machine these two are not
+# stopped at 1.1 GiB at all. Measured here on 2026-09-14, they reached resident
+# peaks of 19.1 GiB and 10.5 GiB before the 20-second timeout ended them, and
+# the report records those peaks on the mutants. That is not a regression and
+# nothing about the verdict changes -- a timeout is detected exactly as a memory
+# kill is -- but a note claiming the bound stops them is a note that is true on
+# the runner and false on half the machines that read it.
 #
 # Five is also what internal/gocmd did not make six, and that is the one part of
 # this list that a test moved. Negating `timeout <= 0` in LocateContext replaces
@@ -198,42 +382,52 @@ include = [
   "internal/config/*.go",
   "internal/gocmd/*.go",
   "internal/report/*.go",
+  "internal/testlog/*.go",
+  "internal/tempowner/*.go",
+  "internal/gitdiff/*.go",
+  "internal/snapshot/*.go",
+  "internal/cache/*.go",
+  "internal/validate/*.go",
 ]
 exclude = ["**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"]
 # `operators` is intentionally omitted: the profile decides the families, which
 # keeps this file honest when a new family lands. Uncomment to narrow.
 # operators = ["comparison", "error-swallowing"]
 
-# A declared equivalent mutant. An expectation is evidence to check, not a skip
-# list: the row is judged on every run, survival fulfills it, a kill is exit 2,
-# and an ID that no longer exists in the catalog is stale and also exit 2. The
-# row below is judged by a test binary that ran; ten of the rows further down
-# are settled by coverage without a process being started, and the notes there
-# say why that is the same verdict rather than a weaker one.
+# The declared equivalent mutants. An expectation is evidence to check, not a
+# skip list: the row is judged on every run, survival fulfills it, a kill is
+# exit 2, and an ID that no longer exists in the catalog is stale and also
+# exit 2. Forty-two of the sixty-three rows are judged by a test binary that
+# ran; the other twenty-one are settled by coverage without a process being
+# started, and the notes there say why that is the same verdict rather than a
+# weaker one.
 #
-# This one is the real thing rather than an illustration. `Relate` returns the
-# named constant, and `Disjoint` is the first member of its iota block, so
-# `Disjoint` and `0` are the same value of the same type after constant
-# conversion -- there are not two programs here for a test to tell apart. It
-# was found by running this gate, and it is declared rather than tested away or
-# quietly excluded, which is the difference between a mutation score and a
-# number.
-[[mutation.expect]]
-id = "7c3b141c043e632d833e0d9b948690bf3efb9047c502de6cb3cd372dfc7685b9"
-reason = "Equivalent: Disjoint is the zero value of Relation, being first in its iota block, so `return Disjoint` and `return 0` are the same constant."
+# Every row was found by running this gate against this repository, and is
+# declared rather than tested away or quietly excluded, which is the difference
+# between a mutation score and a number.
+#
+# Three rows that used to stand at the head of this ledger are gone for the
+# better reason. `return Disjoint`, `return OutcomeNotRun` and `return
+# mutation.OutcomeNotRun` were each the first name of an iota block returned
+# where `return-zero-numeric` proposes `0` -- one constant, two spellings, one
+# program -- and discovery now refuses an edit whose replacement is the value
+# the source already holds, whether the bytes say so or only go/types does. A
+# ledger row retired by a refusal is worth three rows arguing the same sentence,
+# and the argument is in docs/operators.md under "The refusals that are not
+# skips" where a reader looking for it will be.
 
-# The sixteen rows that follow are the same kind of row, in internal/mutation:
-# the survivors there that no honest test can reach. Every survivor a test could
-# pin has a test instead, in that package's own suites, which is why this list
-# is sixteen rows rather than the forty-one the whole-package scope reported.
-# Each row says which of four things it is rather than repeating the word
-# "equivalent" sixteen times, because a ledger that argues the same sentence
-# over and over is the skip list this file refuses to keep.
+# The fifteen rows that follow are in internal/mutation: the survivors there
+# that no honest test can reach. Every survivor a test could pin has a test
+# instead, in that package's own suites, which is why this list is fifteen rows
+# rather than the forty-one the whole-package scope reported. Each row says
+# which of four things it is rather than repeating the word "equivalent" fifteen
+# times, because a ledger that argues the same sentence over and over is the
+# skip list this file refuses to keep.
 #
 # Every one of these ids names a mutant the include list above covers, so all
-# sixteen are catalogued and judged on every run of this gate rather than taken
+# fifteen are catalogued and judged on every run of this gate rather than taken
 # on trust: survival is what fulfills a row, a kill is exit 2, and an id the
-# catalogue no longer holds is stale and exit 2 as well. Eleven of them survive a
+# catalogue no longer holds is stale and exit 2 as well. Ten of them survive a
 # test binary that ran. The other five are reported `survived (uncovered)`
 # without a process being started, because no binary in this scope reaches the
 # line at all -- which is coverage saying, from a cheaper direction, exactly
@@ -256,16 +450,12 @@ id = "b3bc0192a26baa4e0c2080c6abe78d188189d55ed7544392937d5023b498a485"
 reason = "Equivalent: the comparison sits inside `case s.EndByte != other.EndByte`, where the two end bytes are already known to differ, so `<` and `<=` are the same test."
 
 [[mutation.expect]]
-id = "9fd083af0792f6b5155cb1cff8883f7a3dce112be8c53e3c92c2ccc0e813044b"
+id = "565a13327c3aeca8d6b512fc779934904a161a98911a06d6580a48d96a8f27d8"
 reason = "Equivalent: `>= 2` and `> 2` differ only for two-byte paths; a letter plus colon is rejected by the identical post-clean volume guard immediately below, and every other two-byte path fails the colon-or-letter predicates."
 
 [[mutation.expect]]
-id = "ab63a5a3e327b7db2bbe97d3267ca840cebf9cf54a899f10cdc52a111a398548"
+id = "5ab87ae91e8e36e223776f77bc7073cf78024a5c0ee5c2f8c68ca40e54b0ce2c"
 reason = "Equivalent: the comparison sits inside `if x.position != y.position`, where the two registry positions are already known to differ, so `<` and `<=` are the same test."
-
-[[mutation.expect]]
-id = "90dcb6c9a5eef3328c6287e649f96f5d71187376e2fdb906a262947c815a0c75"
-reason = "Equivalent: OutcomeNotRun is the zero value of Outcome, being first in its iota block, so `return OutcomeNotRun` and `return 0` are the same constant -- the same argument as the Disjoint row above."
 
 # Equivalent for every value the type will admit: the mutation changes an
 # answer only for an input another check in the same package calls incoherent.
@@ -280,7 +470,7 @@ reason = "Equivalent for every coherent tally: `p.MinimumScore > 0` and `>= 0` s
 # order in Build's comment true rather than merely intended.
 
 [[mutation.expect]]
-id = "71a2e9ed6670de5c01f1c29c061ab45b9a5b6000d754250758601e204f997e68"
+id = "8b92325aaa44b1850003c67eba45d5cc8f5bf919ed7c78dfeadabb6c1ccda7a6"
 reason = "Unreachable: Build only ever sees candidates Add accepted, and Add calls Registry.Verify, which refuses exactly the names Registry.Position cannot find -- both read one immutable map -- so nothing a caller can build reaches this return."
 
 # Guards on the 32-bit length prefix of the identity encoding and on the uint32
@@ -289,60 +479,183 @@ reason = "Unreachable: Build only ever sees candidates Add accepted, and Add cal
 # gigabytes; the guards stay because the encoding they protect is frozen.
 
 [[mutation.expect]]
-id = "e997446d6c157c03f5403f1ea5ae0a63a7b20fab96a4ccafa604197d2c44e929"
+id = "9bc7cd149597bf890755c4774c0f74a728d91e0367f0deed2aaa6e029963843a"
 reason = "Unkillable: `>` and `>=` pick different catalogues only at exactly math.MaxUint32 queued candidates, which is 4,294,967,295 Candidate values in one builder."
 
 [[mutation.expect]]
-id = "a94a2c50fc8b33c7f5ea10f9f5cea1e05eb85138b54119cf80383a8eac4b5c01"
+id = "5787a1dbed1334bd7ae10267e4a44fa05c0b26f6eba202194db08bdf2f17958f"
 reason = "Unkillable: this return is reached only past math.MaxUint32 queued candidates, so killing it means holding more than 4,294,967,295 Candidate values in memory."
 
 [[mutation.expect]]
-id = "0879ed736b35300ea72bf867721591ee218f02a21a7d1fdc5d1a8a89df20a718"
+id = "cb8fd2b2364bab9b19cf007c167a5f1ba7d7c2efba55e35d1c80e54a7aea36d7"
 reason = "Unkillable: Build only sees candidates Add validated and Candidate.ID re-runs that same validation, so the only error left for this branch to catch is WriteLengthPrefixed's 4 GiB field guard -- see the id.go rows below."
 
 [[mutation.expect]]
-id = "85dc0334ed347973ea6af195207e0cd262ca6a2bfc9c7a710bda312262b5aad7"
+id = "17ee3178f2ecd2292dd028daced5dd0ce3550ba32f604880f417ae71927eb122"
 reason = "Unkillable: the same branch as the row above -- the error this forwards can only come from WriteLengthPrefixed's 4 GiB field guard."
 
 [[mutation.expect]]
-id = "ce40ad71426f18bdb1c7af2f1ab665321d3b2e150d071e52c39b9c6e38ada90c"
+id = "b0d2a8afec954577ebc1513a7524fa17426961c52e6efabaa029d99f7923e861"
 reason = "Unkillable: WriteLengthPrefixed fails only on a field longer than math.MaxUint32 bytes, so entering this branch means hashing an identity whose path is four gigabytes long."
 
 [[mutation.expect]]
-id = "feba9b0fd4945263451deb51c5fbe281d6fd97a4c98c181f6aec9eebcab4c2c1"
+id = "941885a4446b5d0051d8aff50241e741d6bf8ea0e7cc04b26e2fb904189b4818"
 reason = "Unkillable: the same branch as the row above -- the error this forwards exists only for a field longer than math.MaxUint32 bytes."
 
 [[mutation.expect]]
-id = "e8eb2f6092486a0554da44e0796371ab157e4bf07c574ef16d9ff8ece74f4474"
+id = "9843e3803263d340889f58b002b6e66622b2f25dcf4163a8d4fe48ab62fb038c"
 reason = "Unkillable: `>` and `>=` disagree only on a string of exactly math.MaxUint32 bytes, so telling them apart means allocating four gigabytes in a unit test."
 
 [[mutation.expect]]
-id = "ad9321c58f07017b27f8a9dd8f1e4acad7a38d4a83a9e100589634d63512117c"
+id = "778f61b378f9a44f3cc836eccc8bcac2f79295189a0514b28e838b9340dab6b2"
 reason = "Unkillable: this return is reached only for a string longer than math.MaxUint32 bytes, so killing it means allocating more than four gigabytes in a unit test."
 
-# internal/coverage, whose 146 mutants brought exactly two rows with them. The
-# other twenty-six survivors of the first run over that package are dead, killed
-# by nine named tests and ten new cases in its own suites -- four of the tests
-# in a new white-box file, because the three invariants they pin are true of the
-# index, of merge and of relativeTo and change no answer Map gives, so a test
-# written through Map could not reach them. See CHANGELOG.md.
+# internal/coverage brought two rows with it and has none. The twenty-six
+# survivors of the first run over that package were killed by nine named tests
+# and ten new cases in its own suites -- four of the tests in a new white-box
+# file, because the three invariants they pin are true of the index, of merge
+# and of relativeTo and change no answer Map gives, so a test written through
+# Map could not reach them. See CHANGELOG.md.
 #
-# What is left is one comparator's secondary key, mutated two ways. Both rows
-# make the same argument and it is a proof rather than a shrug: the key orders
-# only intervals that already share a start line, and merge folds any run of
-# those into one interval reaching the furthest of their ends whatever order the
-# sort leaves them in -- so no permutation of a tie changes the merged list, and
-# covers reads nothing else. Neither row is uncovered: a case in map_test.go
-# gives one file two blocks opening on one line, so the line runs and the
-# mutants are executed and reported as survivors rather than skipped.
+# The two that were left were one comparator's secondary key, mutated two ways,
+# and they are gone the way this file prefers: the code that manufactured them
+# is. The key ordered only intervals that already share a start line, and merge
+# folds any run of those into one interval reaching the furthest of their ends
+# whatever order the sort leaves them in -- so no permutation of a tie changed
+# the merged list, and nothing downstream reads the order itself. The order is
+# still total; it is spelled with cmp.Compare instead of with the difference of
+# two line numbers, and a comparison written as a comparison has no arithmetic
+# in it for a rule to rewrite. Two proofs in this file became one sentence in
+# that one.
+
+# internal/testlog brought one row, and it is a guard that does one job with
+# the `break` under it. The parse loop ends at the first line the binary did not
+# terminate, and an empty body is that case too -- a cut that finds no separator
+# reports none -- so `> 0` and `>= 0` differ only in an extra pass that breaks
+# immediately. The guard stays rather than the loop becoming `for {}`, and that
+# is a measured trade rather than a preference: without it two of this package's
+# mutants never return, and the gate pays a per-mutant timeout twice for each of
+# them, where today none of them does.
 
 [[mutation.expect]]
-id = "d42fb63591d5db90e42e36081a7f65630aae5c925098abab5ed536f7dd5f57bb"
-reason = "Equivalent: this is the tie-break of a sort whose primary key is the start line, so it only orders intervals that share one; merge joins any such run into [start, max end] whatever their order, and nothing downstream reads the order itself."
+id = "a7353f2073cb5e21aa44235cf31014b9efb6f153afbfba57b110741e38c34ca7"
+reason = "Equivalent: the loop ends at the first unterminated line, and an empty body is that case -- bytes.Cut finds no separator and reports none -- so the extra pass `>=` admits breaks before it reads anything. The condition is kept over `for {}` because dropping it makes two mutants of this package never return."
+
+# internal/validate brought four rows, in three claims, and the shape of the
+# package is why there are so few for so much failure handling: the phase drives
+# its compiler and its rewriter through two seams, so "the machine stopped being
+# able to build" is a table rather than a state a test has to produce.
+#
+# Two of the four are one comparison each that has a second reading no input can
+# separate: a path pair where exactly one side carries a drive letter differs at
+# the colon, which has no case; and a blame over an empty pending set answers an
+# empty list whichever way the guard in front of it is read -- that guard is
+# there to skip parsing a whole build's output on a trial build, which is a cost
+# and not an answer.
+#
+# The other two are the backstop past the search's bound, and they are the price
+# of a change worth naming. The loop used to be `for {}`, and its exit rested on
+# a lemma about another function; every edit to a condition inside it produced a
+# phase that never returned, and this gate paid a per-mutant timeout twice for
+# thirteen of them. Bounded at one pass per catalogued file, those thirteen come
+# back as wrong answers a test can state, and what is left is a return past the
+# bound that nothing can reach. Two rows for thirteen never-returning mutants is
+# the trade, and it is counted rather than felt.
 
 [[mutation.expect]]
-id = "96e3e2eaaff49e3c662188a99235ddcd673af4d3e5c9189bd9b42461d3a5faa6"
-reason = "Equivalent: the same tie-break as the row above -- intervals sharing a start line all overlap, so merge folds them into [start, max end] however the sort arranges them, and the primary key still decides every pair whose start lines differ."
+id = "db02130598a10e890c61ed90883ab299048c2c39d35a78eff6fc34f7d17a8961"
+reason = "Equivalent: a pair where exactly one path carries a drive letter differs at the colon, which has no case, so EqualFold and == answer alike on it -- the third disjunct therefore never decides anything the first two did not."
+
+[[mutation.expect]]
+id = "1f4a99534a7ccad44442be50ef60312c931fd9c1de1f138b3531bad74920cc28"
+reason = "Equivalent: blame over an empty pending set answers an empty list, so `> 0` and `>= 0` set the same blame on every build; the guard is there to skip parsing the compiler's whole output on a trial build, which is a cost and not an answer."
+
+[[mutation.expect]]
+id = "fda92421584cc2c8f5b4e4c888e0656c44b52f9f429fbba10f137294c522c8f1"
+reason = "Unreachable: the loop is bounded at one pass per catalogued file and every pass decides at least one of them, because blame never answers an empty list while anything is pending -- so the search always returns from inside it."
+
+[[mutation.expect]]
+id = "bf25dbed393a8d14949ff071df66c17d4437b17463acdf15bfc6314f641628fb"
+reason = "Unreachable: the other half of the same backstop, which exists so that a search wrong about its own bound fails closed rather than falling out of the loop."
+
+# internal/cache brought eight rows, in four claims.
+#
+# Two are the 32-bit length prefix of the hashing encoding, which is the same
+# claim the internal/mutation rows above make: a field longer than
+# math.MaxUint32 bytes is four gigabytes of cache context.
+#
+# Two are one branch that a filesystem cannot reach at all, and two more are one
+# branch a POSIX filesystem cannot: an Entry is strings, integers and booleans
+# and encoding/json has no failure for any of them, and filepath.Rel refuses a
+# pair of paths only when they carry different volume names, which is Windows.
+# The Windows pair is the counterpart of the note above the scope table: this
+# gate measures what this platform builds, and it says which lines that leaves
+# out rather than letting a number imply it covers them.
+#
+# The last two are guards this file keeps even though something else already
+# answers for them -- a listing shadowed by the identical listing a few lines
+# on, and a case the default below it decides the same way. Both are kept
+# because a reader needs the rule stated where it applies, and both are declared
+# rather than removed for the reason the internal/testlog row is: the trade is
+# counted, and here the count is two ledger rows against two rules a reader
+# would otherwise have to derive.
+
+[[mutation.expect]]
+id = "7793f84f81acc0da784e91c4a1320e9c156ca3d0475b3b002a5ef98874c8201e"
+reason = "Unkillable: WriteLengthPrefixed fails only on a field longer than math.MaxUint32 bytes, so entering this branch means hashing a cache context with a four-gigabyte field in it."
+
+[[mutation.expect]]
+id = "3d14887a7d333b18f16fb83768515c14163e526a294eb9dc957c1f040d6d15b2"
+reason = "Unkillable: the same branch as the row above -- the error this forwards exists only for a field longer than math.MaxUint32 bytes."
+
+[[mutation.expect]]
+id = "bcd244f179ba95adfcd0020401cc298e8d31d2d720f4fa45d243e18c55858d36"
+reason = "Equivalent: the listing this guards is of the same directory the emptiness check lists a few lines below, with the same call and the same message, and a context whose files could not be listed always reaches it -- so removing the guard reports the identical failure one step later."
+
+[[mutation.expect]]
+id = "0cd7d9c3ebdf68673934e1190bf9a0e4ccf9417e7bb27e9579d796ecc3046b49"
+reason = "Equivalent: an entry with no recorded bound falls through to the default case at the same answer, because `limit <= 0 || limit >= 0` is true for every limit -- so `<=` and `<` choose different branches and the same value."
+
+[[mutation.expect]]
+id = "e3418c470aa16f236561181b9a6713f2edb763ea9aa0f8e045e1d8074e02f799"
+reason = "Unreachable: an Entry is strings, integers and booleans, and encoding/json has no failure for any of them."
+
+[[mutation.expect]]
+id = "19130654362658aa70faf1306d512d00f8fbb57574ed1e6b8929b71997f5e101"
+reason = "Unreachable: the other half of the same branch -- the diagnostic returned for an encoding failure an Entry cannot produce."
+
+[[mutation.expect]]
+id = "0c61708323241091dc71b704454a4644278eaab1c340cb77ffb76f35539109b7"
+reason = "Unreachable where this gate runs: filepath.Rel refuses a pair only when the two carry different volume names, which no POSIX path does, so both paths here are always relatable."
+
+[[mutation.expect]]
+id = "a87698a37045703dda49276056c91ac240a017f41e1c57783c1694ab13d38814"
+reason = "Unreachable where this gate runs: the same branch as the row above, and the answer it gives -- not inside -- for a pair of paths POSIX cannot produce."
+
+# internal/snapshot brought two rows, and they are one branch: the glob the
+# report directory is compiled into cannot fail to compile.
+#
+# The value reaching glob.Compile is the output of path.Clean over a path
+# mutation.NormalizePath has already refused as empty, absolute, volume-named or
+# escaping -- and empty, a leading '/', a trailing '/' and an empty element
+# between two '/' are exactly the four shapes glob.Compile refuses. There is no
+# ReportDir a caller can configure that reaches this error, so no honest test
+# reaches it either.
+#
+# It is kept rather than written as glob.MustCompile, and that is the whole of
+# the argument for the rows. The guarantee is a promise between two packages
+# rather than an invariant inside one: a future glob that refused a fifth shape
+# would turn a user's configured report directory into a panic in the middle of
+# their run, where today it is a diagnostic with a code. Two packages agreeing
+# today is not a reason to make one of them unable to disagree tomorrow.
+
+[[mutation.expect]]
+id = "06cabbdf7a94e889df9b5cc94b72e9d07805cf567329afb27da1e0a674dfeae2"
+reason = "Unreachable: the pattern compiled here is path.Clean's output over a path NormalizePath already refused as empty, absolute or escaping, which is exactly the set glob.Compile refuses, so the error is never non-nil."
+
+[[mutation.expect]]
+id = "ae90054cf1b9d69d588a9e2e112cbe697fd0ddc72d994fbce9dea744e302f896"
+reason = "Unreachable: the other half of the same branch -- the diagnostic returned for a glob.Compile failure that no configured report directory can produce."
 
 # internal/schemas, whose 89 mutants brought seven rows, and all seven are one
 # claim: an embedded schema that cannot be used. `schema.FS` is an embed.FS
@@ -367,31 +680,31 @@ reason = "Equivalent: the same tie-break as the row above -- intervals sharing a
 # payload to produce two violations at one location.
 
 [[mutation.expect]]
-id = "4316f032816f9b8bea32fd9582296b74674df9d53de742511356db366a4e68d9"
+id = "00110ba284fd3da4b8408c57a7bfa66a2187047ede44d2adb78d948757c8ac4d"
 reason = "Unreachable: compileErr is set only when an embedded schema cannot be read, parsed, registered or compiled, and TestEveryRegisteredSchemaCompiles asserts that none of that happens in this build, so this branch is never taken."
 
 [[mutation.expect]]
-id = "d8c4cff8932d9455d3ef8e81586b06ca622755ecb2f56c108a98ca56b40b25d7"
+id = "22db5c4a94a19f10e8d159ff0b1b1fa7bc069f9188d1fea90cd5c77fce6ec2bc"
 reason = "Unreachable: the return the row above guards, reported `survived (uncovered)` because no suite reaches a line that needs compileErr to be non-nil."
 
 [[mutation.expect]]
-id = "dc8a00968d7b71abe998d1d562013904cb4b84f09b97ee2bfd3e6827bbb3abe9"
+id = "20f61827e337d7d8df88ce7c1b1dd7194ae27b45046037dbb40f6c2397ca5587"
 reason = "Unreachable: compileAll compiles every type in the registry and schemaFor looks up that same registry, so the lookup cannot miss; TestEveryRegisteredSchemaCompiles asserts it for every registered type."
 
 [[mutation.expect]]
-id = "cc88bfab205c63ce546f8c6c20a8481ea065cb270f5c6027731c5a2e4186cfc1"
+id = "fa9198cae68dd0d7dd80f6472facc13d667dbce0a9058daa0c4966df57a03d74"
 reason = "Unreachable: the file is read out of an embed.FS fixed at build time, and TestEverySchemaIsRegistered plus TestEveryRegisteredSchemaCompiles assert that every registered name is a file in it, so ReadFile has no failure left to return."
 
 [[mutation.expect]]
-id = "5b74b4c090cbff9cd61dc5bc551946c41f0275647a1e79d8c1eb541859d83890"
+id = "af2611a10aede2a5c1a3d950fb443d87a838d4f43b38b9ae7add828ab038e0de"
 reason = "Unreachable: the bytes are an embedded schema this repository's own tests parse and compile, so they are JSON in every build TestEveryRegisteredSchemaCompiles passes on."
 
 [[mutation.expect]]
-id = "cbed187653982db4970d6f42da553e14e2ef7d932e05de603de728450c5bf382"
+id = "2293c23d9c88aecfa2ff1653021a8bc7ac0829a88aa3d692cf4834be61a25c73"
 reason = "Unreachable: AddResource fails on a resource identity it cannot parse, and TestSchemaIDsMatchTheirFilenames pins every embedded schema's `$id` to `baseURL + <file>`, which is a URL by construction."
 
 [[mutation.expect]]
-id = "939b4163d07d97de0f882ab4af250a72f14eaea40a377cff94f7aeab16b01b42"
+id = "a20ef5c99cbd0a4949615e0ef6de29ae6a29e43d177520ca24701dc206aebb06"
 reason = "Unreachable: every registered schema compiles, which is exactly what TestEveryRegisteredSchemaCompiles asserts by requiring an invalid document to come back GOM5003 rather than GOM5004."
 
 # internal/config, whose 461 mutants brought four rows, and all four are one
@@ -430,19 +743,19 @@ reason = "Unreachable: every registered schema compiles, which is exactly what T
 # out of the run, never to relax the check that noticed.
 
 [[mutation.expect]]
-id = "da6962bfd6364a6dc88c69bf087dbfe0b3c656a06792a122f081f69a7585703e"
+id = "5bb4a8040f463792d43781d51bd9b6995e38f6a12f6a8580317a3e79cd71a179"
 reason = "Equivalent on every platform: `v > int64(maxInt)` and `v >= int64(maxInt)` select different branches only at exactly int64(maxInt), where the guard returns maxInt and falling through returns int(v) -- and int(int64(maxInt)) is maxInt, so both spellings narrow every int64 to the same int."
 
 [[mutation.expect]]
-id = "5fb5f529dd138bc5a91fa7542bc406dbfdf12b0ff8ad63536a41c029d745b9e6"
+id = "7af7a156c75b48f732fb14d52058b69c48c7fec5ffb4e3a438c4e865035db75a"
 reason = "Unreachable on a 64-bit build, which is every platform this gate runs on: maxInt is int(^uint(0) >> 1), so int64(maxInt) is math.MaxInt64 and no int64 is greater than it. Killing it means running this package's suite on a 32-bit GOARCH."
 
 [[mutation.expect]]
-id = "7df627f07c3e78285bf6602785c6e0f5d8f117af4018505748e9e23d42e2618d"
+id = "985fd8191cfaf201339168e161400c586913136dd6b7ec0d719a1611736b3131"
 reason = "Equivalent on every platform: the same argument as the `>` row above, at the other end -- `<` and `<=` disagree only at exactly int64(minInt), where the guard returns minInt and falling through returns int(v), which is minInt."
 
 [[mutation.expect]]
-id = "0609825e5d771c579eb7e2335afa6d224c3005ea2eb50eb82ff5e09fec76dcdd"
+id = "559f0ed09e2f0cbabc410e7beccf4c79b0e365f0daf3e13e2ecfb3e7b0e9d04d"
 reason = "Unreachable on a 64-bit build: minInt is -maxInt - 1, so int64(minInt) is math.MinInt64 and no int64 is less than it -- the mirror of the maxInt row above, and reachable on the same 32-bit GOARCH."
 
 # internal/gocmd, whose 106 mutants brought exactly one row, and it is a
@@ -490,19 +803,15 @@ id = "b961736e4139ecbe97e50f2ded94f653b8e1fe72b7f624db5a725bcf733d540e"
 reason = "Equivalent: strings.Builder.Grow is a capacity hint and the page is the same bytes for every non-negative size, and the vendored viewer is 232 KiB, so len(bundle) + len(document) - 4096 is positive for any document at all."
 
 [[mutation.expect]]
-id = "c3d40ed1a36996a03b454620a03da2ec1cf9cbe070a8e58599e3db30e4fc71c6"
+id = "8f903b36a640803fa64d8ba74fe7193614d10d7483f840cceccb99099473267e"
 reason = "Equivalent: the second argument of make is a capacity hint, the runtime clamps a negative one to zero, and a map holds the same entries whatever it was sized for."
 
 [[mutation.expect]]
-id = "5ac5c99ed973fed0246e266c52f28ae1658ce86971424d583595849871a76af1"
-reason = "Equivalent: OutcomeNotRun is the zero value of mutation.Outcome, being first in its iota block, so `return mutation.OutcomeNotRun` and `return 0` are the same constant -- the same argument as the Disjoint and OutcomeNotRun rows above."
-
-[[mutation.expect]]
-id = "4bf4f630bb41121facb1dc4f0cc6b30b4a19f699d17defaaca13dc59e6653813"
+id = "e46a140ecb4932fb9454fe6cf44688246bbd11546052e38baf97f199db1330e4"
 reason = "Equivalent: the guard reports 0 for a negative duration and d.Milliseconds() otherwise, and a zero duration is 0 milliseconds through either branch, so `<` and `<=` render every duration the same."
 
 [[mutation.expect]]
-id = "252f817d8fb60f606b7c0c92a3674ade07fff7c7a7e0de9c08dd0872c2e352eb"
+id = "2215b1ea6ce4f26d04ade414b5790ab67800f358a8f7d1f18a17820d6274e80b"
 reason = "Equivalent: `<=` and `<` disagree only for an id of exactly DisplayIDLength characters, where returning `id` and returning `id[:DisplayIDLength]` return the same string."
 
 [[mutation.expect]]
@@ -530,15 +839,15 @@ id = "1449b2fcd7b848d1841d473598acb3db148bcf85d40386adffca970929cfc582"
 reason = "Equivalent: the guard clamps an offset past the end of the file to the end, and `>=` also assigns len(src) to an offset that is already len(src) -- the same argument as the position row above."
 
 [[mutation.expect]]
-id = "e1b62d0b86c672b24228a09bbf179c7604acc67aeec244fce260f3c182716b9f"
+id = "a9ea01df1d5598b5e7a262424acfd79c3444573f67cdaa914667fa603affc77c"
 reason = "Equivalent: a rejected mutant's disposition carries no outcome, and StateOf answers `unfulfilled` through the Rejected case and through the default alike, because the zero Outcome is not OutcomeSurvived. Nothing else reads the field."
 
 [[mutation.expect]]
-id = "926d93171820882528895f954fa11206a0277bf20ede3b5beed639d7d333437b"
+id = "6ff6656d50385f425cd37c8ae327942d870a06a596016e8e8f1c159c3c4cee14"
 reason = "Equivalent: the `existed` flag is read only by the rollback that puts a document back, and a caller handed this error returns before there is a rollback to run."
 
 [[mutation.expect]]
-id = "e8db06e466a9891f3385d91579a4e8b3e3a0d0371fd517ac84d82c44c93edee7"
+id = "3df5f41b6b99375178004b38f82f50defccf85ee3f1ac56865cb1e201d4bede8"
 reason = "Equivalent: both callers impose a total order of their own on what this returns -- readWorkspace sorts the runs by NewestFirst and the damaged rows by path, and RemoveRuns only counts them and their bytes -- so the order the files come back in is not observable."
 
 # The second kind is an error the caller has already ruled out, and all seven
@@ -546,32 +855,47 @@ reason = "Equivalent: both callers impose a total order of their own on what thi
 # on the way in, so nothing downstream of that refusal can meet one.
 
 [[mutation.expect]]
-id = "c4740390a45d54b1d38fa58c53c0428f0ea155276dd2a16064fe8a8a100974e5"
+id = "08d86b2c021fd792592e63d649824a73e267a1774e7fccf871105e0e96dbc987"
 reason = "Unreachable: partition has already translated every result's outcome through OutcomeOf, which refuses anything outside the six, and mutation.Tally records all six -- so the count this forwards cannot fail."
 
 [[mutation.expect]]
-id = "999cd4aaba4b5576d06ebdf8e2653913747069fdf735bc0cb88f1fbe7dfae8bd"
+id = "634eb68967cd8504330ece9b2abefff34613fbc39235d458790d41775bd2c9d2"
 reason = "Unreachable: the same failure as the row above, on the line that would forward it."
 
 [[mutation.expect]]
-id = "1e020d3ff3ff61130316dcb84a767c777f56238373e596c0cc2b85a9b941a1f4"
+id = "fe42ae5aaa23af3a23eaf400d24024246e1fd02e8c9119fbf71ced8d1472bfe0"
 reason = "Unreachable: the same argument one level in -- tallyOf reads the outcomes partition has already accepted, so mutation.TallyOf cannot refuse one."
 
 [[mutation.expect]]
-id = "46377b3b20a3d917d144c3d08c7d82a298112add1d68716790668110095e8fea"
+id = "5de0482053b9edb451bd524fcaf2cc9961be90840809d527e99927d2b37099be"
 reason = "Unreachable: the same failure as the row above, on the line that would report it."
 
 [[mutation.expect]]
-id = "b64199f55d4fab06639b68d71bc06fa0d2452976e0db479b11ba7cdfd4a488c9"
+id = "9ba94e487e2da6ec210920658f492727cf96ac59096361a35bb85e9bffe1efc0"
 reason = "Unreachable: Outcome.Mutation answers with one of the six core outcomes or with an error the line above returns, and mutation.Tally.Record has a case for all six."
 
 [[mutation.expect]]
-id = "c9397f88ba8e506557c65396f13f7dd19a3ca8778188db8b74b2150eb0cb3117"
+id = "8faf6ec6bea019578b545f1a72ee6577fa18c924fe61e734b2f2bc16e6851cf3"
 reason = "Unreachable: the same failure as the row above, on the line that would report it."
 
 [[mutation.expect]]
-id = "b4ed4c56cfeb5cc16f4c388aa005499a8551897c4f262b418f4182455b7a535f"
+id = "f9610cef085ed854a8d866f1f49b3151995bbced9dbacb9179b98b93af941e0f"
 reason = "Unreachable: the counts disagree only when a row was not consumed by the catalogue walk, and a row is consumed exactly when its id is catalogued -- so the loop above always finds the row this line exists to report the absence of."
+
+# A total that has already been counted once. BuildWorkspace builds every
+# module's report before it adds them up, and a report that built is one whose
+# every outcome a tally counted -- so the aggregate cannot meet an outcome the
+# module's own document did not. The same check on WorkspaceReport.Tally is
+# reachable and is tested, because a caller may hand that one a document it did
+# not build.
+
+[[mutation.expect]]
+id = "843a24ebe25ecb3c9b062e5df5776e2f82236eea1c85b70c904342083ece1abc"
+reason = "Unreachable: every module's report has been built or merged by the time this runs, and a report that was is one whose every outcome mutation.TallyOf accepted -- so the aggregate over those same outcomes cannot fail. Both constructors return through this one line, which is why it is declared once rather than at each of them."
+
+[[mutation.expect]]
+id = "7647d940eade086845f48dc51b2515eada4bd201d25632874d9eadf7b852530e"
+reason = "Unreachable: the same failure as the row above, on the line that would forward it."
 
 # The third kind is a value encoding/json has no way to refuse. It refuses a
 # cycle, a channel or function field, and a non-finite float; a Projection is
@@ -581,19 +905,19 @@ reason = "Unreachable: the counts disagree only when a row was not consumed by t
 # is tested with one.
 
 [[mutation.expect]]
-id = "7dd25029ee5d776af3373a66167256898409217c7d655bf0fbbad65a6a8aab1b"
+id = "95b0ddca198266155d3b025dfb8fd94e4b6db7b96486b194b2bad78bbce211b8"
 reason = "Unkillable: encoding/json fails only on a value it cannot represent -- a cycle, a channel or function field, a non-finite float -- and a Projection is strings, ints and a map of them, so no value of the type can make Encode fail."
 
 [[mutation.expect]]
-id = "779e89c5aa67aa6ee881c10fc35d27ec70f693c193005ece49b215d40c95321a"
+id = "58b9a70ee05269bf17d5a0fcc2d3c9ee39d5a821d385abc02665e9050494d5af"
 reason = "Unkillable: the same failure as the row above, on the line that would report it."
 
 [[mutation.expect]]
-id = "fb9d1e077634dc9befaec38521c6026643a2bb81dfb66404cbe2eb3ee232ee1e"
+id = "cdaeae3a0171381e52574b95f907baec6d0bc2fb39d12cc32c7745c973f49c05"
 reason = "Unkillable: the same encoding, reached through WriteArtifacts -- the document it publishes is the Projection the row above is about."
 
 [[mutation.expect]]
-id = "4dad6256bc511e6795e5e344201ef55546b6d1bc41df6c38ff5f02ad9406c2db"
+id = "0653f507f92b55eeca7b45c60b1c54f4e6823d6b2fb84c383f9d31b95be55303"
 reason = "Unkillable: the same failure as the row above, on the line that would forward it."
 
 # The fourth kind is the vendored schema. The compilation itself is a seam and
@@ -615,38 +939,42 @@ reason = "Unreachable: pointerOf answers `the document root` for an empty instan
 # only ever asked about a store root and a workspace directory whose marker has
 # just been read, so filepath.EvalSymlinks is asked about names the operating
 # system has just resolved; a test can reach the failures through the exported
-# seam and does, in storewalk_test.go, but these three shapes it cannot.
+# seam and does, in storewalk_test.go, but these two shapes it cannot.
+#
+# There were three shapes, and the third is worth recording rather than quietly
+# deleting. Two rows here used to declare the walk's `parent == path` guard
+# equivalent. They were wrong, and the way they were wrong is the interesting
+# part: the guard is only equivalent on a machine where nothing in the path
+# resolves to anywhere else, and the test that covers it was resolving a
+# temporary directory the operating system had chosen. macOS puts /var behind a
+# link to /private/var and Linux does not, so the same two mutants died on one
+# platform and lived on the other, and the ledger recorded the half it had last
+# measured. storewalk_test.go now makes its own symlink, which gives every
+# platform something to resolve, and both mutants die everywhere. A row that
+# describes a platform is a row that is wrong somewhere else.
 
 [[mutation.expect]]
-id = "3190c37f7f6fc15fd4d516a8beb3f098a6a4aaaff0930c9dc3026d81b859d7f8"
+id = "0b273dc1d64bac1ceef63affc3d880d1f737c81c962e1e73e364fe7b9a6d4e5f"
 reason = "Unkillable: filepath.Abs returns an error only when os.Getwd does, which needs this process's own working directory to have been deleted -- a state a test would be arranging for every other test in the same binary."
 
 [[mutation.expect]]
-id = "ace7fb73f25d06b183db8d38fe3fdafb0cea0462c99c02b82b6ca9863d399164"
+id = "170340b291e6416303a6270f2a4395876b8639ef12ab690c95169525511abe07"
 reason = "Unkillable: the same failure as the row above, on the line that would forward it."
 
 [[mutation.expect]]
-id = "8471bd3d5848c7aa2d0afe09b8e7ffd1621d7312c1bbe299ea97f184a0438797"
-reason = "Unreachable: the walk climbs to the parent only while the filesystem says a name is not there, and it stops at a path that is its own parent -- the volume root. Every path it is given is under a store root a file has just been read from, so it meets a name that resolves before it reaches one that has no parent."
+id = "9fbb23c0f5a691d282c91d6f4e76e10cdeef49d64cd129e6e11c8b375c46531c"
+reason = "Unreachable: the answer for a volume root that does not resolve, which needs a path none of whose ancestors exist -- and the root itself always does."
 
 [[mutation.expect]]
-id = "ec5aae2cd6b5938eab74dd4e90b24ceac892c9fdcf0ed2f0d17a05257ac87b8e"
-reason = "Unreachable: the same guard as the row above, spelled the other way."
-
-[[mutation.expect]]
-id = "700cbc056f3fb82558d41158da5f717ce1041698df05826787554562ba3c2a3b"
-reason = "Unreachable: the branch the two rows above guard, which is the answer for a volume root that does not resolve."
-
-[[mutation.expect]]
-id = "2380340d24fe192076857b8148ca285ed7c8a60f2ef97ca79ae09c272d76d540"
+id = "d0c7b47105ddeaca591bf4e46a18272d93b0b4e053f4896013277cc950d2abd6"
 reason = "Unreachable: filepath.EvalSymlinks walks a path from the left and reports the first name it cannot resolve, so a path it calls `not there` and a parent that fails for some other reason cannot both happen -- the parent shares the prefix and answers with the same failure."
 
 [[mutation.expect]]
-id = "e136ee1f2165220ec767905f8c86ed8a73d44f043657f2ac293afc970793a275"
+id = "6234ee76e3bbd193c4afb81a22fcef3027a038ac604c4dda243fff2d30133f7a"
 reason = "Unreachable: the same failure as the row above, on the line that would forward it."
 
 [test]
-# An argv vector, never a shell string. Scoped to the eleven packages the mutated
+# An argv vector, never a shell string. Scoped to the seventeen packages the mutated
 # files live in, which is what the baseline proves before any mutant runs. The
 # list has to track `include` above line for line: a package whose files are
 # mutated but whose suite is not named here has no binary covering it, so every
@@ -714,6 +1042,12 @@ command = [
   "./internal/config/...",
   "./internal/gocmd/...",
   "./internal/report/...",
+  "./internal/testlog/...",
+  "./internal/tempowner/...",
+  "./internal/gitdiff/...",
+  "./internal/snapshot/...",
+  "./internal/cache/...",
+  "./internal/validate/...",
 ]
 # Deliberately omitted, where this file used to pin 180s. The old number was
 # derived from a fact that scoping has deleted: the timeout had to clear
@@ -763,36 +1097,42 @@ mode = "auto"
 # below is compared on every run, --strict or not, and the note there says
 # where each of the two gates actually bites.
 strict = false
-# Measured, not wished for. The scope catalogues 2549 mutants. Two thousand
-# four hundred and eighty-four are detected -- 2480 killed and four caught by
-# the timeout -- and the other sixty-five are the rows declared above, which
-# leave the denominator rather than counting against it, so the measured score
-# is 100.00%, with all sixty-five expectations fulfilled and none stale. Every
-# one of those numbers
-# was the same on four of the five runs that measured this scope, the
-# killed/timeout split included; the fifth, taken while the machine picked up
-# other work, reported two of the kills as `inconclusive`, and what that means
-# is written under the pairs below.
+# Measured, not wished for. The scope catalogues 4396 mutants. Four thousand
+# three hundred and twenty-one are detected -- 4318 killed and three caught by
+# a counted loop -- and the other seventy-five are the rows declared above,
+# which leave the denominator rather than counting against it, so the measured
+# score is 100.00%, with all seventy-five expectations fulfilled and none stale.
+# Twenty-seven of those seventy-five are uncovered: the profiling pass reaches
+# 4369 of the 4396, and every one it does not is a row above that says why.
+# Every one of those numbers
+# was the same on four of the five runs that measured the seventy-seven-row
+# ancestor of this scope, the killed/timeout split included; the fifth, taken
+# while the machine picked up other work, reported two of the kills as
+# `inconclusive`, and what that means is written under the pairs below.
 #
 # The bound itself is derived and worth quoting, because it is the one number
 # here that is a fact about this repository's own suite rather than about the
 # catalogue -- `go-mutants run -v` prints it:
 #
-#   memory: baseline peak 157.5 MiB, bound 1.0 GiB (derived)
+#   memory: baseline peak 171.4 MiB, bound 1.0 GiB (derived)
 #
-# 157.5 MiB x 4 is 630 MiB, so the 1 GiB floor is still what applies and the
+# 171.4 MiB x 4 is 686 MiB, so the 1 GiB floor is still what applies and the
 # bound is about six times what the unmutated suite needs. The peak moved with
 # the eleventh package -- internal/report's suite writes and reads whole
-# documents -- and the bound did not, because the floor was always the larger
-# of the two.
+# documents -- and again with the thirteenth, and the bound did not either
+# time, because the floor was always the larger of the two.
 # Nothing legitimate is close to it; the two mutants it stops reach 1.1 GiB in
 # about a second and a half, which is the difference between a bound that
 # catches runaways and one that fails honest tests.
 #
 # The peak is the one figure here that is not the same twice, and it is quoted
-# as one reading rather than as a constant: three -v runs of this scope read
-# 141.5, 141.9 and 147.4 MiB, where the nine-package scope beside them read
-# 125.2 MiB. Adding a suite that starts processes is what moved it. It moves the
+# as one reading rather than as a constant: three -v runs of the ten-package
+# scope read 141.5, 141.9 and 147.4 MiB, where the nine-package scope beside
+# them read 125.2 MiB, the twelve-package scope read 157.5 MiB, the
+# thirteen-package one 174.2 MiB, the fourteen-package one 168.5 MiB, the
+# fifteen-package one 168.7 MiB, the sixteen-package one 169.1 MiB and this one
+# 171.4 MiB -- five scopes that grew and a peak that did not, which is what
+# "one reading" means. Adding a suite that starts processes is what moved it. It moves the
 # bound not at all -- four times any of those is still under the 1 GiB floor --
 # which is exactly what a floor is for, and why the tally stayed identical while
 # the number the bound is derived from did not.
@@ -956,8 +1296,7 @@ strict = false
 # this file to paper over a loaded machine is the kind of number this file
 # exists not to keep, so the floor stays derived.
 #
-# The floor moved with this scope, for the first time since it went to 99, and
-# the arithmetic is why. It is worth being exact about which gate the remaining
+# The floor has moved twice, and the arithmetic is why both times. It is worth being exact about which gate the remaining
 # slack belongs to, because the two are independent and only one of them guards
 # CI:
 #
@@ -965,13 +1304,13 @@ strict = false
 #                         the first unexpected survivor is exit 1 for the
 #                         dogfood task and for CI. There is no headroom on that
 #                         gate at all, and none is wanted.
-#   minimum_score = 99.5  compared against the measured score whether or not
-#                         --strict was passed. Two thousand four hundred and
-#                         eighty-four scored mutants are worth 0.040 points
-#                         each, so 2472/2484 = 99.52% clears 99.5 and
-#                         2471/2484 = 99.48% does not: an ungated
-#                         `go-mutants run` reports up to twelve survivors and
-#                         exits 0, and fails at thirteen.
+#   minimum_score = 99.75 compared against the measured score whether or not
+#                         --strict was passed. Four thousand three hundred and
+#                         twenty-one scored mutants are worth 0.023 points each,
+#                         so 4311/4321 = 99.77% clears 99.75 and
+#                         4310/4321 = 99.74% does not: an ungated
+#                         `go-mutants run` reports up to ten survivors and
+#                         exits 0, and fails at eleven.
 #
 # Ninety-six is what stood here while 120 mutants were scored, where it bought
 # four survivors of slack. At 544 the same number would buy twenty-one, which is
@@ -984,12 +1323,22 @@ strict = false
 #
 # One percent of 2484 is 24.84, which is not short of it. Twenty-four survivors
 # is more slack than the twenty-one that was judged too much at 544, so the same
-# rule that kept the number at 99 through five widenings is the rule that moves
-# it now, and it moves to the value that leaves the backstop where it has
-# actually been: 99.5 buys twelve survivors, where 99 bought thirteen before
-# this widening. The floor is a fixed number of survivors rather than a fixed
+# rule that kept the number at 99 through five widenings is the rule that moved
+# it then, and it moved to the value that left the backstop where it had
+# actually been: 99.5 bought twelve survivors, where 99 bought thirteen before
+# that widening. Ninety-nine and a half then stayed put through five more, and
+# that was the same arithmetic reaching the same answer: half a percent of 2822
+# was 14.11, of 2943 is 14.71, of 3200 is 16.00, of 3527 is 17.64 and of 3941 is
+# 19.71, so the slack went twelve, fourteen, fourteen, sixteen, seventeen,
+# nineteen while the scope grew by a third.
+#
+# Half a percent of 4321 is 21.61, and twenty-one is the number that was judged
+# too much at 544 -- so the same rule moves it a second time, to 99.75, which
+# leaves the backstop at ten survivors where 99.5 had left it at twelve when it
+# was set. The floor is a fixed number of survivors rather than a fixed
 # percentage of a growing catalogue, which is what "raise it when the scope
-# grows enough to make that count material" meant.
+# grows enough to make that count material" meant, and this is the second time
+# that sentence has been cashed in rather than repeated.
 #
 # A fraction is new here and is the only spelling available: the next integer up
 # is 100, which is `--strict` under another name, and this floor is deliberately
@@ -997,7 +1346,7 @@ strict = false
 # be gated, never the thing keeping CI honest, and a green CI run is never green
 # because of it. Raise it again when the scope grows enough to make that count
 # material; do not lower it to accommodate a survivor that a test could kill.
-minimum_score = 99.5
+minimum_score = 99.75
 require_mutants = true
 
 [report]

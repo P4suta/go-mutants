@@ -3,15 +3,20 @@
 
 // Package probeable is the fixture the probe session is proved against.
 //
-// It holds three returns and no other mutable expression, which is the whole
-// design: every mutant here is a one-line `return` of a constant, so what a
-// probe pass records about it is decidable by reading the file. Two of the
-// three are return-value mutants and are probed; the third is a boolean literal
-// and is not, because the boolean-literal rule wins deduplication over the
-// return-value rule proposing the same edit and no probe form covers it. The
-// fixture needs both: "every probed mutant behaves" only means something beside
-// a mutant that is deliberately unprobed, since a consumer has to treat that
-// one as infected by every test.
+// It holds four returns and no other mutable expression, which is the whole
+// design: every mutant here is a one-line `return`, so what a probe pass
+// records about it is decidable by reading the file. Three of them are probed —
+// two return-value mutants and a boolean literal the boolean form measures
+// where it stands — and [Doubled]'s is not. The fixture needs both: "every
+// probed mutant behaves" only means something beside a mutant that is
+// deliberately unprobed, since a consumer has to treat that one as infected by
+// every test.
+//
+// The unprobed one is unprobed for a reason no later form can lift, which is
+// what makes it a specimen rather than a snapshot of today's coverage. A probe
+// stands in for a mutant by evaluating what the original evaluates, so an
+// operand with an effect is one no rewrite may evaluate a second time or skip
+// on the mutant's behalf. [Doubled]'s operands are calls.
 //
 // The functions return values that differ from the constant their mutant would
 // return — 3 rather than 0, "probe" rather than "" — on every call. That is
@@ -49,10 +54,45 @@ func Label() string {
 
 // Ready reports whether the fixture is ready, which it always is.
 //
-// This is the fixture's unprobed mutant. The catalogue keeps `true-to-false`
-// over the `return-false` proposing the same edit, and a boolean literal has no
-// probe form, so the mutant is catalogued, mutated, and killed by TestReady
-// while no probe pass can ever say anything about it.
+// The catalogue keeps `true-to-false` over the `return-false` proposing the
+// same edit, and the boolean form measures the literal where it stands: the two
+// readings are `true` and `false`, which differ every time the site is
+// evaluated, so a test that reached it names this mutant and one that did not
+// is a test that never called Ready.
+//
+// This used to be the fixture's unprobed specimen, back when no form covered a
+// boolean literal. [Doubled] is the specimen now, and it is a better one: it is
+// unprobed because of what its operands *are* rather than because of which
+// forms happen to exist.
 func Ready() bool {
 	return true
+}
+
+// A Size is a pair of dimensions, and the reason [Doubled] returns one.
+//
+// No return-value rule proposes anything for a struct, so Doubled's `return`
+// carries exactly one mutant: the addition inside it. That keeps the fixture's
+// own rule — no two functions share an operator, so a rule names exactly one
+// mutant — which is how every test here picks a mutant out of the catalogue.
+type Size struct {
+	// W is twice the fixture's width, computed rather than written.
+	W int
+	// H is a literal, so that the struct has a field the addition does not
+	// reach and the mutant's blast radius is visible.
+	H int
+}
+
+// Doubled returns the fixture's width twice over, through calls rather than
+// literals.
+//
+// This is the fixture's unprobed mutant, and it is unprobed for a reason no
+// later form can lift: both operands of the addition are calls. A probe stands
+// in for a mutant by evaluating what the original evaluates, so the return form
+// needs every operand of the statement effect-free — the mutant it stands in
+// for *skips* one, and nothing skipped may have mattered — and the boolean form
+// needs the same of the whole site, since it evaluates both readings. So
+// `add-to-sub` here is catalogued, mutated and killed by TestDoubled, while no
+// probe pass can say anything about it.
+func Doubled() Size {
+	return Size{W: Width() + Width(), H: 1}
 }

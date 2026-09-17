@@ -136,6 +136,13 @@
 //
 // # The probe forms
 //
+// A hint names the *form* it is for, and this package renders the forms it
+// knows and leaves the rest unprobed. That is the fail-closed direction and it
+// is worth stating, because the failure it rules out is silent: a hint read by
+// the wrong renderer would compare an operand against a constant belonging to
+// some other shape and report an infection for a mutant nobody asked about,
+// while an unrendered hint costs only the executions a probe could have saved.
+//
 // One form is written, for the return-value rules, whose replacement is always
 // a constant K. A `return` carrying such a mutant at result position j becomes
 //
@@ -156,6 +163,61 @@
 // and trusts the hint as it trusts a Form D declared type. probe.go states the
 // argument in full, along with why the comparison is total and why the block is
 // still a terminating statement.
+//
+// The second form covers every Form C site — a comparison, a boolean operator,
+// an `if` or `for` condition — and measures it where it stands:
+//
+//	__gm.Differs(i, (<original>), (<mutated>))
+//
+// The helper evaluates nothing: the compiler has both readings in hand by the
+// time it is called, in the site's own context, and what the call adds is one
+// comparison and, the first time they disagree, one line in the log. It yields
+// the original's reading, so the program it is spliced into is the program
+// without it — and because each call yields its second argument, several
+// mutants of one site chain rather than compete for the slot.
+//
+// A helper call is the thing the guard forms deliberately avoid, for the three
+// reasons above, and none of them reaches a helper whose parameters are the
+// universe `bool` — which is exactly and only what a Form C site is.
+//
+// Its conditions are about the *whole* site rather than about one operand, and
+// that is the difference from the return form. Both readings are evaluated, so
+// an effect anywhere would happen twice, and the mutated reading may evaluate
+// operands the original short-circuited past. internal/discover asks its panic
+// grammar of the whole expression, which settles both at once.
+//
+// The third form is the second one for everything that is not a boolean. It
+// wraps the nearest expression around the edit whose value can be compared, in
+// the closure Form E already is:
+//
+//	func() T { var p T = (<original>); if p != (<mutated>) { __gm.Infect(i) }; return p }()
+//
+// Standing where the expression stood is what no statement rewrite could do: a
+// `switch` tag and a `for` post statement have nowhere to hoist a temporary to,
+// and this needs nowhere. Its conditions are the boolean form's plus two about
+// the comparison — the value has to be comparable without panicking, and it may
+// not be floating-point or complex, since `-0.0 != 0` is false while the two
+// are distinguishable.
+//
+// Both in-place forms share one condition the return form states differently.
+// They put a *call* where an expression stood, and Go orders calls within one
+// statement's operands while leaving a plain read among them unordered — so a
+// site is measured only where everything its own statement evaluates beside it
+// is inert. internal/discover's effects.go carries the program that shows why.
+//
+// The fourth form is the weakest, and it is why the invariant this package
+// works to is worded as "the pass could not rule the mutant out" rather than as
+// "the value differed". A deleted statement's mutant differs by the *absence*
+// of an effect, and a probe tree runs effects: there is nothing to compare. So
+// what is recorded is that the statement ran —
+//
+//	{ __gm.Infect(i); <original statement> }
+//
+// — and a pass that never ran it cannot have observed its removal. It needs
+// none of the other conditions: nothing is evaluated twice, and the call is a
+// statement of its own, so the ordering rule does not reach it. It
+// over-approximates badly and says nothing about equivalence, both of which
+// make it *more* conservative rather than less.
 //
 // Everything else is unprobed. A mutant of another family is catalogued and
 // mutated exactly as before and simply not measured, so a file holding only

@@ -44,9 +44,12 @@ SPDX-License-Identifier = "MIT OR Apache-2.0"
 [[annotations]]
 path = [
   "schema/catalog-v1.schema.json",
+  "schema/diagnostics-v1.schema.json",
   "schema/doctor-v1.schema.json",
+  "schema/explain-v1.schema.json",
   "schema/run-report-v1.schema.json",
   "schema/trace-v1.schema.json",
+  "schema/workspace-report-v1.schema.json",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 go-mutants contributors"
@@ -74,8 +77,14 @@ SPDX-License-Identifier = "MIT OR Apache-2.0"
 [[annotations]]
 path = [
   "internal/console/testdata/verbose-one.golden.txt",
+  "internal/tui/testdata/frames.golden.txt",
   "internal/console/testdata/verbose-two.golden.txt",
   "internal/engine/testdata/killable.report.golden.json",
+  "internal/devtools/traceaudit/testdata/coverage.report.json",
+  "internal/devtools/traceaudit/testdata/coverage.trace.jsonl",
+  "internal/devtools/traceaudit/testdata/killable.report.json",
+  "internal/devtools/traceaudit/testdata/killable.trace.jsonl",
+  "internal/engine/testdata/work-ceiling.golden.txt",
   "internal/engine/testdata/simple.report.golden.json",
   "internal/engine/testdata/tagged.report.golden.json",
   "internal/engine/testdata/untested.report.golden.json",
@@ -86,6 +95,44 @@ path = [
   "internal/report/testdata/run-report-v1-before-timing.json",
   "trace/testdata/events.golden.jsonl",
   "trace/testdata/events-failure.golden.jsonl",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 go-mutants contributors"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# The recorded `--help` of every command, which is the one set here that is
+# derived rather than written down: `internal/cli`'s
+# TestEveryCommandsHelpMatchesItsGolden walks the cobra tree and records one
+# file per command, and TestCommandLineDocNamesEveryCommand keeps that set equal
+# to the reference page. Enumerating the same twenty-two paths here would be a
+# second ledger to keep in step with the first, and the one that goes stale
+# silently -- so this is the one glob in this file, and the reason it is one.
+#
+# They cannot carry a header for the ordinary reason a golden cannot: they are
+# the exact bytes a user sees, and a licence notice in front of them would make
+# the file a record of output the tool never produces.
+[[annotations]]
+path = ["internal/cli/testdata/help-*.golden.txt"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 go-mutants contributors"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# Test inputs whose first bytes are the format under test.
+#
+# The fuzz corpus seed is read by `testing`'s own corpus reader, which requires
+# the file to open with `go test fuzz v1` and to hold one Go literal per
+# argument after it; a comment anywhere in it is a parse error, and `go test`
+# reports it as a corrupt corpus entry rather than as a licensing question.
+#
+# textfmt.sample.txt is a recording of what `go tool covdata textfmt` writes,
+# and its first line -- `mode: set` -- is part of the format internal/coverage
+# parses. A header in front of it would make the file a sample of something the
+# tool never produces, which is the one thing a sample may not be.
+[[annotations]]
+path = [
+  "internal/config/testdata/fuzz/FuzzParse/815f24358e6c0d51",
+  "internal/validate/testdata/fuzz/FuzzParseDiagnostics/a8e9520ed16f68fa",
+  "internal/coverage/testdata/textfmt.sample.txt",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 go-mutants contributors"

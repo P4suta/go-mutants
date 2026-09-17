@@ -8,35 +8,46 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
+	"sync/atomic"
 
 	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// coverDirFlag is how a test binary is told where to leave its coverage data.
+// coverProfileFlag is how a test binary is told where to write its coverage
+// profile, in the text format internal/coverage reads.
+//
+// It is this flag rather than `-test.gocoverdir` for one reason, and the reason
+// is a *process*: a binary handed a coverage directory writes the raw counter
+// and metadata files, which then need `go tool covdata textfmt` to become
+// something readable, and that is one more child process per profile. A run
+// that profiles every test of a suite pays it once per test. `-test.coverprofile`
+// makes the binary write the text format itself, and the two documents are the
+// same format from the same data -- what `go test -coverprofile` has written
+// since Go 1.2 and what covdata renders into.
 //
 // It is a flag and deliberately not the GOCOVERDIR environment variable, which
-// is the obvious guess and is wrong here. GOCOVERDIR is read by
-// internal/coverage/cfile's emitMetaData, the path a program built with
-// `go build -cover` takes; a *test* binary emits through testing's coverTearDown
-// instead, which is handed only the value of `-test.gocoverdir` and, when that
-// is empty, writes into a temporary directory it then deletes. Setting the
+// is the obvious guess and is wrong here for either mechanism. GOCOVERDIR is
+// read by internal/coverage/cfile's emitMetaData, the path a program built with
+// `go build -cover` takes; a *test* binary emits through testing's
+// coverTearDown instead, which is handed only what the flags say and, when they
+// say nothing, writes into a temporary directory it then deletes. Setting the
 // environment variable on a test binary therefore produces a run that reports a
 // coverage percentage and leaves nothing behind, which is the most confusing
-// possible failure: it looks like it worked. Verified against go1.26.5.
-const coverDirFlag = "-test.gocoverdir="
+// possible failure: it looks like it worked. Verified against go1.26.6.
+const coverProfileFlag = "-test.coverprofile="
 
 // A CoverageData is where one test binary left its raw coverage data.
 type CoverageData struct {
 	// ImportPath is the package whose test binary produced it, which is the
 	// name the mapping and the report know a binary by.
 	ImportPath string
-	// Dir is the absolute directory holding the covmeta and covcounters files
-	// this binary wrote. It is `go tool covdata`'s input, and it is one
-	// directory per binary rather than one shared one because merging two
+	// Path is the absolute path of the text-format profile this binary wrote.
+	// It is one file per binary rather than one shared one because merging two
 	// binaries' data would answer "was this line reached by anything", which is
 	// the question coverage-guided selection exists not to ask.
-	Dir string
+	Path string
 }
 
 // CollectCoverage runs every test binary once, with no mutant activated, and
@@ -55,10 +66,13 @@ type CoverageData struct {
 // coverage of the unmutated program. That is the only coverage that means
 // anything — a profile taken with a mutant live would describe the mutant.
 //
-// The binaries run one after another rather than concurrently. Coverage is
-// about which lines a suite reaches and not about how long it takes, so there is
-// nothing to gain from overlapping them, and running them serially keeps this
-// pass from competing with itself for the machine the timeout was derived on.
+// The binaries run [Options.Jobs] at a time, as the mutants they are profiled
+// for will. Each is a separate process writing a profile of its own under a
+// scratch directory of its own, and nothing is shared but the package directory
+// they already read from -- so serialising them bought only that they did not
+// overlap, which is a cost paid once per *package* before a run measures
+// anything. The answers are written by index, so what the mapping sees is a
+// function of the tree rather than of the order the workers finished in.
 //
 // A failure is returned rather than recovered from, and the caller is expected
 // to warn and fail open: see internal/coverage's [coverage.CodeUnavailable].
@@ -66,50 +80,94 @@ type CoverageData struct {
 // data written inside it would be indistinguishable from a test writing into
 // the tree, which is exactly what the drift gate exists to catch.
 func CollectCoverage(ctx context.Context, opts Options, bins []TestBinary, dir string) ([]CoverageData, error) {
-	opts, root, scratch, err := coverageTarget(opts, dir)
+	opts, root, _, err := coverageTarget(opts, dir)
 	if err != nil {
 		return nil, err
 	}
 
-	collected := make([]CoverageData, 0, len(bins))
-	for i, bin := range bins {
-		// One directory per binary, named by position rather than by import
-		// path; see profileDir.
-		binDir, err := profileDir(root, i)
+	// One file per binary, named by position rather than by import path; see
+	// profilePath.
+	paths := make([]string, len(bins))
+	for i := range bins {
+		binPath, err := profilePath(root, "b", i)
 		if err != nil {
 			return nil, err
 		}
+		paths[i] = binPath
+	}
 
-		spec := runner.Spec{
-			Argv: []string{bin.BinPath, coverDirFlag + binDir},
-			Dir:  bin.Dir,
-			// No activation, and the same composed environment a mutant gets:
-			// a profile taken under a different environment would describe a
-			// different program from the one the mutants are measured in.
-			Env:     baseEnvFrom(opts.Env, scratch),
-			Timeout: opts.Timeout,
-			// The same bound the mutants will be measured under, because these
-			// are the same binaries. It is worth knowing what a bound that is
-			// too small for them does: this pass fails, internal/engine treats
-			// a failed coverage pass as it treats every other one — it gives up
-			// the narrowing, warns, and measures every mutant against every
-			// binary — so the run is slower and reaches exactly the same
-			// verdicts. A `-cover` binary is the largest thing a run starts, so
-			// it is also the first place a bound set below what this project
-			// actually needs shows up.
-			MemoryLimit: opts.MemoryLimit,
-			Trace:       opts.Trace,
-			Kind:        trace.ExecKindCoverageRun,
-			Subject:     bin.ImportPath,
-		}
-		result := opts.runProcess(ctx, spec)
-		if err := commandFailure(ctx, spec, result, CodeCoverageFailed,
-			"the coverage pass over "+bin.ImportPath+" failed", opts.Timeout); err != nil {
+	collected := make([]CoverageData, len(bins))
+	failures := make([]error, len(bins))
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for worker := range min(opts.workers(), len(bins)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			workerOpts := opts
+			workerOpts.ScratchDir = workerScratchDir(opts.ScratchDir, worker)
+			workerScratchPath, scratchErr := workerScratch(workerOpts.ScratchDir)
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+				i := int(next.Add(1)) - 1
+				if i >= len(bins) {
+					return
+				}
+				if scratchErr != nil {
+					failures[i] = scratchErr
+					continue
+				}
+				collected[i], failures[i] = profileOneBinary(ctx, workerOpts, bins[i], paths[i], workerScratchPath)
+			}
+		}()
+	}
+	wg.Wait()
+	for _, err := range failures {
+		if err != nil {
 			return nil, err
 		}
-		collected = append(collected, CoverageData{ImportPath: bin.ImportPath, Dir: binDir})
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
 	return collected, nil
+}
+
+// profileOneBinary runs one test binary with nothing activated and records
+// where it left its profile.
+func profileOneBinary(
+	ctx context.Context, opts Options, bin TestBinary, path, scratch string,
+) (CoverageData, error) {
+	spec := runner.Spec{
+		Argv: []string{bin.BinPath, coverProfileFlag + path},
+		Dir:  bin.Dir,
+		// No activation, and the same composed environment a mutant gets:
+		// a profile taken under a different environment would describe a
+		// different program from the one the mutants are measured in.
+		Env:     baseEnvFrom(opts.Env, scratch),
+		Timeout: opts.Timeout,
+		// The same bound the mutants will be measured under, because these
+		// are the same binaries. It is worth knowing what a bound that is
+		// too small for them does: this pass fails, internal/engine treats
+		// a failed coverage pass as it treats every other one — it gives up
+		// the narrowing, warns, and measures every mutant against every
+		// binary — so the run is slower and reaches exactly the same
+		// verdicts. A `-cover` binary is the largest thing a run starts, so
+		// it is also the first place a bound set below what this project
+		// actually needs shows up.
+		MemoryLimit: opts.MemoryLimit,
+		Trace:       opts.Trace,
+		Kind:        trace.ExecKindCoverageRun,
+		Subject:     bin.ImportPath,
+	}
+	result := opts.runProcess(ctx, spec)
+	if err := commandFailure(ctx, spec, result, CodeCoverageFailed,
+		"the coverage pass over "+bin.ImportPath+" failed", opts.Timeout); err != nil {
+		return CoverageData{}, err
+	}
+	return CoverageData{ImportPath: bin.ImportPath, Path: path}, nil
 }
 
 // coverageTarget is what both profiling passes check before they start a
@@ -157,21 +215,24 @@ func coverageTarget(opts Options, dir string) (Options, string, string, error) {
 	return opts, root, scratch, nil
 }
 
-// profileDir creates one directory for one profile under root and names it by
-// the positions given, which is a name that is stable between two runs of one
-// workspace: an import path or a test name is not a file name, and the order
-// the callers walk in is the sorted order [BuildTestBinaries] returned.
-func profileDir(root string, positions ...int) (string, error) {
-	dir := root
-	for _, position := range positions {
-		dir = filepath.Join(dir, strconv.Itoa(position))
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+// profilePath names one profile under root, by a prefix and the positions
+// given, and makes sure the directory holding it exists.
+//
+// The name is stable between two runs of one workspace: an import path or a
+// test name is not a file name, and the order the callers walk in is the sorted
+// order [BuildTestBinaries] returned. The prefix keeps a binary's profile and
+// its tests' apart, which matters only to whoever reads a `--keep-temp` run.
+func profilePath(root, prefix string, positions ...int) (string, error) {
+	if err := os.MkdirAll(root, 0o755); err != nil {
 		return "", &Error{
 			Code:    CodeCoverageDir,
-			Message: "the coverage directory " + strconv.Quote(dir) + " could not be created",
+			Message: "the coverage directory " + strconv.Quote(root) + " could not be created",
 			Err:     err,
 		}
 	}
-	return dir, nil
+	name := prefix
+	for _, position := range positions {
+		name += "-" + strconv.Itoa(position)
+	}
+	return filepath.Join(root, name+".txt"), nil
 }

@@ -11,8 +11,13 @@
 package gomutants_rt
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 // activeEnv names the mutant that is live in this process. Empty or unset is
@@ -50,4 +55,165 @@ func init() {
 		os.Exit(unknownMutantExit)
 	}
 	M[index] = true
+}
+
+// loopCensusEnv names the file this process appends its loop census to.
+// Empty or unset records nothing.
+const loopCensusEnv = "GO_MUTANTS_LOOP_CENSUS"
+
+// loopLimitsEnv names the file this process reads its ceilings from. Empty or
+// unset leaves every ceiling at noLimit, which no loop can reach.
+const loopLimitsEnv = "GO_MUTANTS_LOOP_LIMITS"
+
+// loopFileSuffix is what this module adds to either of those paths. A
+// workspace run has one of these packages per module, each numbering its own
+// loops, and the two variables name one path.
+const loopFileSuffix = ".4a02876d"
+
+// divergedExit is the status this process exits with when a loop passes its
+// ceiling.
+const divergedExit = 96
+
+// censusHeader opens the census this process writes.
+const censusHeader = "gomutants-loop-census-v1 0"
+
+// limitsHeader opens the table this process is willing to read.
+const limitsHeader = "gomutants-loop-limits-v1 0"
+
+// noLimit is the ceiling of a run that was given no table: no loop reaches it,
+// so the counters cost an increment and a compare and decide nothing.
+const noLimit = ^uint64(0)
+
+// Limit is one ceiling per counted loop, indexed by the site the rewrite
+// spells. Counted loops read it and nothing writes it after init.
+var Limit [1]uint64
+
+// loopSites names each counted loop, so that a divergence can say which one it
+// was rather than leaving a reader to count `for` statements.
+var loopSites = [1]string{}
+
+// censusFile is the census this process appends to, and nil when it was not
+// asked for one. censusSeen is the largest count already written for each
+// site, which keeps the file to about one line per doubling however many
+// times a loop is entered. censusMu serialises the writes themselves.
+var (
+	censusFile *os.File
+	censusSeen [1]atomic.Uint64
+	censusMu   sync.Mutex
+)
+
+// enforcing reports whether this process was given a table of ceilings to
+// hold its loops to. It is written in init and read everywhere else.
+var enforcing bool
+
+// Over is what a counted loop calls when its own counter passes its own
+// ceiling, and it returns the ceiling that loop should carry on with.
+//
+// A process holding a table never returns from it: n iterations of this loop
+// is more work than the original program did anywhere in this suite, which is
+// what a mutant that does not return looks like when it is counted rather
+// than waited for.
+func Over(i uint32, n uint64) uint64 {
+	if enforcing {
+		diverged(i, n)
+	}
+	if censusFile != nil {
+		record(i, n)
+	}
+	return n * 2
+}
+
+// diverged ends the process, naming the loop and the two counts that decided
+// it. It never returns.
+func diverged(i uint32, n uint64) {
+	fmt.Fprintln(os.Stderr, "go-mutants: the loop at "+loopSites[i]+" ran "+strconv.FormatUint(n, 10)+
+		" times, past the "+strconv.FormatUint(Limit[i], 10)+" this run derived for it from what the"+
+		" original program did under the same tests; this mutant does not return")
+	os.Exit(divergedExit)
+}
+
+// record appends one count to the census, and only when it beats every count
+// already written for that site.
+func record(i uint32, n uint64) {
+	for {
+		seen := censusSeen[i].Load()
+		if n <= seen {
+			return
+		}
+		if censusSeen[i].CompareAndSwap(seen, n) {
+			break
+		}
+	}
+	censusMu.Lock()
+	defer censusMu.Unlock()
+	fmt.Fprintln(censusFile, i, n)
+}
+
+// init settles the ceilings: every loop unlimited, then the table the
+// environment names if it names one, and the census file if it asks for one.
+//
+// A table that cannot be opened, cannot be read, or was written for another
+// tree leaves every ceiling at noLimit and says so once: a run that measured
+// nothing about its loops is a run bounded in time alone, which is what every
+// run was before it could count.
+func init() {
+	for i := range Limit {
+		Limit[i] = noLimit
+	}
+	if named := os.Getenv(loopCensusEnv); named != "" {
+		path := named + loopFileSuffix
+		file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err == nil {
+			censusFile = file
+			fmt.Fprintln(file, censusHeader)
+			for i := range Limit {
+				Limit[i] = 1
+			}
+		} else {
+			fmt.Fprintln(os.Stderr, "go-mutants: cannot open the loop census "+path+": "+err.Error())
+		}
+	}
+	named := os.Getenv(loopLimitsEnv)
+	if named == "" {
+		return
+	}
+	path := named + loopFileSuffix
+	if err := readLimits(path); err != nil {
+		for i := range Limit {
+			Limit[i] = noLimit
+		}
+		fmt.Fprintln(os.Stderr, "go-mutants: cannot read the loop limits "+path+": "+err.Error()+
+			"; this mutant is bounded in time alone")
+		return
+	}
+	enforcing = true
+}
+
+// readLimits fills Limit from the table at path, or reports why it did not.
+func readLimits(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	if !scanner.Scan() || scanner.Text() != limitsHeader {
+		return fmt.Errorf("the table was not written for this tree")
+	}
+	for scanner.Scan() {
+		left, right, ok := strings.Cut(scanner.Text(), " ")
+		if !ok {
+			return fmt.Errorf("%q is not a site and a ceiling", scanner.Text())
+		}
+		site, siteErr := strconv.Atoi(left)
+		if siteErr != nil || site < 0 || site >= len(Limit) {
+			return fmt.Errorf("%q names no loop of this tree", left)
+		}
+		ceiling, ceilErr := strconv.ParseUint(right, 10, 64)
+		if ceilErr != nil {
+			return ceilErr
+		}
+		Limit[site] = ceiling
+	}
+	return scanner.Err()
 }

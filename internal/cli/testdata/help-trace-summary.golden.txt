@@ -1,0 +1,24 @@
+Summarise one recording: where the run went, and what it ran.
+
+With no argument this reads the newest recording in this workspace, which is the
+run you have just made. A run id names one of the others, and a path names a
+recording anywhere — a colleague's bug report, a CI artefact — as either the run
+directory or the stream inside it.
+
+The phases and the stages say where the time went; the commands, tallied by
+kind, say what the run actually started and for how long; the mutant outcomes
+say what the executions came to. The header says whether the recording is
+complete, which is the first thing to check before reading a number out of it.
+
+Usage:
+  go-mutants trace summary [RUN-ID|PATH] [flags]
+
+Flags:
+  -h, --help   help for summary
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)

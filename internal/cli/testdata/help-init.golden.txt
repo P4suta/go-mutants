@@ -1,0 +1,36 @@
+Write a commented .go-mutants.toml with the built-in defaults in it.
+
+The file it writes changes nothing: every value in it is what go-mutants would
+have done without it, so a project can adopt the file first and decide things
+afterwards. The comments say what each key means and what happens if it is left
+out, which is what makes it a better starting point than an empty file.
+
+It never overwrites. There is no --force, deliberately: a configuration file is
+hand-edited and is usually the only record of decisions nobody wrote down
+twice, and a flag that replaces it wholesale is a flag somebody will type by
+accident. Deleting the file first is the deliberate act such a flag would only
+have pretended to be.
+
+--dry-run prints what would be written and touches nothing, including where a
+real init would refuse, so it is also how to see the current defaults.
+
+--check exits 0 when the file already there is byte-identical to what this
+build would write, and 1 when it is not, so a CI job can hold a generated
+configuration to the release that generated it. It is the one place in
+go-mutants where 1 does not mean a policy gate failed — it is still an opt-in
+gate somebody asked for, and it is still not an infrastructure failure.
+
+Usage:
+  go-mutants init [flags]
+
+Flags:
+      --check     exit 0 if the file already there is what this build would write, and 1 if it is not
+      --dry-run   print what would be written, and write nothing
+  -h, --help      help for init
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)

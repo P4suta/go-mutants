@@ -110,10 +110,19 @@ nothing at all — no version bump, and no Release PR. See `CONTRIBUTING.md`.
 - [ ] `mise run test-integration` green on Windows, Linux, and macOS
 - [ ] CI green on the exact release commit: the `quality` job, all three legs
       of the `platform-tests` matrix, `artifacts`, and `dogfood`
-- [ ] All three legs of the nightly `fuzz` matrix green — `FuzzParse`
-      (`internal/config`), `FuzzMatch` (`internal/glob`), and `FuzzFlatten`
-      (`internal/instrument`), each searching for its whole `-fuzztime` — with
-      no `fuzz-crasher-*` artifact uploaded
+- [ ] Every leg of the nightly `fuzz` matrix green, each searching for its
+      whole `-fuzztime`, with no `fuzz-crasher-*` artifact uploaded. Three of
+      them rewrite or decide about this repository's own inputs — `FuzzParse`
+      (`internal/config`), `FuzzMatch` (`internal/glob`), `FuzzFlatten`
+      (`internal/instrument`). Nine are readers of bytes go-mutants does not
+      control: `FuzzParseTextfmt` (`internal/coverage`), `FuzzParseDiff`
+      (`internal/gitdiff`), `FuzzValidate` (`internal/schemas`),
+      `FuzzMutantIdentity` (`internal/mutation`), `FuzzBuild`
+      (`internal/interval`), `FuzzParseVersion` (`internal/gocmd`),
+      `FuzzParseDiagnostics` (`internal/validate`), `FuzzReadRecording`
+      (`trace`) and `FuzzParseDocument` (`internal/report`). Two are values a
+      person types: `FuzzParseShardSpec` (`internal/report`) and
+      `FuzzMatchAgreesWithTheFlagPackage` (`internal/testflag`)
 - [ ] The nightly `property` job green at its deepened budget
       (`RAPID_CHECKS=2000`, `-count=5`, so each rerun draws a fresh seed), with
       no `rapid-failures` artifact uploaded
@@ -189,10 +198,18 @@ nothing at all — no version bump, and no Release PR. See `CONTRIBUTING.md`.
       third thing outside the denominator, an expected survivor, is deliberate
       everywhere — the `[[mutation.expect]]` ledger accounts for it, and an
       unfulfilled or stale expectation is exit 2 already
-- [ ] README, `docs/`, and `--help` agree on flags, exit codes, and defaults;
-      the README exit-code table matches `internal/cli`'s `exitCodeHelp`
-      verbatim
-- [ ] Every **Status** line in `docs/` is accurate for this commit
+- [ ] README, `docs/`, and `--help` agree on flags, exit codes, and defaults.
+      The exit codes are checked rather than read:
+      `internal/cli.TestEveryExitCodeTableSaysWhatTheHelpSays` compares the
+      README's table with `exitCodeHelp` and both with the codes
+      `internal/mutation` declares, so this box is "the test is green" and not
+      "somebody diffed two differently-shaped tables by eye"
+- [ ] Every page under `docs/` carries a **Status** line and is named by
+      `docs/README.md` —
+      `internal/testkit.TestEveryDocumentationPageDeclaresItsStatus` and
+      `TestDocsIndexLinksEveryPage` refuse a page that does not — and every one
+      of those lines is accurate for this commit, which is the half no test can
+      check
 - [ ] `CHANGELOG.md`'s `[Unreleased]` section promoted to `[0.1.0]` with a
       date and a comparison link **in a pull request of its own, merged before
       the Release PR**, and `RELEASE_NOTES.md` reviewed against it
@@ -250,14 +267,25 @@ nothing at all — no version bump, and no Release PR. See `CONTRIBUTING.md`.
 
 - [ ] **The first Release PR proposes `0.1.0`, not `0.0.1`.** This is the one
       box to read before anything is merged, and it is checked by looking at
-      the pull request title. `release-please-config.json` says
-      `"initial-version": "0.1.0"` while `.release-please-manifest.json` says
-      `{".": "0.0.0"}`, which are two different claims about what was last
-      released. `bootstrap-sha` means no tag exists, so `initial-version`
-      should win — but if release-please reads the manifest's `0.0.0` as a
-      prior release instead, a `feat:` subject produces `0.0.1`. Catching that
-      in the pull request title costs a config edit; catching it after the
-      merge costs a bad tag
+      the pull request title.
+      The three files that decide it now agree, and they did not.
+      `.release-please-manifest.json` held `{".": "0.0.0"}`, which is a claim
+      that `0.0.0` was released — and below `1.0.0` release-please's default is
+      that a `feat:` bumps the *patch*, so `0.0.0` plus every feature since
+      `bootstrap-sha` proposes `0.0.1`. The manifest is now `{}`: nothing has
+      been released, which is true, and `"initial-version": "0.1.0"` in
+      `release-please-config.json` is then the only claim about what the first
+      release is. `VERSION` said `0.0.0` while `internal/cli/root.go` said
+      `0.1.0-dev`, two spellings of one fact that disagreed; `VERSION` now says
+      `0.1.0-dev` too, which is what the publish workflow checks against the tag
+      after release-please has rewritten both.
+      `internal/cli`'s `TestTheVersionFilesAgreeWithTheConstant` is what keeps
+      the three agreeing from here on: it fails when `VERSION` and
+      `defaultVersion` differ, and when the manifest records a release the tree
+      does not carry. The box stays anyway, because agreeing configuration is
+      not the same as a verified outcome and this is somebody else's tool:
+      catching a wrong title costs a config edit, catching it after the merge
+      costs a bad tag
 - [ ] `CHANGELOG.md` rolled and merged, then the Release PR merged — in that
       order (see [How a release happens](#how-a-release-happens))
 - [ ] `Publish release` dispatched with an empty `tag`, and the `release`

@@ -129,6 +129,10 @@ func TestParseVersionRejects(t *testing.T) {
 		{name: "an empty target half", output: "go version go1.26.5 linux/\n"},
 		{name: "an empty target half at the front", output: "go version go1.26.5 /amd64\n"},
 		{name: "a devel build with nothing after it", output: "go version devel linux/amd64\n"},
+		// A target is two names from two closed lists and neither holds a
+		// slash, so a third field is not a target with an unusual arch in it --
+		// it is a line no toolchain printed.
+		{name: "a target of three parts", output: "go version go1.26.5 a/b/c\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

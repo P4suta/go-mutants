@@ -43,7 +43,7 @@ func runFake(t *testing.T, f *mutantkit.Fake, dir string, args ...string) runner
 		Argv:    append([]string{f.Bin()}, args...),
 		Dir:     dir,
 		Env:     fakeEnv(t, f),
-		Timeout: 30 * time.Second,
+		Timeout: mutantkit.StepTimeout,
 	}
 	return runner.Run(t.Context(), spec)
 }
@@ -63,7 +63,7 @@ func TestFakeGoAnswersTheVersionProbe(t *testing.T) {
 	tc, err := gocmd.LocateContext(t.Context(), gocmd.Options{
 		Explicit: f.Bin(),
 		Env:      fakeEnv(t, f),
-		Timeout:  30 * time.Second,
+		Timeout:  mutantkit.StepTimeout,
 	})
 	if err != nil {
 		t.Fatalf("Locate against the fake = %v, want a toolchain", err)
@@ -195,7 +195,7 @@ func TestFakeGoCreateOutputWritesAnExecutableAtTheDashOPath(t *testing.T) {
 		Argv:    []string{out, "-test.run=^TestOnly$"},
 		Dir:     t.TempDir(),
 		Env:     env,
-		Timeout: 30 * time.Second,
+		Timeout: mutantkit.StepTimeout,
 	})
 	if ran.Err != nil || ran.ExitCode != 0 {
 		t.Fatalf("running the created binary = exit %d, %v:\n%s", ran.ExitCode, ran.Err, ran.Output)
@@ -231,7 +231,7 @@ func TestFakeGoRecordsDirAndEnvNamesButNotValues(t *testing.T) {
 		Argv:    []string{f.Bin(), "version"},
 		Dir:     dir,
 		Env:     append(fakeEnv(t, f), "TESTKIT_FAKE_GO_SECRET="+secret, "GOFLAGS=-mod=readonly -vet=off"),
-		Timeout: 30 * time.Second,
+		Timeout: mutantkit.StepTimeout,
 	}
 	if result := runner.Run(t.Context(), spec); result.ExitCode != 0 {
 		t.Fatalf("the version probe exited %d:\n%s", result.ExitCode, result.Output)
@@ -478,7 +478,7 @@ func TestFakeGoRefusesToRunTheSuiteInPlaceOfTheGoCommand(t *testing.T) {
 	result := runner.Run(t.Context(), runner.Spec{
 		Argv:    []string{f.Bin(), "version"},
 		Env:     testkit.Compose(t, testkit.Scratch(t)),
-		Timeout: 30 * time.Second,
+		Timeout: mutantkit.StepTimeout,
 	})
 	if result.ExitCode != mutantkit.FakeGoNoRule {
 		t.Fatalf("the stray fake exited %d, want %d:\n%s",
@@ -624,7 +624,7 @@ func TestFakeGoFallsBackToCopyingWhenItCannotLink(t *testing.T) {
 	result := runner.Run(t.Context(), runner.Spec{
 		Argv:    []string{copied, "version"},
 		Env:     fakeEnv(t, f),
-		Timeout: 30 * time.Second,
+		Timeout: mutantkit.StepTimeout,
 	})
 	if result.ExitCode != 0 {
 		t.Fatalf("the copied fake exited %d, want 0:\n%s", result.ExitCode, result.Output)
@@ -819,7 +819,7 @@ func TestCreateOutputCanBeAskedTwiceForTheSamePath(t *testing.T) {
 		Argv:    []string{out, "-test.run=^TestOnly$"},
 		Dir:     t.TempDir(),
 		Env:     env,
-		Timeout: 30 * time.Second,
+		Timeout: mutantkit.StepTimeout,
 	})
 	if ran.Err != nil || ran.ExitCode != 0 {
 		t.Fatalf("running the rebuilt binary = exit %d, %v:\n%s", ran.ExitCode, ran.Err, ran.Output)

@@ -96,51 +96,49 @@ func TestListExplainPrintsAWholeFileSkipWithoutACoordinate(t *testing.T) {
 //
 // The coordinates are the fixture's own and can be checked with an editor,
 // which is the point: line 33 holds two suppressed expressions inside one array
-// length, line 49 holds three inside one package-level initialiser — a
-// comparison and the two constants a return could be rewritten to — and the
-// generated file has no coordinate at all, because it was never opened.
+// length, line 49 holds two inside one package-level initialiser — a comparison
+// and the one constant a return there could be rewritten to — and the generated
+// file has no coordinate at all, because it was never opened.
+//
+// Each row names the rule that was declined, which is what makes line 49
+// readable. It would carry `return-false` as well, except that `1 == 2` is a
+// constant the checker folded to false: settling it false is the program
+// itself, not a mutant, and discovery refuses it before there is a suppression
+// to record. A site that is not an edit is not a declined edit either.
 const wantSkipDetail = `
-suppressed sites (21)
+suppressed sites (16)
 discovery passed these over; they are never candidates, so they are in no score
 
 array-length 2 sites
   the expression is an array length, which is part of a type and is evaluated by the compiler rather than at run time
-  suppressed/suppressed.go:33:28
-  suppressed/suppressed.go:33:33
-
-case-label 4 sites
-  the expression labels a switch case or a select clause, which v1 leaves alone; the bodies underneath them are mutated
-  suppressed/suppressed.go:76:9
-  suppressed/suppressed.go:80:10
-  suppressed/suppressed.go:80:13
-  suppressed/suppressed.go:97:16
+  suppressed/suppressed.go:33:28 lt-to-le
+  suppressed/suppressed.go:33:33 true-to-false
 
 const-decl 4 sites
   the expression is inside a const declaration, where a constant has to stay constant and one edit can renumber a whole iota block
-  suppressed/suppressed.go:18:12
-  suppressed/suppressed.go:20:13
-  suppressed/suppressed.go:27:18
-  suppressed/suppressed.go:65:18
+  suppressed/suppressed.go:18:12 true-to-false
+  suppressed/suppressed.go:20:13 gt-to-ge
+  suppressed/suppressed.go:27:18 le-to-lt
+  suppressed/suppressed.go:65:18 gt-to-ge
 
 generated 1 site
   the file says it is generated, so an edit here would measure the generator's tests and be overwritten by its next run
   generated/generated.go
 
-package-var-init 5 sites
+package-var-init 4 sites
   the expression initialises a package-level variable, where initialisation order is a global property a per-mutant guard cannot express in v1
-  suppressed/suppressed.go:41:19
-  suppressed/suppressed.go:44:15
-  suppressed/suppressed.go:49:33
-  suppressed/suppressed.go:49:33
-  suppressed/suppressed.go:49:35
+  suppressed/suppressed.go:41:19 lt-to-le
+  suppressed/suppressed.go:44:15 true-to-false
+  suppressed/suppressed.go:49:33 return-true
+  suppressed/suppressed.go:49:35 eq-to-neq
 
 type-param 5 sites
   the expression is inside a type parameter list, a constraint, or a type argument, which hold types rather than values
-  generics/generics.go:24:27
-  generics/generics.go:31:28
-  generics/generics.go:38:27
-  generics/generics.go:55:25
-  generics/generics.go:55:51
+  generics/generics.go:24:27 true-to-false
+  generics/generics.go:31:28 false-to-true
+  generics/generics.go:38:27 true-to-false
+  generics/generics.go:55:25 true-to-false
+  generics/generics.go:55:51 false-to-true
 `
 
 // TestListExplainCoordinatesLandOnTheirOwnFixtureLines reads the fixture back
@@ -172,10 +170,17 @@ func TestListExplainCoordinatesLandOnTheirOwnFixtureLines(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reading the fixture file %q names: %v", row, err)
 		}
-		lineNumber, column, _ := strings.Cut(position, ":")
+		lineNumber, rest, _ := strings.Cut(position, ":")
 		at, err := strconv.Atoi(lineNumber)
 		if err != nil {
 			t.Fatalf("%q does not carry a line number: %v", row, err)
+		}
+		// A row is `path:line:col rule`, so the column runs to the space.
+		// Splitting rather than parsing the whole tail keeps this test about
+		// coordinates: the rule name is checked by the ledger that produced it.
+		column, rule, hasRule := strings.Cut(rest, " ")
+		if !hasRule || rule == "" {
+			t.Errorf("%q names no rule, so a reader cannot tell it from the row beside it", row)
 		}
 		col, err := strconv.Atoi(column)
 		if err != nil {

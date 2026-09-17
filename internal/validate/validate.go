@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -53,9 +54,17 @@ type Options struct {
 	// pristine bytes.
 	Hints instrument.Hints
 
-	// ModulePath is the import path of the main module at the snapshot root,
-	// which the generated runtime's import path is built from.
-	ModulePath string
+	// Modules are the modules the snapshot holds, in the order the phase
+	// instruments them. A single-module snapshot is one entry rooted at `.`;
+	// a workspace is one entry per `use` line.
+	//
+	// A module at a time is how a workspace has to be instrumented, because a
+	// module's files can only import a runtime its own module declares: a
+	// generated package under `first/` is not on `second/`'s import path
+	// without a `require`, and editing a go.mod inside the snapshot is editing
+	// the tree under test. Each module therefore gets a pass and a runtime of
+	// its own, and each of those runtimes carries the whole catalogue.
+	Modules []Module
 
 	// Toolchain is the located Go toolchain every build goes through.
 	Toolchain gocmd.Toolchain
@@ -105,6 +114,27 @@ type Options struct {
 	Trace *trace.Recorder
 }
 
+// A Module is one module of the tree being validated.
+type Module struct {
+	// Dir is the module root relative to the snapshot root, slash-separated,
+	// and "." for the module at the root itself.
+	Dir string
+	// Path is the module's import path, which the generated runtime's import
+	// path is built from.
+	Path string
+}
+
+// mutants reports which catalogued mutants belong to this module, which is
+// what a mutant's own [mutation.Candidate.ModulePath] says -- and the empty
+// string when the catalogue names no module, because then there is one module
+// and everything belongs to it.
+func (m Module) mutants(catalog *mutation.Catalog) string {
+	if first, ok := catalog.At(0); ok && first.ModulePath == "" {
+		return ""
+	}
+	return m.Path
+}
+
 // A Rejection is one catalogued mutant that cannot be compiled, and the
 // compiler's own explanation of why.
 //
@@ -148,16 +178,61 @@ type Result struct {
 	// Rejected are the mutants that do not compile, in catalogue order.
 	Rejected []Rejection
 
-	// Instrumented describes the snapshot as it finally stands: the generated
-	// runtime, and the guards that survived validation. Its GuardsByFile and
-	// FilesInstrumented are the state after isolation rather than before it, so
-	// a file whose every candidate was rejected is absent from both.
+	// Instrumented describes the snapshot as it finally stands: the guards that
+	// survived validation, keyed by the path they sit at *relative to the
+	// snapshot root*. Its GuardsByFile and FilesInstrumented are the state
+	// after isolation rather than before it, so a file whose every candidate
+	// was rejected is absent from both.
+	//
+	// Its RuntimeDir and RuntimeImport name the tree's one generated runtime,
+	// and are empty for a workspace, where there is one per module and no
+	// single answer to name. [Result.Runtimes] is the field that always has
+	// the answer.
 	Instrumented instrument.Result
 
-	// Builds is how many `go build` invocations the phase spent. One means the
-	// whole catalogue compiled on the first try, which is the ordinary case and
-	// the one the schemata design exists to make ordinary.
+	// Runtimes are the generated runtime packages this pass wrote, one per
+	// module, in [Options.Modules] order. Their RuntimeDir is relative to the
+	// snapshot root, as everything else here is.
+	//
+	// Their FilesInstrumented and GuardsByFile are the state *before* the
+	// search, which is what makes [Result.Instrumented] the field to read for
+	// what is in the tree now: a file whose every candidate was rejected is
+	// named here and absent there. Only the runtime directories are the same
+	// either way, because a runtime is written once and never regenerated.
+	Runtimes []instrument.Result
+
+	// Loops is how many `for` statements this phase's trees carry a counter at,
+	// summed over the modules. It is the width of every census and every limit
+	// table the run reads back, and it is a property of the files rather than
+	// of the catalogue: rejecting a candidate does not move a loop.
+	//
+	// One means the whole catalogue compiled on the first try, which is the
+	// ordinary case and the one the schemata design exists to make ordinary.
 	Builds int
+}
+
+// Loops is how many counted loops this phase's trees hold, over every module.
+func (r Result) Loops() int {
+	total := 0
+	for _, tree := range r.Runtimes {
+		total += tree.Loops
+	}
+	return total
+}
+
+// RuntimeDirs is where every generated runtime package sits, relative to the
+// snapshot root, in module order.
+//
+// It is what the drift gate needs and the one thing [Result.Runtimes] carries
+// that is true after the search as well as before it.
+func (r Result) RuntimeDirs() []string {
+	dirs := make([]string, 0, len(r.Runtimes))
+	for _, runtime := range r.Runtimes {
+		if runtime.RuntimeDir != "" {
+			dirs = append(dirs, runtime.RuntimeDir)
+		}
+	}
+	return dirs
 }
 
 // Validate instruments the snapshot with the whole catalogue and establishes,
@@ -203,16 +278,31 @@ func Validate(ctx context.Context, opts Options) (Result, error) {
 		timeout:   opts.BuildTimeout,
 		env:       opts.Env,
 		recorder:  opts.Trace,
+		modules:   slices.Clone(opts.Modules),
 		byPath:    make(map[string][]mutation.Mutant),
 		pristine:  make(map[string][]byte),
 		guards:    make(map[string]int),
+		files:     make(map[string]fileRef),
 	}
-	if v.timeout <= 0 {
-		v.timeout = DefaultBuildTimeout
-	}
+	v.timeout = buildTimeout(opts.BuildTimeout)
 	v.build = v.buildSnapshot
 	v.apply = v.instrumentFile
-	return v.run(ctx, opts.ModulePath)
+	return v.run(ctx)
+}
+
+// buildTimeout is the bound one build of the snapshot runs under.
+//
+// It is a function rather than a branch inside the constructor for the reason
+// internal/gocmd's sameEnvKeyOn is one: a decision written where it is made is
+// a decision only a test that can make the whole phase run may ask about, and
+// this one is a number a reader of `-v` output sees. Zero and anything below it
+// mean "the caller did not choose", which is one statement and not two: a
+// negative bound is not a shorter build, it is a caller that set nothing.
+func buildTimeout(configured time.Duration) time.Duration {
+	if configured <= 0 {
+		return DefaultBuildTimeout
+	}
+	return configured
 }
 
 // validate rejects options that cannot describe a validation pass.
@@ -224,13 +314,39 @@ func (o Options) validate() error {
 		return &Error{Code: CodeOptions, Message: "the snapshot has no root directory"}
 	case o.Catalog == nil:
 		return &Error{Code: CodeOptions, Message: "no catalogue was given"}
-	case strings.TrimSpace(o.ModulePath) == "":
-		return &Error{Code: CodeOptions, Message: "no module path was given"}
+	case len(o.Modules) == 0:
+		return &Error{Code: CodeOptions, Message: "no module was given to instrument"}
 	case strings.TrimSpace(o.Toolchain.GoBin) == "":
 		// Refused here rather than left to surface from the first build as a
 		// spec error about an empty program name, which describes the symptom
 		// and not the mistake.
 		return &Error{Code: CodeOptions, Message: "no Go toolchain was located"}
+	}
+	for _, module := range o.Modules {
+		if strings.TrimSpace(module.Dir) == "" || strings.TrimSpace(module.Path) == "" {
+			return &Error{
+				Code:    CodeOptions,
+				Message: "a module was given with no directory or no import path",
+			}
+		}
+	}
+	// Every catalogued mutant has to belong to one of the modules given, or the
+	// phase would instrument a tree that does not hold it and then accept it on
+	// the strength of a build that never saw it. The check is here rather than
+	// in the loop because a tree half-instrumented before the mistake is found
+	// is a tree somebody has to clean up.
+	named := make(map[string]bool, len(o.Modules))
+	for _, module := range o.Modules {
+		named[module.mutants(o.Catalog)] = true
+	}
+	for _, m := range o.Catalog.Mutants() {
+		if !named[m.ModulePath] {
+			return &Error{
+				Code: CodeOptions,
+				Message: "the catalogue holds mutants of " + strconv.Quote(m.ModulePath) +
+					", which is not one of the modules given",
+			}
+		}
 	}
 	return nil
 }
@@ -262,16 +378,28 @@ type validator struct {
 	// package this file already imports.
 	recorder *trace.Recorder
 
-	// runtimeImport is the import path of the generated activation package, as
-	// the full instrumentation pass settled it. Every later rewrite is handed
-	// the same one: the package is written once and never regenerated, because
-	// its dense indices are what every guard in the tree spells.
-	runtimeImport string
+	// runtimes are the generated activation packages, one per module, as the
+	// full instrumentation pass settled them. Every later rewrite is handed the
+	// same one its file started with: a package is written once and never
+	// regenerated, because its dense indices are what every guard in the tree
+	// spells.
+	runtimes []instrument.Result
+
+	// modules is [Options.Modules], in the order the phase instruments them.
+	modules []Module
 
 	// paths are the catalogued files in sorted order, and byPath their mutants
-	// in catalogue order.
+	// in catalogue order. A path here is relative to the *snapshot* root and
+	// not to a module -- which for a single-module tree is the same string, and
+	// for a workspace is what keeps two modules' `app.go` apart. It is also
+	// what the compiler names in a diagnostic, because the build runs at the
+	// snapshot root, and what the drift gate compares against.
 	paths  []string
 	byPath map[string][]mutation.Mutant
+	// files is where each of those paths actually is: which module it belongs
+	// to, what it is called within that module, and which runtime its guards
+	// import.
+	files map[string]fileRef
 	// pristine holds the bytes of every catalogued file as they were before
 	// instrumentation. They are read once, up front, and every rewrite in the
 	// phase is composed against them.
@@ -286,23 +414,12 @@ type validator struct {
 }
 
 // run is the phase proper.
-func (v *validator) run(ctx context.Context, modulePath string) (Result, error) {
+func (v *validator) run(ctx context.Context) (Result, error) {
 	if err := v.readPristine(); err != nil {
 		return Result{}, err
 	}
-	instrumented, err := instrument.Instrument(instrument.Options{
-		SnapshotRoot: v.root,
-		ModulePath:   modulePath,
-		Catalog:      v.catalog,
-		Hints:        v.hints,
-		Mode:         v.mode,
-	})
-	if err != nil {
+	if err := v.instrumentModules(); err != nil {
 		return Result{}, err
-	}
-	v.runtimeImport = instrumented.RuntimeImport
-	for path, count := range instrumented.GuardsByFile {
-		v.guards[path] = count
 	}
 	// What the phase started from: the whole catalogue, written into the tree
 	// at once. Every later step of the recording is about narrowing this number
@@ -315,7 +432,7 @@ func (v *validator) run(ctx context.Context, modulePath string) (Result, error) 
 	})
 
 	rejected, searchErr := v.search(ctx)
-	result := v.result(instrumented)
+	result := v.result()
 	result.Rejected, result.AcceptedIDs = v.report(rejected)
 	if searchErr != nil {
 		return result, searchErr
@@ -398,7 +515,19 @@ func (v *validator) bisect(ctx context.Context) ([]condemned, error) {
 	}
 
 	var rejected []condemned
-	for {
+	// One pass per catalogued file, and one more. Every pass decides at least
+	// one of them -- [validator.blame] never answers an empty list while
+	// anything is pending -- so the search cannot run more passes than there
+	// are files, and the bound says that in the loop's shape rather than in a
+	// lemma about another function.
+	//
+	// It is written this way for a measured reason. As `for {}` the exit rested
+	// on that lemma, and every edit to a condition inside it -- the build's
+	// verdict, the emptiness of the pending set, the blame that feeds it --
+	// produced a phase that never returns. This repository's own gate paid a
+	// per-mutant timeout, twice, for thirteen of them; bounded, the same edits
+	// come back as a wrong answer that a test can state.
+	for range len(pending) + 1 {
 		for _, path := range failing.blamed {
 			accepted, condemnedHere, err := isolate(ctx, v.byPath[path], v.probe(path))
 			if err != nil {
@@ -439,6 +568,17 @@ func (v *validator) bisect(ctx context.Context) ([]condemned, error) {
 			return rejected, err
 		}
 		failing = result
+	}
+	// Past the bound, which is past the point where every catalogued file has
+	// been isolated. It is the same thing the exhausted search says above and
+	// for the same reason -- the snapshot does not build and there is nothing
+	// left to look at -- and it is stated rather than left as a fall-through,
+	// because a search that came out here has been wrong about its own bound
+	// and the accepted set is exactly as untrustworthy either way.
+	return rejected, &Error{
+		Code: CodeStillFailing,
+		Message: "the snapshot does not build after one isolation pass per catalogued file, " +
+			"which means candidates in different files interact; the accepted set cannot be trusted",
 	}
 }
 
@@ -638,11 +778,17 @@ func (v *validator) candidates() int {
 // catalogue describe the bytes underneath them. It also fixes the order of the
 // files, which is the order everything downstream reports in.
 func (v *validator) readPristine() error {
+	dirs := make(map[string]string, len(v.modules))
+	for _, module := range v.modules {
+		dirs[module.mutants(v.catalog)] = module.Dir
+	}
 	for _, m := range v.catalog.Mutants() {
-		if _, seen := v.byPath[m.Path]; !seen {
-			v.paths = append(v.paths, m.Path)
+		key := snapshotPath(dirs[m.ModulePath], m.Path)
+		if _, seen := v.byPath[key]; !seen {
+			v.paths = append(v.paths, key)
+			v.files[key] = fileRef{module: m.ModulePath, path: m.Path}
 		}
-		v.byPath[m.Path] = append(v.byPath[m.Path], m)
+		v.byPath[key] = append(v.byPath[key], m)
 	}
 	slices.Sort(v.paths)
 
@@ -660,17 +806,154 @@ func (v *validator) readPristine() error {
 	return nil
 }
 
+// A fileRef is where one catalogued file is: which module it belongs to, what
+// it is called within that module, and which runtime its guards import.
+//
+// The last is filled in by [validator.instrumentModules] rather than by
+// [validator.readPristine], because it is not a fact about the file until the
+// runtime has been written.
+type fileRef struct {
+	module        string
+	path          string
+	root          string
+	runtimeImport string
+	// loopBase is the first loop-site index this file's counters answer to,
+	// as [instrument.Instrument] numbered them across the tree. It is carried
+	// here because the search rewrites one file at a time and the ceilings are
+	// one array in one generated package: a file re-instrumented from base zero
+	// would hold its loops to another file's ceilings. See ADR 0013.
+	loopBase uint32
+}
+
+// snapshotPath joins a module's directory to a module-relative path, which is
+// where that file sits in the snapshot.
+//
+// No guard on the empty directory or on ".", because path.Join already answers
+// both with the path itself -- and a guard that only ever agreed with the line
+// below it would be a branch no test could tell from its absence.
+func snapshotPath(dir, rel string) string {
+	return path.Join(dir, rel)
+}
+
+// instrumentModules writes every catalogued mutant into the tree, a module at a
+// time, and records where each file's guards import their runtime from.
+//
+// A module at a time, because a module's files can only import a runtime its
+// own module declares. The whole catalogue goes into every one of those
+// runtimes: a mutant of one module can be activated while another module's
+// tests are running, and a runtime knowing only its own module's indices would
+// meet an id it had never heard of and exit as if the snapshot were stale.
+func (v *validator) instrumentModules() error {
+	for _, module := range v.modules {
+		root := filepath.Join(v.root, filepath.FromSlash(module.Dir))
+		instrumented, err := instrument.Instrument(instrument.Options{
+			SnapshotRoot: root,
+			ModulePath:   module.Path,
+			Module:       module.mutants(v.catalog),
+			Catalog:      v.catalog,
+			Hints:        v.hints,
+			Mode:         v.mode,
+		})
+		if err != nil {
+			return err
+		}
+		// Everything this phase reports is snapshot-relative, so the module's
+		// own answers are lifted here and nowhere else.
+		instrumented.RuntimeDir = snapshotPath(module.Dir, instrumented.RuntimeDir)
+		for i, rel := range instrumented.FilesInstrumented {
+			instrumented.FilesInstrumented[i] = snapshotPath(module.Dir, rel)
+		}
+		lifted := make(map[string]int, len(instrumented.GuardsByFile))
+		for rel, count := range instrumented.GuardsByFile {
+			key := snapshotPath(module.Dir, rel)
+			lifted[key] = count
+			v.guards[key] = count
+		}
+		instrumented.GuardsByFile = lifted
+		bases := make(map[string]uint32, len(instrumented.LoopBase))
+		for rel, base := range instrumented.LoopBase {
+			bases[snapshotPath(module.Dir, rel)] = base
+		}
+		instrumented.LoopBase = bases
+		for _, key := range instrumented.FilesInstrumented {
+			ref := v.files[key]
+			ref.root = root
+			ref.runtimeImport = instrumented.RuntimeImport
+			ref.loopBase = bases[key]
+			v.files[key] = ref
+		}
+		v.runtimes = append(v.runtimes, instrumented)
+	}
+	// A file with no guards at all is still a file the search may have to
+	// rewrite -- restoring it, and writing its candidates back in -- so it
+	// needs a root and a runtime too.
+	for key, ref := range v.files {
+		if ref.root != "" {
+			continue
+		}
+		module, ok := v.moduleOf(ref.module)
+		if !ok {
+			return &Error{
+				Code:    CodeOptions,
+				Message: "no module was given for " + strconv.Quote(ref.module),
+			}
+		}
+		ref.root = filepath.Join(v.root, filepath.FromSlash(module.Dir))
+		ref.runtimeImport = v.runtimeImportOf(module)
+		// Zero for a file that pass never reached, which is a file with no
+		// counters to number: a nil map reads as zero and that is the answer.
+		ref.loopBase = v.treeOf(module).LoopBase[key]
+		v.files[key] = ref
+	}
+	return nil
+}
+
+// moduleOf finds the module a catalogued mutant's module path names.
+func (v *validator) moduleOf(modulePath string) (Module, bool) {
+	for _, module := range v.modules {
+		if module.mutants(v.catalog) == modulePath {
+			return module, true
+		}
+	}
+	return Module{}, false
+}
+
+// treeOf is the instrumentation pass that rewrote the given module's files, and
+// the zero pass for a module this phase never instrumented.
+//
+// The zero value is what the two readers below want and not a case either of
+// them has to test for: a module with no pass has no runtime to import and no
+// loop to number, which is exactly what an empty import path and a nil base map
+// say. Both questions are asked of one walk because they are one question --
+// "which of these passes is this module's" -- and a second copy of it would be
+// a second thing to keep in step with [Options.Modules]' order.
+func (v *validator) treeOf(module Module) instrument.Result {
+	for i, candidate := range v.modules {
+		if candidate == module && i < len(v.runtimes) {
+			return v.runtimes[i]
+		}
+	}
+	return instrument.Result{}
+}
+
+// runtimeImportOf is the import path the given module's runtime was written at.
+func (v *validator) runtimeImportOf(module Module) string {
+	return v.treeOf(module).RuntimeImport
+}
+
 // instrumentFile is the real [validator.apply]: rewrite one file so that it
 // carries exactly this subset of its candidates.
 func (v *validator) instrumentFile(path string, subset []mutation.Mutant) error {
+	ref := v.files[path]
 	guards, err := instrument.InstrumentFile(instrument.FileOptions{
-		SnapshotRoot:  v.root,
-		RuntimeImport: v.runtimeImport,
-		Path:          path,
+		SnapshotRoot:  ref.root,
+		RuntimeImport: ref.runtimeImport,
+		Path:          ref.path,
 		Source:        v.pristine[path],
 		Mutants:       subset,
 		Hints:         v.hints,
 		Mode:          v.mode,
+		LoopBase:      ref.loopBase,
 	})
 	if err != nil {
 		return err
@@ -792,7 +1075,7 @@ func buildArgs(jobs int, packages []string) []string {
 // result assembles what the snapshot now holds, starting from what the full
 // instrumentation pass reported and correcting it to the state isolation left
 // behind.
-func (v *validator) result(instrumented instrument.Result) Result {
+func (v *validator) result() Result {
 	files := make([]string, 0, len(v.guards))
 	guards := make(map[string]int, len(v.guards))
 	for _, path := range v.paths {
@@ -801,9 +1084,15 @@ func (v *validator) result(instrumented instrument.Result) Result {
 			guards[path] = count
 		}
 	}
-	instrumented.FilesInstrumented = files
-	instrumented.GuardsByFile = guards
-	return Result{Instrumented: instrumented, Builds: v.builds}
+	// The runtime a tree with one module has is the tree's; a workspace has one
+	// per module and no single answer, so the merged view names none and
+	// [Result.Runtimes] is where a caller reads them.
+	merged := instrument.Result{FilesInstrumented: files, GuardsByFile: guards}
+	if len(v.runtimes) == 1 {
+		merged.RuntimeDir = v.runtimes[0].RuntimeDir
+		merged.RuntimeImport = v.runtimes[0].RuntimeImport
+	}
+	return Result{Instrumented: merged, Runtimes: slices.Clone(v.runtimes), Builds: v.builds}
 }
 
 // report turns the condemned candidates into the two lists a caller reads,
@@ -863,12 +1152,13 @@ func (v *validator) rejection(m mutation.Mutant, output string) Rejection {
 // rejected mutant and a live one have to be named the same way, and nothing
 // downstream would catch it if they were not.
 func position(src []byte, offset uint32) (int, int) {
-	if int(offset) > len(src) {
-		offset = uint32(len(src))
-	}
-	before := src[:offset]
+	// Clamped rather than guarded: an offset of exactly the length is the whole
+	// file either way, so a comparison here would have a second reading no span
+	// could tell from the first.
+	end := min(int(offset), len(src))
+	before := src[:end]
 	line := 1 + bytes.Count(before, []byte("\n"))
-	column := int(offset) - (bytes.LastIndexByte(before, '\n') + 1) + 1
+	column := end - (bytes.LastIndexByte(before, '\n') + 1) + 1
 	return line, column
 }
 

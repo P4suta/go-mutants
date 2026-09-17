@@ -9,13 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/P4suta/go-mutants/internal/coverage"
 	"github.com/P4suta/go-mutants/internal/execute"
-	"github.com/P4suta/go-mutants/internal/runner"
-	"github.com/P4suta/go-mutants/trace"
 )
 
 // A TestRef names one test of one test binary: the import path of the package
@@ -159,19 +156,12 @@ func (s *Session) profilePerTest(ctx context.Context, packages map[string]bool) 
 		return nil, fmt.Errorf("gomutants: covering tests: profiling each test: %w", err)
 	}
 
-	rendered := filepath.Join(scratch, "textfmt")
-	if err := os.MkdirAll(rendered, 0o755); err != nil {
-		return nil, fmt.Errorf("gomutants: covering tests: coverage directory: %w", err)
-	}
-
 	profiles := make(map[coverage.TestKey]coverage.Profile, len(collected))
-	for i, data := range collected {
+	for _, data := range collected {
 		if !data.Passed {
 			continue
 		}
-		path := filepath.Join(rendered, strconv.Itoa(i)+".txt")
-		profile, err := s.renderCoverageProfile(ctx, opts, data.Dir, path,
-			data.ImportPath+" "+data.Name)
+		profile, err := readCoverageProfile(data.Path, data.ImportPath+" "+data.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -180,35 +170,14 @@ func (s *Session) profilePerTest(ctx context.Context, packages map[string]bool) 
 	return profiles, nil
 }
 
-// renderCoverageProfile converts one raw coverage directory into a textfmt
-// document with `go tool covdata` and reads it back, exactly as the engine
-// does — the toolchain writes the raw form and only it can render it.
-func (s *Session) renderCoverageProfile(
-	ctx context.Context,
-	opts execute.Options,
-	dir string,
-	path string,
-	subject string,
-) (coverage.Profile, error) {
-	spec := opts.Toolchain.Command("tool", "covdata", "textfmt", "-i="+dir, "-o="+path)
-	spec.Dir = s.root
-	spec.Env = opts.Env
-	spec.Timeout = opts.Timeout
-	spec.Trace = s.recorder
-	spec.Kind = trace.ExecKindCovdataTextfmt
-	spec.Subject = subject
-
-	result := runner.Run(ctx, spec)
-	if result.Err != nil {
-		return coverage.Profile{}, fmt.Errorf(
-			"gomutants: covering tests: rendering the coverage of %s: %w", subject, result.Err)
-	}
-	if result.ExitCode != 0 {
-		return coverage.Profile{}, fmt.Errorf(
-			"gomutants: covering tests: `go tool covdata textfmt` over %s exited with status %d",
-			subject, result.ExitCode)
-	}
-
+// readCoverageProfile reads back the textfmt document one profiling run wrote,
+// exactly as the engine does.
+//
+// There is no child process here, and that is the point: a test binary handed
+// `-test.coverprofile` writes this document itself, where a coverage directory
+// would need one `go tool covdata textfmt` per profile -- one more process per
+// test on a suite profiled test by test.
+func readCoverageProfile(path, subject string) (coverage.Profile, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return coverage.Profile{}, fmt.Errorf(

@@ -1,0 +1,22 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: typed operands measured where they stand,
+// one of them of a named type the closure has to spell.
+package sample; import __gm "example.com/mini/gomutants_rt"
+
+// Kind is a named integer type, so that the closure's result type is one the
+// fixture had to spell rather than one the rewriter could have guessed.
+type Kind int
+
+// Kinded returns a kind computed from two numbers.
+func Kinded(a, b int) Kind {
+	k := func() Kind { var __gm_r0 Kind = (Kind(a + b)); if __gm_r0 != (Kind(a-b)) { __gm.Infect(0) }; return __gm_r0 }()
+	return k
+}
+
+// Scale returns the scaled total, and carries two mutants of one operand.
+func Scale(a, b int) int {
+	total := func() int { var __gm_r0 int = (a*b + a); if __gm_r0 != (a/b+a) { __gm.Infect(1) }; if __gm_r0 != (a*b-a) { __gm.Infect(2) }; return __gm_r0 }()
+	return total
+}

@@ -362,10 +362,23 @@ type RunOutcome struct {
 	MemorySource MemorySource
 
 	// Report is the published run report, or nil when the run stopped before
-	// there was anything to publish. It is the document on disk, so a caller
-	// deciding an exit code or writing `--json` is looking at exactly what the
-	// user can read in the file.
+	// there was anything to publish — and nil for a run over a workspace, which
+	// publishes [RunOutcome.WorkspaceReport] instead. It is the document on
+	// disk, so a caller deciding an exit code or writing `--json` is looking at
+	// exactly what the user can read in the file.
 	Report *report.Report
+
+	// WorkspaceReport is the published workspace report, for a run over a
+	// `go.work`, and nil for every other run.
+	//
+	// A workspace is measured as one run over one catalogue that spans its
+	// modules and reported one module at a time, because `workspace.module_path`
+	// is required of a run report and a workspace has no single answer for it;
+	// this document is the run's own counts and every module's report inside
+	// it. See ADR 0012. Exactly one of it and [RunOutcome.Report] is set, so a
+	// caller reading the wrong one gets nil rather than a document about
+	// something else.
+	WorkspaceReport *report.WorkspaceReport
 	// RunPath and LatestPath are where the report was filed, as published in
 	// [ReportPublished].
 	RunPath    string
@@ -407,6 +420,21 @@ type RunOutcome struct {
 	// somebody asking why, and the two are deliberately different lengths: a run
 	// that is about to succeed does not print a compiler blob at the user.
 	CoverageFallback string
+	// Probe is what the probe phase established, and the zero value on every
+	// run that did not probe -- which is every run by default. See [Probed].
+	Probe ProbeFacts
+}
+
+// ProbeFacts is what the probe phase proved a run did not have to do.
+type ProbeFacts struct {
+	// Binaries is how many test binaries were probed.
+	Binaries int
+	// Settled is how many mutants no covering binary could observe. They are
+	// survivors the run did not execute.
+	Settled int
+	// Narrowed is how many mutants the run measured against fewer binaries than
+	// coverage gave them.
+	Narrowed int
 }
 
 // ValidationFacts is what the validation phase spent.
@@ -694,9 +722,13 @@ func exitCodeOf(out RunOutcome) int {
 // picture. Threading a dozen values through would make the difference between
 // them a matter of remembering which ones; a struct makes it one call.
 type state struct {
-	found   discover.Result
-	catalog *mutation.Catalog
-	mode    report.SelectionMode
+	// workspace is whether the tree measured is a `go.work` rather than one
+	// module. It is settled before anything is copied and read by every phase
+	// that has to name a module. See ADR 0012.
+	workspace bool
+	found     discovered
+	catalog   *mutation.Catalog
+	mode      report.SelectionMode
 	// changed is the changed-line set a `--changed` run narrowed itself by, or
 	// nil. It is resolved before anything is copied or built, so that a bad ref
 	// costs a second rather than a baseline.
@@ -727,6 +759,9 @@ type state struct {
 	// on, and it is absent for a mutant discovery could not place — which
 	// [displayIndex] documents as impossible.
 	packages map[string]string
+	// neverReturns is the mutants discovery proved cannot leave their loop,
+	// which is what lets one timeout be the verdict rather than two.
+	neverReturns map[string]bool
 	// coverage is what the coverage phase decided. The zero value is a run with
 	// coverage off, which is what every path that never reached the phase — an
 	// early failure, a custom test command, nothing to execute — leaves behind.
@@ -747,25 +782,36 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) (
 	}
 	out.WorkspaceRoot = root
 
-	// A workspace is refused here rather than three phases later, and the code
-	// is internal/discover's rather than a second one of this package's: it is
-	// the same condition, and two identifiers for one condition is one for a
-	// user to search for in vain. See [discover.CheckWorkspace].
+	// Whether this tree is a workspace is settled here, before anything is
+	// copied, and the code is internal/discover's rather than a second one of
+	// this package's: it is the same question, and two answers to one question
+	// is one for a user to search for in vain. See [discover.DetectWorkspace].
 	//
-	// What the earliness buys is the *diagnosis*. Discovery would refuse this
-	// tree too, but only after the copy, the scope resolution and a full
-	// baseline — and the scope resolution gets there first with a different
-	// story, because `go list ./...` in a workspace directory places no
-	// package and the run therefore blamed the user's test command for
-	// matching nothing. Asked before anything is copied, the answer names the
-	// user's own `go.work` rather than the snapshot's.
-	if workspaceErr := discover.CheckWorkspace(root); workspaceErr != nil {
-		return workspaceErr
+	// What the earliness buys is the *diagnosis* of a workspace that cannot be
+	// measured. Discovery would refuse such a tree too, but only after the
+	// copy, the scope resolution and a full baseline — and the scope
+	// resolution gets there first with a different story, because `go list
+	// ./...` in a workspace directory places no package under GOWORK=off and
+	// the run therefore blamed the user's test command for matching nothing.
+	// Asked before anything is copied, the answer names the user's own
+	// `go.work` rather than the snapshot's.
+	workspace, err := discover.DetectWorkspace(root)
+	if err != nil {
+		return err
 	}
+	s.patterns = treePatterns(workspaceModulesOf(workspace))
 
 	command, err := testCommand(cfg, opts.TestArgv)
 	if err != nil {
 		return err
+	}
+	// At a workspace root `./...` names nothing: the root is not itself a
+	// module, and the go command says so rather than guessing. What the user
+	// meant by it is every module's own `./...`, and this is where that is
+	// spelled out -- before the command is recorded, so the command the report
+	// carries is the command that ran. See [expandWholeTree].
+	if workspace != nil {
+		command = expandWholeTree(command, workspace.Modules)
 	}
 	out.TestCommand = command
 	out.Workers = cfg.Execution.Jobs
@@ -873,7 +919,16 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) (
 	// Recorded only once the claim succeeded: a directory nobody owns cannot be
 	// marked kept, and the failure above has already removed it.
 	temps.scratch, temps.scratchOwner = scratch, scratchOwner
-	env := childEnv(scratch)
+	// The environment every command measured against the snapshot runs with.
+	// A workspace run names the snapshot's own workspace file in GOWORK, which
+	// is what makes the scope resolution and the baseline resolve the modules
+	// the way discovery and the builds do; a run over one module says nothing
+	// about workspaces here, exactly as it did before. See ADR 0012.
+	env := workspaceEnv(childEnv(scratch), workspace != nil)
+	// The same environment with the workspace question answered, for the
+	// commands go-mutants writes rather than the ones the user did. See
+	// [engineCommandEnv].
+	ownEnv := engineCommandEnv(childEnv(scratch), workspace != nil)
 
 	// The test command's own scope, proven before a single command is measured.
 	// A pattern that names nothing is a mistake in the invocation, exactly like
@@ -885,15 +940,43 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) (
 	patterns, scoped := testScope(out.TestCommand)
 	if scoped {
 		endScope := s.stage("scope", strings.Join(patterns, " "))
-		err := s.resolveTestScope(ctx, toolchain, snap.Root, env, patterns)
+		err := s.resolveTestScope(ctx, toolchain, snap.Root, ownEnv, patterns)
 		endScope(err)
 		if err != nil {
 			return err
 		}
 	}
 
-	if err := s.baseline(ctx, cfg, command, toolchain, snap.Root, env, out); err != nil {
+	if err := s.baseline(ctx, cfg, command, toolchain, snap.Root, env, ownEnv, out); err != nil {
 		return err
+	}
+	// Under isolation, sweep the baseline's own leavings out of the shared tree
+	// before anything is instrumented or copied.
+	//
+	// The baseline runs the suite in the shared snapshot, so a suite that writes
+	// into the package directory it runs in has already written there. Left
+	// alone, that write would be copied into every worker and the drift gate
+	// below would report it -- which is exactly the refusal `--isolate` exists
+	// to get past, so the user would be stopped by the thing they had opted out
+	// of. Restoring here is what keeps the shared snapshot a pure instrumented
+	// tree afterwards, and therefore what keeps the gate's meaning: go-mutants
+	// changed nothing it did not mean to.
+	//
+	// It is the snapshot's own manifest that is restored from, which is the
+	// pristine source tree's, so this can only run before the instrumenter
+	// rewrites anything.
+	if cfg.Execution.Isolate {
+		endSweep := s.stage("isolate-sweep", "")
+		_, sweepErr := snap.Restore()
+		endSweep(sweepErr)
+		if sweepErr != nil {
+			return &Error{
+				Code: CodeWorkspaceDrift,
+				Message: "the snapshot could not be put back after the baseline, so --isolate cannot " +
+					"give the workers a tree the baseline's own writes are not already in",
+				Err: sweepErr,
+			}
+		}
 	}
 
 	// The selection is described before it is made, so that a run interrupted
@@ -901,14 +984,15 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) (
 	// A partial report claiming to have run everything would be the one claim
 	// nobody could check.
 	st := &state{
-		mode:    selectionMode(opts),
-		changed: changed,
-		shard:   shardOf(opts),
-		results: make(map[string]report.MutantResult),
-		display: make(map[string]MutantResult),
-		notRun:  make(map[string]report.NotRunReason),
+		workspace: workspace != nil,
+		mode:      selectionMode(opts),
+		changed:   changed,
+		shard:     shardOf(opts),
+		results:   make(map[string]report.MutantResult),
+		display:   make(map[string]MutantResult),
+		notRun:    make(map[string]report.NotRunReason),
 	}
-	mutateErr := s.mutate(ctx, opts, toolchain, snap, scratch, env, out, st)
+	mutateErr := s.mutate(ctx, opts, toolchain, snap, scratch, env, ownEnv, out, st, &temps)
 	if mutateErr != nil {
 		// An interruption after the catalogue exists still has something true
 		// to say: which mutants there were, which of them were measured, and
@@ -935,15 +1019,18 @@ func (s *session) baseline(
 	toolchain gocmd.Toolchain,
 	root string,
 	env []string,
+	ownEnv []string,
 	out *RunOutcome,
 ) error {
 	runs := cfg.Test.BaselineRuns
 	s.enterPhase(PhaseBaseline, fmt.Sprintf("building the snapshot, then %s of %s",
 		countNoun(runs, "timed run"), strings.Join(command, " ")))
 
-	build := toolchain.Command("build", "./...")
+	build := toolchain.Command(append([]string{"build"}, s.patterns...)...)
 	build.Dir = root
-	build.Env = env
+	// The build is go-mutants' own command and the test command beside it is
+	// the user's, so only this one gets told what to do about a workspace.
+	build.Env = ownEnv
 	build.Timeout = BaselineCap
 	build.Trace = s.trace
 	build.Kind = trace.ExecKindBaselineBuild
@@ -962,16 +1049,28 @@ func (s *session) baseline(
 	argv := resolveProgram(command, toolchain)
 	out.ResolvedTestCommand = slices.Clone(argv)
 	durations := make([]time.Duration, 0, runs)
+	observed := make([]baselineObservation, 0, runs)
 	// The baseline runs unbounded, which is the one thing the memory bound
 	// cannot be applied to: it is the measurement the bound is derived from,
 	// and a measurement taken under the budget it produces would be a budget
 	// derived from itself.
 	var peak int64
 	for i := 1; i <= runs; i++ {
+		// Every run after the first is told to run the tests rather than to
+		// reprint what the toolchain remembers of them. The first is the user's
+		// command exactly as written -- it is the run that proves the suite
+		// green, and in a fresh snapshot it is the one that misses the cache
+		// anyway -- and the rest exist to be timed, which a lookup is not. See
+		// [gocmd.CountOnce] for why it is GOFLAGS and not the command, and
+		// [budgetBaseline] for the rule this is what feeds.
+		runEnv := env
+		if i > 1 {
+			runEnv = gocmd.AppendGoflags(env, gocmd.CountOnce)
+		}
 		spec := runner.Spec{
 			Argv:    argv,
 			Dir:     root,
-			Env:     env,
+			Env:     runEnv,
 			Timeout: BaselineCap,
 			Trace:   s.trace,
 			Kind:    trace.ExecKindBaselineTest,
@@ -988,6 +1087,10 @@ func (s *session) baseline(
 			return runErr
 		}
 		durations = append(durations, result.Duration)
+		observed = append(observed, baselineObservation{
+			Duration: result.Duration,
+			Cached:   servedFromTestCache(result.Output),
+		})
 		// The largest of the runs rather than the mean, for the reason the
 		// timeout takes the slowest: a budget sized on an average is a budget
 		// half the observations already exceed.
@@ -996,7 +1099,10 @@ func (s *session) baseline(
 	}
 	out.BaselineRuns = durations
 	out.AverageBaseline = mean(durations)
-	out.SlowestBaseline = budgetBaseline(durations)
+	out.SlowestBaseline = budgetBaseline(observed)
+	if everyRunCached(observed) {
+		s.warn(CodeBaselineFromTestCache, cachedBaselineWarning(len(observed)))
+	}
 
 	endTimeout := s.stage("timeout", "")
 	timeout, source, err := deriveTimeout(cfg.Test.Timeout, out.SlowestBaseline)
@@ -1078,8 +1184,10 @@ func (s *session) mutate(
 	snap *snapshot.Snapshot,
 	scratch string,
 	env []string,
+	ownEnv []string,
 	out *RunOutcome,
 	st *state,
+	temps *temporaries,
 ) error {
 	cfg := opts.Config
 	s.enterPhase(PhaseMutate, "discovering candidates, validating them, then executing the mutants")
@@ -1100,35 +1208,37 @@ func (s *session) mutate(
 	// The include and exclude patterns are applied here and never to the
 	// snapshot walk; see the long argument at the snapshot above.
 	endDiscover := s.stage("discover", "")
-	found, err := discover.Discover(ctx, discover.Options{
+	found, err := discoverTree(ctx, st.workspace, discover.Options{
 		SnapshotRoot: snap.Root,
 		Toolchain:    toolchain,
 		Rules:        rules,
 		Include:      include,
 		Exclude:      exclude,
+		Workspace:    st.workspace,
 	})
 	endDiscover(err)
 	if err != nil {
 		return err
 	}
 	st.found = found
-	s.emit(Discovered{Candidates: len(found.Candidates), Skips: skipTotal(found.Skips)})
+	candidates := found.candidates()
+	s.emit(Discovered{Candidates: len(candidates), Skips: skipTotal(found.skips())})
 
 	endCatalog := s.stage("catalog", "")
-	catalog, err := discover.BuildCatalog(found)
+	catalog, err := discover.BuildCatalogOf(found.results)
 	if err != nil {
 		endCatalog(err)
 		return err
 	}
 	st.catalog = catalog
-	st.display, st.packages = displayIndex(catalog, found.Candidates)
+	st.display, st.packages, st.neverReturns = displayIndex(catalog, candidates, found.modules)
 
 	// The guard hints travel with the catalogue from here on. They are the one
 	// thing instrumentation cannot work out for itself — which rewrite form an
 	// edit takes is a question about types, and only this pass had a type
 	// checker — so losing them between the two phases would not be a missing
 	// optimisation, it would be a run that instruments nothing.
-	hints, err := instrument.HintsOf(found.Candidates)
+	hints, err := instrument.HintsOf(candidates)
 	endCatalog(err)
 	if err != nil {
 		return err
@@ -1139,11 +1249,12 @@ func (s *session) mutate(
 		Snap:         snap,
 		Catalog:      catalog,
 		Hints:        hints,
-		ModulePath:   found.ModulePath,
+		Modules:      found.validateModules(),
+		Packages:     s.patterns,
 		Toolchain:    toolchain,
 		Jobs:         cfg.Execution.Jobs,
 		BuildTimeout: BaselineCap,
-		Env:          env,
+		Env:          ownEnv,
 		Trace:        s.trace,
 	})
 	endValidate(err)
@@ -1158,19 +1269,57 @@ func (s *session) mutate(
 	}
 	s.emit(Validated{Accepted: len(validated.AcceptedIDs), Rejected: len(validated.Rejected)})
 
+	// The worker copies, before anything runs in the tree. The instrumented
+	// baseline runs in the first of them, which is what turns the drift gate
+	// below from a gate on the whole run into a gate on the one tree that must
+	// never drift: nothing executes in the shared snapshot at all.
+	var trees []string
+	if cfg.Execution.Isolate {
+		endIsolate := s.stage("isolate", countNoun(cfg.Execution.Jobs, "worker"))
+		trees, err = s.isolate(snap, cfg.Execution.Jobs, temps)
+		endIsolate(err)
+		if err != nil {
+			return err
+		}
+	}
+
+	baselineRoot := snap.Root
+	if len(trees) > 0 {
+		baselineRoot = trees[0]
+	}
+	// The instrumented baseline is the calibration run as well as the semantic
+	// preservation gate, and it is the only run that can be: it executes the
+	// whole test command against the tree the mutants run in, with nothing
+	// activated, which is the original program. See ADR 0013.
 	endInstrumented := s.stage("instrumented-baseline", "")
-	err = s.instrumentedBaseline(ctx, out.TestCommand, toolchain, snap.Root, env)
+	err = s.instrumentedBaseline(ctx, out.TestCommand, toolchain, baselineRoot, env,
+		divergenceCensus(scratch))
 	endInstrumented(err)
 	if err != nil {
 		return err
 	}
+	if len(trees) > 0 {
+		// The baseline just ran a whole suite in the first worker's copy, so
+		// that copy has to be put back before the first mutant reaches it --
+		// exactly as it is between every pair of mutants afterwards.
+		if err = s.restoreWorker(temps, 0); err != nil {
+			return err
+		}
+	}
 
 	endDrift := s.stage("drift", "")
-	err = driftGate(snap, validated.Instrumented)
+	err = driftGate(snap, validated.Instrumented, validated.RuntimeDirs()...)
 	endDrift(err)
 	if err != nil {
 		return err
 	}
+
+	// What the census came to, after the drift gate has proved that nothing but
+	// the instrumentation moved -- so a census read here is one the baseline
+	// wrote and not one a test left behind.
+	endCeilings := s.stage("divergence", divergenceDetail(validated.Loops()))
+	loopLimits := s.deriveLoopLimits(scratch, validated.Runtimes)
+	endCeilings(nil)
 
 	endSelection := s.stage("selection", "")
 	runs, err := s.selection(opts, catalog, validated.AcceptedIDs, out.Timeout, out.Memory, st)
@@ -1182,15 +1331,23 @@ func (s *session) mutate(
 	execOpts := execute.Options{
 		Toolchain:    toolchain,
 		SnapshotRoot: snap.Root,
+		Workspace:    st.workspace,
 		BinDir:       filepath.Join(scratch, binDirName),
 		ScratchDir:   filepath.Join(scratch, workerDirName),
 		Jobs:         cfg.Execution.Jobs,
-		Timeout:      BaselineCap,
+		Trees:        trees,
+		// Nil unless the run is isolating, which is what tells internal/execute
+		// there is nothing to put back. A closure that always ran and did
+		// nothing would be a walk of the tree after every pass of every mutant
+		// on every run.
+		Restores: restoresOf(s, temps, trees),
+		Timeout:  BaselineCap,
 		// The coverage profiling runs start the same binaries the mutants are
 		// measured against, so they are measured under the same budget; the
 		// toolchain commands this bounds nothing for are documented on the
 		// field itself.
 		MemoryLimit: out.Memory,
+		LoopLimits:  loopLimits,
 		Trace:       s.trace,
 	}
 	// One reading of the test command decides both of the run's optimisations,
@@ -1215,7 +1372,7 @@ func (s *session) mutate(
 	patterns, scoped := testScope(out.TestCommand)
 	if scoped {
 		execOpts.Packages = patterns
-		execOpts.CoverPkg = found.ModulePath + coverPkgSuffix
+		execOpts.CoverPkg = found.coverPkg(coverPkgSuffix)
 	} else {
 		s.warnCode(string(coverage.CodeCustomTestCommand), customTestCommand(out.TestCommand))
 	}
@@ -1234,13 +1391,37 @@ func (s *session) mutate(
 	}
 
 	if execOpts.CoverPkg != "" {
-		runs, st.coverage, err = s.coveragePhase(ctx, execOpts, scratch, found.ModulePath, bins, runs, st,
+		runs, st.coverage, err = s.coveragePhase(ctx, execOpts, scratch, found.modulePath(), bins, runs, st,
 			cfg.Test.Narrowing)
 		if err != nil {
 			return err
 		}
 	}
 	out.CoverageFallback = st.coverage.coverageFallback
+
+	// The second narrowing, between coverage and the cache. Both halves of that
+	// position are forced, and probe.go argues each: it needs coverage's answer
+	// to have a covering set to narrow, and cache.go's correctness argument
+	// needs every mutant this run will not execute settled before the cache is
+	// asked about it.
+	if probingEnabled(&cfg) {
+		runs, out.Probe, err = s.probePhase(ctx, probeOptions{
+			root:       snap.SourceRoot,
+			catalog:    catalog,
+			hints:      hints,
+			modulePath: found.modulePath(),
+			toolchain:  toolchain,
+			env:        env,
+			jobs:       cfg.Execution.Jobs,
+			scratch:    scratch,
+			exec:       execOpts,
+			bins:       bins,
+		}, runs, st, temps)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Last of the narrowing stages and after coverage, which is the order the
 	// correctness argument in cache.go depends on: an uncovered mutant is
 	// settled before the cache is ever asked about it.
@@ -1332,6 +1513,7 @@ func executionsOf(result execute.MutantResult) []report.Execution {
 			// needs it — why a kill names a binary that reported no failure.
 			MemoryExceeded:  attempt.MemoryExceeded,
 			PeakMemoryBytes: attempt.PeakMemory,
+			Diverged:        attempt.Diverged,
 		})
 	}
 	return executions
@@ -1464,11 +1646,20 @@ func (s *session) instrumentedBaseline(
 	toolchain gocmd.Toolchain,
 	root string,
 	env []string,
+	census string,
 ) error {
+	// -count=1 beside -vet=off, and for the same kind of reason: this run has
+	// two jobs and the toolchain's result cache can do neither of them. It is
+	// the semantic preservation gate, which a reprinted "ok" from an earlier
+	// process does not establish, and it is the census the loop ceilings are
+	// derived from, which a process that never ran cannot write. See
+	// [gocmd.CountOnce] and ADR 0013.
 	spec := runner.Spec{
-		Argv:    resolveProgram(command, toolchain),
-		Dir:     root,
-		Env:     gocmd.AppendGoflags(env, gocmd.VetOff),
+		Argv: resolveProgram(command, toolchain),
+		Dir:  root,
+		Env: append(
+			gocmd.AppendGoflags(gocmd.AppendGoflags(env, gocmd.VetOff), gocmd.CountOnce),
+			instrument.LoopCensusEnv+"="+census),
 		Timeout: BaselineCap,
 		Trace:   s.trace,
 		Kind:    trace.ExecKindInstrumentedBaseline,
@@ -1496,8 +1687,8 @@ func (s *session) instrumentedBaseline(
 // to its pristine bytes, so it does not drift at all — and the test binaries are
 // not among either, because internal/execute refuses a binary directory inside
 // the snapshot for precisely this reason.
-func driftGate(snap *snapshot.Snapshot, instrumented instrument.Result) error {
-	unexpected, err := drift.Unexpected(snap, instrumented)
+func driftGate(snap *snapshot.Snapshot, instrumented instrument.Result, generated ...string) error {
+	unexpected, err := drift.Unexpected(snap, instrumented, generated...)
 	if err != nil {
 		return &Error{
 			Code:    CodeWorkspaceDrift,
@@ -1510,9 +1701,14 @@ func driftGate(snap *snapshot.Snapshot, instrumented instrument.Result) error {
 	}
 	return &Error{
 		Code: CodeWorkspaceDrift,
+		// The remedy is named in the message rather than left to be discovered,
+		// because a project whose suite legitimately writes into its own
+		// package directory cannot run at all without it, and nothing in the
+		// list of files below says that there is a way through.
 		Message: countNoun(len(unexpected), "file") + " in the snapshot changed while the tests ran, " +
 			"so every mutant after the first would be measured against a different tree; " +
-			"the tests write into the package directory they run in",
+			"the tests write into the package directory they run in. Re-run with --isolate, or set " +
+			"execution.isolate, to give every worker its own copy of the tree and put it back between mutants",
 		Output: strings.Join(unexpected, "\n"),
 	}
 }
@@ -1566,7 +1762,13 @@ func (s *session) selection(
 
 	runs := make([]execute.MutantRun, 0, len(ids))
 	for _, id := range ids {
-		run := execute.MutantRun{ID: id, Timeout: timeout, MemoryLimit: memoryLimit, Package: st.packages[id]}
+		run := execute.MutantRun{
+			ID:           id,
+			Timeout:      timeout,
+			MemoryLimit:  memoryLimit,
+			Package:      st.packages[id],
+			NeverReturns: st.neverReturns[id],
+		}
 		// The short form the console and the report already print, carried so
 		// that the account of an attempt reads in the same identities. It is
 		// looked up rather than derived: how much of an id is short enough to
@@ -1680,6 +1882,7 @@ func (s *session) hooks(st *state, memoryLimit int64) execute.Hooks {
 				ID:        id,
 				DisplayID: shown.DisplayID,
 				Path:      shown.Path,
+				ModuleDir: shown.ModuleDir,
 				Line:      shown.Line,
 				Rule:      shown.Rule,
 				Worker:    worker,
@@ -1698,14 +1901,109 @@ func (s *session) hooks(st *state, memoryLimit int64) execute.Hooks {
 			// beside them, so a mutant retried serially reports the peak of the
 			// two passes and not of whichever one happened to be last.
 			shown.MemoryLimit = memoryLimit
-			shown.PeakMemory, shown.MemoryExceeded = 0, false
+			shown.PeakMemory, shown.MemoryExceeded, shown.Diverged = 0, false, false
 			for _, attempt := range result.Attempts {
 				shown.PeakMemory = max(shown.PeakMemory, attempt.PeakMemory)
 				shown.MemoryExceeded = shown.MemoryExceeded || attempt.MemoryExceeded
+				shown.Diverged = shown.Diverged || attempt.Diverged
 			}
 			s.emit(MutantFinished{Result: shown.clone()})
 		},
 	}
+}
+
+// restoresOf is one restore per worker, which internal/execute calls after
+// every pass, or nil for a run that shares one tree.
+//
+// One closure per worker rather than one taking a worker number, because
+// [execute.RunOne] is where the call has to happen and it does not know which
+// worker it is -- [execute.Schedule] hands each worker its own, exactly as it
+// hands each one its own tree.
+func restoresOf(s *session, temps *temporaries, trees []string) []func() error {
+	if len(trees) == 0 {
+		return nil
+	}
+	out := make([]func() error, 0, len(trees))
+	for worker := range trees {
+		out = append(out, func() error { return s.restoreWorker(temps, worker) })
+	}
+	return out
+}
+
+// isolate makes one copy of the instrumented tree per worker.
+//
+// Each copy is a [snapshot.Snapshot] in its own right, made *of the
+// instrumented tree*, and that is the whole trick: a snapshot's manifest
+// records the digests of what it was copied from, so asking a worker copy what
+// drifted is asking exactly "what did the tests write", with no reconciliation
+// against the instrumentation and no second digest machinery. Putting it back
+// is [snapshot.Restore].
+//
+// The copies are registered for cleanup as they are made rather than after the
+// last one, so a failure half way through leaves nothing behind: the ones
+// already created are in temps and the deferred release removes them.
+//
+// What this costs is stated rather than hidden: the instrumented tree's size
+// times the worker count on disk, and one walk of one copy after every mutant.
+// It buys the only way to measure a project whose tests legitimately write into
+// the package directory they run in, which today cannot run at all.
+func (s *session) isolate(snap *snapshot.Snapshot, jobs int, temps *temporaries) ([]string, error) {
+	if jobs < 1 {
+		jobs = 1
+	}
+	trees := make([]string, 0, jobs)
+	for worker := range jobs {
+		copied, err := snapshot.Create(snap.Root, snapshot.Options{DestParent: snap.Parent()})
+		if err != nil {
+			return nil, &Error{
+				Code: CodeWorkspaceDrift,
+				Message: "worker " + strconv.Itoa(worker) + "'s copy of the instrumented tree could not " +
+					"be made, so --isolate cannot give it one",
+				Err: err,
+			}
+		}
+		temps.workers = append(temps.workers, copied)
+		s.trace.Snapshot(trace.SnapshotRecord{
+			Kind:   trace.SnapshotKindWorker,
+			Source: snap.Root,
+			Dir:    copied.Root,
+			Stable: copied.StableDir,
+			Files:  len(copied.Manifest),
+		})
+		trees = append(trees, copied.Root)
+	}
+	return trees, nil
+}
+
+// restoreWorker puts one worker's copy back the way the instrumented tree left
+// it, and reports what it undid.
+//
+// A drift here is not a failure and is not warned about. It is the ordinary
+// case for the suites this feature exists for -- a golden file updated, a
+// database written into testdata -- and a line per mutant saying so would be a
+// line per mutant. What the run says instead is the count, once, in the trace.
+func (s *session) restoreWorker(temps *temporaries, worker int) error {
+	if worker < 0 || worker >= len(temps.workers) {
+		return nil
+	}
+	copied := temps.workers[worker]
+	if copied == nil {
+		return nil
+	}
+	drifts, err := copied.Restore()
+	if err != nil {
+		return &Error{
+			Code: CodeWorkspaceDrift,
+			Message: "worker " + strconv.Itoa(worker) + "'s copy of the instrumented tree could not be " +
+				"put back, so every mutant after this one would be measured against a tree nobody can describe",
+			Err: err,
+		}
+	}
+	if len(drifts) > 0 {
+		s.trace.Note(trace.NoteWorkerRestored, "",
+			"worker "+strconv.Itoa(worker)+": "+countNoun(len(drifts), "file")+" restored")
+	}
+	return nil
 }
 
 // publish builds the run report, files it in the history, and composes the
@@ -1761,7 +2059,7 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 
 	endBuild := s.stage("build", countNoun(len(results), "result"))
 	finished := s.now()
-	rep, err := report.Build(report.Options{
+	buildOpts := report.Options{
 		// "unknown" rather than the empty string a caller that forgot would
 		// pass. The document requires a non-empty version, and failing a whole
 		// run at the very last step over a display field would throw away
@@ -1777,12 +2075,12 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 		ChangedRef:       changedRef(st),
 		Shard:            st.shard,
 		Selected:         st.selected,
-		ModulePath:       st.found.ModulePath,
-		GoVersion:        goVersion(st.found.GoVersion, out.Toolchain.Version.Release),
+		ModulePath:       st.found.modulePath(),
+		GoVersion:        goVersion(st.found.goVersion(), out.Toolchain.Version.Release),
 		WorkspaceDigest:  out.WorkspaceDigest,
 		Catalog:          st.catalog,
-		Located:          st.found.Candidates,
-		Skips:            st.found.Skips,
+		Located:          st.found.candidates(),
+		Skips:            st.found.skips(),
 		Results:          results,
 		Rejections:       st.rejections,
 		TestCommand:      out.TestCommand,
@@ -1816,19 +2114,27 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 			Version: out.Toolchain.Version.String(),
 		},
 		ResolvedCommand: out.ResolvedTestCommand,
-	})
+	}
+	rep, workspace, err := s.document(buildOpts, st)
 	endBuild(err)
 	if err != nil {
 		return err
 	}
 
 	endHistory := s.stage("history", opts.HistoryRoot)
-	runPath, latestPath, err := report.History{Root: opts.HistoryRoot}.Write(rep)
+	history := report.History{Root: opts.HistoryRoot}
+	var runPath, latestPath string
+	if workspace != nil {
+		runPath, latestPath, err = history.WriteWorkspace(workspace)
+	} else {
+		runPath, latestPath, err = history.Write(rep)
+	}
 	endHistory(err)
 	if err != nil {
 		return err
 	}
 	out.Report = rep
+	out.WorkspaceReport = workspace
 	out.RunPath = runPath
 	out.LatestPath = latestPath
 	s.trace.Artifact(trace.ArtifactReportRun, runPath)
@@ -1851,6 +2157,7 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 	endArtifacts := s.stage("artifacts", opts.Config.Report.Directory)
 	artifacts, artifactErr := report.WriteArtifacts(report.ArtifactOptions{
 		Report:        rep,
+		Workspace:     workspace,
 		WorkspaceRoot: out.WorkspaceRoot,
 		Directory:     opts.Config.Report.Directory,
 		Formats:       opts.Config.Report.Formats,
@@ -1880,15 +2187,16 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 		return artifactErr
 	}
 
-	tally, err := rep.Tally()
+	published := publishedRun(rep, workspace)
+	tally, err := published.tally()
 	if err != nil {
 		return err
 	}
 	out.Verdict = mutation.Decide(tally, opts.Config.Policy, mutation.Signals{
-		ExpectationFailure: rep.ExpectationFailure(),
+		ExpectationFailure: published.expectationFailure(),
 	})
 
-	summary := s.compose(out, st, tally, rep)
+	summary := s.compose(out, st, tally, published)
 	s.summary = &summary
 	return nil
 }
@@ -1962,11 +2270,11 @@ func reportStages(timing Timing) []report.StageTiming {
 }
 
 // compose assembles the closing summary block.
-func (s *session) compose(out *RunOutcome, st *state, tally mutation.Tally, rep *report.Report) RunSummary {
+func (s *session) compose(out *RunOutcome, st *state, tally mutation.Tally, published publishedRunView) RunSummary {
 	summary := RunSummary{
 		RunID:    out.RunID,
 		ExitCode: out.Verdict.Code,
-		Notable:  notable(st, rep),
+		Notable:  published.notable(st),
 		Counts: Counts{
 			Total:        tally.Total(),
 			Killed:       tally.Killed,
@@ -1975,22 +2283,22 @@ func (s *session) compose(out *RunOutcome, st *state, tally mutation.Tally, rep 
 			Inconclusive: tally.Inconclusive,
 			Errored:      tally.Errored,
 			NotRun:       tally.NotRun,
-			Rejected:     len(rep.Rejected),
+			Rejected:     published.rejected(),
 			// Read out of the document rather than counted beside it, exactly
 			// as every other number in this block is.
-			Uncovered: uncoveredOf(rep),
-			Cached:    rep.Cache.Hits,
+			Uncovered: published.uncovered(),
+			Cached:    published.cacheHits(),
 		},
 		Coverage: st.coverage.Mode(),
-		Cache:    cacheMode(rep.Cache.Mode),
+		Cache:    cacheMode(published.cacheMode()),
 		Score:    mutation.ScoreOf(tally),
 		Warnings: len(s.warnings),
-		Skips:    skipCounts(st.found.Skips),
+		Skips:    skipCounts(st.found.skips()),
 	}
 	if len(out.Verdict.Failures) > 0 {
 		summary.Failure = out.Verdict.Failures[0]
 	}
-	for _, expectation := range rep.Expectations {
+	for _, expectation := range published.expectations() {
 		switch expectation.State {
 		case report.StateFulfilled:
 			summary.Expectations.Fulfilled++
@@ -2026,9 +2334,9 @@ var notableRank = map[mutation.Outcome]int{
 // runs — and a reader scanning the block gets the two kinds in two runs rather
 // than interleaved. It is a sub-order within one rank rather than a rank of its
 // own, so a covered survivor still comes before every timeout.
-func notable(st *state, rep *report.Report) []MutantResult {
-	out := make([]MutantResult, 0, len(rep.Mutants))
-	for _, m := range rep.Mutants {
+func notable(st *state, mutants []report.Mutant) []MutantResult {
+	out := make([]MutantResult, 0, len(mutants))
+	for _, m := range mutants {
 		core, err := m.Outcome.Mutation()
 		if err != nil {
 			continue
@@ -2049,6 +2357,7 @@ func notable(st *state, rep *report.Report) []MutantResult {
 			shown.KilledBy = *m.KilledBy
 		}
 		shown.Attempts = m.Attempts
+		shown.Diverged = m.Diverged
 		shown.CoveringTestPackages = slices.Clone(m.CoveringTestPackages)
 		shown.CoveringTests = slices.Clone(m.CoveringTests)
 		out = append(out, shown)
@@ -2089,9 +2398,9 @@ func boolRank(b bool) int {
 // uncoveredOf counts the mutants the run reported as uncovered, read out of the
 // published document rather than counted beside it — the same discipline every
 // other number in the closing summary follows.
-func uncoveredOf(rep *report.Report) int {
+func uncoveredOf(mutants []report.Mutant) int {
 	count := 0
-	for _, m := range rep.Mutants {
+	for _, m := range mutants {
 		if m.Uncovered {
 			count++
 		}
@@ -2119,28 +2428,51 @@ func uncoveredOf(rep *report.Report) int {
 func displayIndex(
 	catalog *mutation.Catalog,
 	candidates []discover.Located,
-) (display map[string]MutantResult, packages map[string]string) {
+	modules []discover.WorkspaceModule,
+) (display map[string]MutantResult, packages map[string]string, neverReturns map[string]bool) {
 	type key struct {
-		path string
-		span mutation.Span
-		rule string
+		// module is part of the key for the reason it is part of the identity:
+		// two modules of one workspace can each hold an `app.go`, and an edit
+		// at one span by one rule in each is two candidates.
+		module string
+		path   string
+		span   mutation.Span
+		rule   string
 	}
 	located := make(map[key]discover.Located, len(candidates))
 	for _, candidate := range candidates {
-		k := key{path: candidate.Path, span: candidate.Span, rule: candidate.Rule.Name}
+		k := key{
+			module: candidate.ModulePath,
+			path:   candidate.Path,
+			span:   candidate.Span,
+			rule:   candidate.Rule.Name,
+		}
 		if _, seen := located[k]; !seen {
 			located[k] = candidate
 		}
 	}
+	// Where each module sits, so that what a person reads is a path they can
+	// open. A run report's paths are relative to the module they belong to --
+	// that is what the identity is keyed on -- and `app.go` on a console line
+	// of a workspace run would be a sentence about two files.
+	dirs := make(map[string]string, len(modules))
+	for _, module := range modules {
+		dirs[module.Path] = module.Dir
+	}
 
 	display = make(map[string]MutantResult, catalog.Len())
 	packages = make(map[string]string, catalog.Len())
+	// The mutants discovery proved cannot leave their loop. It is read off the
+	// same join because it is the same fact about the same candidate, and what
+	// it buys is one measurement rather than two: see [execute.MutantRun.NeverReturns].
+	neverReturns = make(map[string]bool)
 	for _, m := range catalog.Mutants() {
-		where := located[key{path: m.Path, span: m.Span, rule: m.Rule.Name}]
+		where := located[key{module: m.ModulePath, path: m.Path, span: m.Span, rule: m.Rule.Name}]
 		display[m.ID] = MutantResult{
 			ID:          m.ID,
 			DisplayID:   m.DisplayID,
 			Path:        m.Path,
+			ModuleDir:   dirs[m.ModulePath],
 			Line:        where.Line,
 			Column:      where.Column,
 			Rule:        m.Rule.Name,
@@ -2150,8 +2482,11 @@ func displayIndex(
 		if where.Package != "" {
 			packages[m.ID] = where.Package
 		}
+		if where.Termination != nil && where.Termination.Verdict == discover.TerminationUnbounded {
+			neverReturns[m.ID] = true
+		}
 	}
-	return display, packages
+	return display, packages, neverReturns
 }
 
 // changedRef is the ref a `--changed` run recorded, or "" for every other run.
@@ -2275,6 +2610,13 @@ type session struct {
 	events   chan<- Event
 	warnings []Warning
 	closed   bool
+	// patterns is what "every package of the tree" means for this run: `./...`
+	// for a module, and one `./<dir>/...` per module for a workspace, because
+	// the go command does not accept `./...` at a workspace root. It is settled
+	// once, before anything is copied, and is what the baseline build, the
+	// validation build and the test-binary listing are all issued with. See
+	// [treePatterns].
+	patterns []string
 	// published is the fan-out of the recording onto this stream, or nil for a
 	// run that did not ask for one. See [eventSink].
 	published *eventSink
@@ -2611,8 +2953,33 @@ func interrupted(err error) bool {
 // disagree with this one.
 func Interrupted(err error) bool { return interrupted(err) }
 
+// cachedBaselineWarning says what a baseline of nothing but cache lookups
+// leaves the run with, and what to do about it.
+//
+// The two sentences are two different situations and the remedy is the whole
+// difference. A run with more than one baseline gave every run after the first
+// [gocmd.CountOnce] through GOFLAGS, so a cache lookup means a `test.command`
+// that does not obey GOFLAGS — a wrapper script composing its own environment,
+// or a command that is not the go command at all. A run with a single baseline
+// gave it nothing, because the first run is the user's command as written; there
+// the cheapest fix is a second run, which will carry the flag.
+func cachedBaselineWarning(runs int) string {
+	const preamble = " was answered from the go test result cache, so the per-mutant budgets are " +
+		"sized on a cache lookup rather than on the suite; "
+	if runs == 1 {
+		return "the only baseline run" + preamble +
+			"raise test.baseline_runs so that a run after the first times the tests, " +
+			"or set test.timeout rather than deriving one"
+	}
+	return fmt.Sprintf("every one of the %d baseline runs", runs) + preamble +
+		"every run after the first was given " + gocmd.CountOnce + " through GOFLAGS and " +
+		"answered that way anyway, so this test.command does not obey GOFLAGS -- make the " +
+		"command itself run the tests, or set test.timeout rather than deriving one"
+}
+
 // budgetBaseline is the baseline run a budget is sized on: the slowest of the
-// runs after the first, or the first itself when it is the only one.
+// runs that ran the tests after the first of them, or the only such run when
+// there is one.
 //
 // The first run of `go test` is the one that compiles. On a cold build cache —
 // which is what CI measures, its cache being the runner's temporary directory
@@ -2625,14 +2992,112 @@ func Interrupted(err error) bool { return interrupted(err) }
 // the shape a mutant run has, and they are what the budget is for. A single
 // run is still taken as it is, compilation and all, because a budget built
 // from nothing would be worse than a loose one.
-func budgetBaseline(runs []time.Duration) time.Duration {
+//
+// Which is true only of the runs that ran. `go test` keeps a passing result and
+// answers the next identical invocation out of its cache, and the pattern that
+// produces in a fresh snapshot is exactly the pattern the paragraph above
+// legislates for, upside down: the first run misses, because the copied files
+// carry timestamps the cache has never seen, and every run after it hits. So
+// the rule that takes the runs after the first would have taken the runs that
+// did not run the tests — and a mutant run always misses, its binary being
+// instrumented and its environment naming a mutant. This repository's own suite
+// measured 9.0 s on its first baseline run, 1.9 s on the two cache lookups
+// after it, and 6.4 s per mutant: a budget of 10 s where the work asks for 32,
+// which reports a suite that ran as a suite that hung.
+//
+// [session.baseline] is what stops that happening rather than this function:
+// every run after the first carries [gocmd.CountOnce], so the runs this rule
+// prefers are runs. The check below stays, because GOFLAGS reaches the go
+// command and a `test.command` need not be one — a wrapper script that composes
+// its own environment answers to nothing here — and a run whose every
+// observation was a lookup is one there is nothing left to size on.
+//
+// So a run the toolchain answered from its cache is not an observation of
+// anything, and is dropped before the rule is applied rather than being
+// averaged into it. When every run was answered that way there is nothing left
+// to size on; the slowest of them is returned so that the run can continue,
+// and [session.baseline] says so with [CodeBaselineFromTestCache] rather than
+// letting a budget built from cache lookups pass for a measurement.
+func budgetBaseline(runs []baselineObservation) time.Duration {
+	ran := make([]baselineObservation, 0, len(runs))
+	for _, run := range runs {
+		if !run.Cached {
+			ran = append(ran, run)
+		}
+	}
+	if len(ran) == 0 {
+		// Every run was a cache lookup, so there is no compiling first run to
+		// exclude and no observation to prefer: the largest of them is the
+		// loosest budget they support, and loose is the direction that does not
+		// report work as a hang. It also covers the empty list, which is zero.
+		return slowest(runs)
+	}
+	// The first of the runs that ran is the one that compiled, and is dropped
+	// unless it is the only one there is. Written with min because the two
+	// readings of the comparison it replaces agree at the boundary: with one
+	// run, "drop the first" and "keep the first" are the same answer only
+	// because the list is short, and a test cannot tell a mutant of that
+	// comparison from the original.
+	return slowest(ran[min(len(ran)-1, 1):])
+}
+
+// everyRunCached reports a baseline in which no run ran the tests, which is the
+// condition [CodeBaselineFromTestCache] is about. An empty list is not that
+// condition: a baseline with no runs is a configuration, not a cache hit.
+func everyRunCached(runs []baselineObservation) bool {
 	if len(runs) == 0 {
-		return 0
+		return false
 	}
-	if len(runs) == 1 {
-		return runs[0]
+	for _, run := range runs {
+		if !run.Cached {
+			return false
+		}
 	}
-	return slices.Max(runs[1:])
+	return true
+}
+
+// slowest is the largest duration among the observations, and zero when there
+// are none.
+func slowest(runs []baselineObservation) time.Duration {
+	var most time.Duration
+	for _, run := range runs {
+		most = max(most, run.Duration)
+	}
+	return most
+}
+
+// baselineObservation is one timed baseline run and whether the toolchain
+// answered it out of its test result cache rather than by running the tests.
+type baselineObservation struct {
+	Duration time.Duration
+	Cached   bool
+}
+
+// cachedMarker is what `go test` prints in place of a duration when it answered
+// a package from its result cache.
+const cachedMarker = "(cached)"
+
+// servedFromTestCache reports whether a baseline run's output says the
+// toolchain answered any package from its test result cache.
+//
+// The line `go test` prints per package is `ok`, the import path, and either a
+// duration or [cachedMarker], separated by tabs; nothing else in the output has
+// that shape at the start of a line, and a test that prints the word itself is
+// indented under its own `--- FAIL` or carries a file and line in front of it.
+// Recognising it by shape rather than by searching for the word is what keeps a
+// suite that logs the word from being mistaken for a cache hit.
+//
+// One cached package is enough. A run that ran three suites and looked up the
+// fourth cost less than a mutant run of the same four will, which is the only
+// property the budget needs from it.
+func servedFromTestCache(output []byte) bool {
+	for line := range strings.Lines(string(output)) {
+		fields := strings.Fields(line)
+		if len(fields) == 3 && fields[0] == "ok" && fields[2] == cachedMarker {
+			return true
+		}
+	}
+	return false
 }
 
 // deriveTimeout resolves the per-mutant timeout.

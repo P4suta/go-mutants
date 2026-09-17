@@ -426,15 +426,16 @@ func TestCoveragePassLeavesNoTraceInTheSnapshot(t *testing.T) {
 	if len(collected) != len(bins) {
 		t.Fatalf("collected %d profiles for %d binaries", len(collected), len(bins))
 	}
-	// The data really was written, or this would be asserting that a pass which
-	// did nothing left no trace.
+	// The profile really was written, and it is the text format the mapping
+	// reads rather than a directory somebody still has to render.
 	for _, data := range collected {
-		entries, readErr := os.ReadDir(data.Dir)
+		written, readErr := os.ReadFile(data.Path)
 		if readErr != nil {
-			t.Fatalf("reading %s: %v", data.Dir, readErr)
+			t.Fatalf("reading %s: %v", data.Path, readErr)
 		}
-		if len(entries) == 0 {
-			t.Fatalf("the coverage pass over %s wrote nothing into %s", data.ImportPath, data.Dir)
+		if !strings.HasPrefix(string(written), "mode: ") {
+			t.Fatalf("the coverage pass over %s wrote %q into %s, want a textfmt profile",
+				data.ImportPath, first(string(written)), data.Path)
 		}
 	}
 
@@ -463,5 +464,84 @@ func TestCoveragePassLeavesNoTraceInTheSnapshot(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("the snapshot drifted as\n\t%s\nwant\n\t%s",
 			strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
+	}
+}
+
+// first is the first line of a document, for a failure message that should not
+// print a whole coverage profile.
+func first(document string) string {
+	line, _, _ := strings.Cut(document, "\n")
+	return line
+}
+
+// TestAPassThatOnlyNeedsOneFailureStopsAtIt is the other half of the unit
+// tier's claim, and the half a fake cannot make.
+//
+// What the scheduler adds to a target's argument vector is this package's
+// business; what a real test binary does with it is the standard library's, and
+// the saving is worth nothing unless the two agree. Two things are asserted at
+// once here, and the second is why this test exists rather than a comment:
+//
+//   - the flag is one a compiled test binary accepts. An argument `flag` does
+//     not know makes a test binary print "flag provided but not defined" and
+//     exit 2, which this package reads as a failing suite — so a flag that went
+//     away in some future Go would not be an error, it would be every mutant
+//     reported killed by a suite that never ran. Nothing else in the run would
+//     notice.
+//   - it stops the binary where it says it does. The module below fails its
+//     first test and fails its last, and a pass that carries the flag reports
+//     only the first: the second was never started.
+func TestAPassThatOnlyNeedsOneFailureStopsAtIt(t *testing.T) {
+	t.Parallel()
+
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, testkit.Scratch(t))
+	// Two failing tests in source order, which is the order a test binary runs
+	// them in. Neither is parallel: `-test.failfast` stops new tests from
+	// starting, and a parallel test has already started by the time it yields.
+	module := testkit.NewModule(t).
+		Module("fixture.example/failfast").
+		Source("pair_test.go", `package failfast
+
+import "testing"
+
+func TestAlphaFails(t *testing.T) { t.Error("alpha") }
+
+func TestZuluFails(t *testing.T) { t.Error("zulu") }
+`)
+
+	opts := execute.Options{
+		Toolchain:    toolchain,
+		SnapshotRoot: module.Root(),
+		BinDir:       filepath.Join(t.TempDir(), "bin"),
+		ScratchDir:   filepath.Join(t.TempDir(), "tmp"),
+		Jobs:         1,
+		Timeout:      buildTimeout,
+		Env:          env,
+	}
+	bins, err := execute.BuildTestBinaries(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("building the module's test binary: %v\n%s", err, execute.OutputOf(err))
+	}
+	if len(bins) != 1 {
+		t.Fatalf("built %d test binaries, want 1: %+v", len(bins), bins)
+	}
+
+	attempt := execute.RunControl(t.Context(), opts, execute.ControlRun{Timeout: runTimeout}, bins)
+	if attempt.Err != nil {
+		t.Fatalf("running the control: %v", attempt.Err)
+	}
+	output := string(attempt.Output)
+	if attempt.ExitCode == 0 {
+		t.Fatalf("the control exited 0 although both of its tests fail: %s", output)
+	}
+	if strings.Contains(output, "flag provided but not defined") {
+		t.Fatalf("the test binary refused an argument the scheduler adds: %s", output)
+	}
+	if !strings.Contains(output, "TestAlphaFails") {
+		t.Errorf("the first failing test is not in the output, so nothing ran as expected: %s", output)
+	}
+	if strings.Contains(output, "TestZuluFails") {
+		t.Errorf("the test after the first failure ran anyway: %s", output)
 	}
 }

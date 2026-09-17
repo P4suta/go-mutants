@@ -50,6 +50,46 @@ const ActiveEnv = "GO_MUTANTS_ACTIVE"
 // error rather than as a killed mutant.
 const UnknownMutantExit = 97
 
+// DivergedExit is the status the generated runtime exits with when a counted
+// loop passes the ceiling the census derived for it.
+//
+// It is its own status and not a test failure for [UnknownMutantExit]'s reason
+// turned the other way round: a diverging mutant is a detection, and a
+// detection has to be told apart from the suite going red on its own so that
+// the report can say which loop it was and how far past the original it got.
+// See [ADR 0013].
+//
+// [ADR 0013]: https://github.com/P4suta/go-mutants/blob/main/docs/adr/0013-a-mutant-that-does-not-return-is-decided-by-work.md
+const DivergedExit = 96
+
+// LoopCensusEnv is the environment variable the generated runtime reads to
+// decide where to append the loop census.
+//
+// Set, the process records what the program it is running does: per loop, the
+// largest number of iterations one entry to it reached. Unset, it records
+// nothing. It is set on the instrumented baseline and on nothing else, because
+// the instrumented baseline is the one run that executes the whole test command
+// with no mutant active — the original program, in the tree the mutants run in.
+const LoopCensusEnv = "GO_MUTANTS_LOOP_CENSUS"
+
+// LoopLimitsEnv is the environment variable the generated runtime reads to
+// decide where its ceilings come from.
+//
+// Set, the process reads one ceiling per loop site and stops at the first loop
+// that passes its own. Unset, every ceiling is "no limit" and the counters cost
+// an increment and a compare — which is what an ordinary run of the instrumented
+// tree, the drift gate included, is entitled to.
+const LoopLimitsEnv = "GO_MUTANTS_LOOP_LIMITS"
+
+// runtimeLimit and runtimeOver are the two names a counted loop spells. They
+// are constants rather than literals at the two ends because the generator
+// writes them and the rewrite reads them, and a name spelled twice is a name
+// that can drift.
+const (
+	runtimeLimit = "Limit"
+	runtimeOver  = "Over"
+)
+
 // ProbeEnv is the environment variable the generated probe runtime reads to
 // decide where to append its infection log.
 //
@@ -106,8 +146,8 @@ func chooseRuntimeDir(root string) (string, error) {
 }
 
 // writeRuntime generates the activation package into the snapshot.
-func writeRuntime(root, dir string, catalog *mutation.Catalog) error {
-	source, err := renderRuntime(dir, catalog)
+func writeRuntime(root, dir, modulePath string, catalog *mutation.Catalog, loops []loopSite) error {
+	source, err := renderRuntime(dir, modulePath, catalog, loops)
 	if err != nil {
 		return err
 	}
@@ -164,9 +204,10 @@ func writeGeneratedPackage(root, dir string, source []byte) error {
 // The array is never zero-length even for an empty catalogue: `var M [0]bool`
 // is legal Go but leaves the package's only export unusable, and a length of
 // one costs a byte and keeps the generated source one shape rather than two.
-func renderRuntime(pkgName string, catalog *mutation.Catalog) ([]byte, error) {
+func renderRuntime(pkgName, modulePath string, catalog *mutation.Catalog, loops []loopSite) ([]byte, error) {
 	mutants := catalog.Mutants()
 	size := arraySize(catalog.Len())
+	sites := arraySize(len(loops))
 
 	var b strings.Builder
 	generatedPreamble(&b)
@@ -176,7 +217,7 @@ func renderRuntime(pkgName string, catalog *mutation.Catalog) ([]byte, error) {
 	b.WriteString("// copied from, and it is a first-party package of the module under test so that\n")
 	b.WriteString("// no go.mod edit and no vendor entry is needed to import it.\n")
 	fmt.Fprintf(&b, "package %s\n\n", pkgName)
-	b.WriteString("import (\n\t\"fmt\"\n\t\"os\"\n)\n\n")
+	b.WriteString("import (\n\t\"bufio\"\n\t\"fmt\"\n\t\"os\"\n\t\"strconv\"\n\t\"strings\"\n\t\"sync\"\n\t\"sync/atomic\"\n)\n\n")
 
 	b.WriteString("// activeEnv names the mutant that is live in this process. Empty or unset is\n")
 	b.WriteString("// the instrumented baseline: every mutant dormant, every guard taking the\n")
@@ -211,9 +252,168 @@ func renderRuntime(pkgName string, catalog *mutation.Catalog) ([]byte, error) {
 	b.WriteString("\t\tos.Exit(unknownMutantExit)\n")
 	b.WriteString("\t}\n")
 	b.WriteString("\tM[index] = true\n")
-	b.WriteString("}\n")
+	b.WriteString("}\n\n")
+
+	renderLoopCounting(&b, sites, loops, LoopFileSuffix(modulePath))
 
 	return formatGenerated(&b)
+}
+
+// renderLoopCounting writes the half of the activation package that decides
+// whether a mutant returns.
+//
+// The shape is one exported array and one exported function, and the function
+// is one rather than two because the two things that can happen when a loop
+// passes its ceiling are the same shape. A process enforcing a table never
+// returns from it: the loop has done more work than the original program ever
+// did, which is what "this mutant does not return" means as a counted fact. A
+// process taking the census records the count it reached and hands back a
+// higher ceiling, so the local ladder doubles and the file gets about one line
+// per doubling rather than one per iteration.
+//
+// What the census records is therefore within a factor of two below the true
+// maximum, and nothing is wrong with that: the engine multiplies by a factor
+// far larger than two, and a ceiling that is a little high costs microseconds
+// where a ceiling that is too low would cost a wrong verdict.
+//
+// Limit is read by every counted loop and written in init and nowhere else, so
+// nothing synchronises on it — a package's init runs before any test code that
+// imports it. The census bookkeeping is atomic because a test suite is
+// concurrent, and it is only ever touched by a process that was asked to take a
+// census.
+func renderLoopCounting(b *strings.Builder, sites int, loops []loopSite, suffix string) {
+	fmt.Fprintf(b, "// loopCensusEnv names the file this process appends its loop census to.\n")
+	fmt.Fprintf(b, "// Empty or unset records nothing.\nconst loopCensusEnv = %q\n\n", LoopCensusEnv)
+	fmt.Fprintf(b, "// loopLimitsEnv names the file this process reads its ceilings from. Empty or\n")
+	fmt.Fprintf(b, "// unset leaves every ceiling at noLimit, which no loop can reach.\nconst loopLimitsEnv = %q\n\n", LoopLimitsEnv)
+	fmt.Fprintf(b, "// loopFileSuffix is what this module adds to either of those paths. A\n")
+	fmt.Fprintf(b, "// workspace run has one of these packages per module, each numbering its own\n")
+	fmt.Fprintf(b, "// loops, and the two variables name one path.\nconst loopFileSuffix = %q\n\n", suffix)
+	fmt.Fprintf(b, "// divergedExit is the status this process exits with when a loop passes its\n")
+	fmt.Fprintf(b, "// ceiling.\nconst divergedExit = %d\n\n", DivergedExit)
+	fmt.Fprintf(b, "// censusHeader opens the census this process writes.\nconst censusHeader = %q\n\n", censusHeader(len(loops)))
+	fmt.Fprintf(b, "// limitsHeader opens the table this process is willing to read.\nconst limitsHeader = %q\n\n", limitsHeader(len(loops)))
+
+	b.WriteString("// noLimit is the ceiling of a run that was given no table: no loop reaches it,\n")
+	b.WriteString("// so the counters cost an increment and a compare and decide nothing.\n")
+	b.WriteString("const noLimit = ^uint64(0)\n\n")
+
+	b.WriteString("// Limit is one ceiling per counted loop, indexed by the site the rewrite\n")
+	b.WriteString("// spells. Counted loops read it and nothing writes it after init.\n")
+	fmt.Fprintf(b, "var Limit [%d]uint64\n\n", sites)
+
+	b.WriteString("// loopSites names each counted loop, so that a divergence can say which one it\n")
+	b.WriteString("// was rather than leaving a reader to count `for` statements.\n")
+	fmt.Fprintf(b, "var loopSites = [%d]string{\n", sites)
+	for i, loop := range loops {
+		fmt.Fprintf(b, "\t%d: %q,\n", i, loop.Position)
+	}
+	b.WriteString("}\n\n")
+
+	b.WriteString("// censusFile is the census this process appends to, and nil when it was not\n")
+	b.WriteString("// asked for one. censusSeen is the largest count already written for each\n")
+	b.WriteString("// site, which keeps the file to about one line per doubling however many\n")
+	b.WriteString("// times a loop is entered. censusMu serialises the writes themselves.\n")
+	b.WriteString("var (\n\tcensusFile *os.File\n")
+	fmt.Fprintf(b, "\tcensusSeen [%d]atomic.Uint64\n", sites)
+	b.WriteString("\tcensusMu   sync.Mutex\n)\n\n")
+
+	b.WriteString("// enforcing reports whether this process was given a table of ceilings to\n")
+	b.WriteString("// hold its loops to. It is written in init and read everywhere else.\n")
+	b.WriteString("var enforcing bool\n\n")
+
+	b.WriteString("// Over is what a counted loop calls when its own counter passes its own\n")
+	b.WriteString("// ceiling, and it returns the ceiling that loop should carry on with.\n")
+	b.WriteString("//\n")
+	b.WriteString("// A process holding a table never returns from it: n iterations of this loop\n")
+	b.WriteString("// is more work than the original program did anywhere in this suite, which is\n")
+	b.WriteString("// what a mutant that does not return looks like when it is counted rather\n")
+	b.WriteString("// than waited for.\n")
+	b.WriteString("func Over(i uint32, n uint64) uint64 {\n")
+	b.WriteString("	if enforcing {\n")
+	b.WriteString("		diverged(i, n)\n")
+	b.WriteString("	}\n")
+	b.WriteString("	if censusFile != nil {\n")
+	b.WriteString("		record(i, n)\n")
+	b.WriteString("	}\n")
+	b.WriteString("	return n * 2\n")
+	b.WriteString("}\n\n")
+
+	b.WriteString("// diverged ends the process, naming the loop and the two counts that decided\n")
+	b.WriteString("// it. It never returns.\n")
+	b.WriteString("func diverged(i uint32, n uint64) {\n")
+	b.WriteString("	fmt.Fprintln(os.Stderr, \"go-mutants: the loop at \"+loopSites[i]+\" ran \"+strconv.FormatUint(n, 10)+\n")
+	b.WriteString("		\" times, past the \"+strconv.FormatUint(Limit[i], 10)+\" this run derived for it from what the\"+\n")
+	b.WriteString("		\" original program did under the same tests; this mutant does not return\")\n")
+	b.WriteString("	os.Exit(divergedExit)\n")
+	b.WriteString("}\n\n")
+
+	b.WriteString("// record appends one count to the census, and only when it beats every count\n")
+	b.WriteString("// already written for that site.\n")
+	b.WriteString("func record(i uint32, n uint64) {\n")
+	b.WriteString("	for {\n")
+	b.WriteString("		seen := censusSeen[i].Load()\n")
+	b.WriteString("		if n <= seen {\n\t\t\treturn\n\t\t}\n")
+	b.WriteString("		if censusSeen[i].CompareAndSwap(seen, n) {\n\t\t\tbreak\n\t\t}\n")
+	b.WriteString("	}\n")
+	b.WriteString("	censusMu.Lock()\n")
+	b.WriteString("	defer censusMu.Unlock()\n")
+	b.WriteString("	fmt.Fprintln(censusFile, i, n)\n")
+	b.WriteString("}\n\n")
+
+	b.WriteString("// init settles the ceilings: every loop unlimited, then the table the\n")
+	b.WriteString("// environment names if it names one, and the census file if it asks for one.\n")
+	b.WriteString("//\n")
+	b.WriteString("// A table that cannot be opened, cannot be read, or was written for another\n")
+	b.WriteString("// tree leaves every ceiling at noLimit and says so once: a run that measured\n")
+	b.WriteString("// nothing about its loops is a run bounded in time alone, which is what every\n")
+	b.WriteString("// run was before it could count.\n")
+	b.WriteString("func init() {\n")
+	b.WriteString("	for i := range Limit {\n\t\tLimit[i] = noLimit\n\t}\n")
+	b.WriteString("	if named := os.Getenv(loopCensusEnv); named != \"\" {\n")
+	b.WriteString("		path := named + loopFileSuffix\n")
+	b.WriteString("		file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)\n")
+	b.WriteString("		if err == nil {\n")
+	b.WriteString("			censusFile = file\n")
+	b.WriteString("			fmt.Fprintln(file, censusHeader)\n")
+	b.WriteString("			for i := range Limit {\n\t\t\t\tLimit[i] = 1\n\t\t\t}\n")
+	b.WriteString("		} else {\n")
+	b.WriteString("			fmt.Fprintln(os.Stderr, \"go-mutants: cannot open the loop census \"+path+\": \"+err.Error())\n")
+	b.WriteString("		}\n")
+	b.WriteString("	}\n")
+	b.WriteString("	named := os.Getenv(loopLimitsEnv)\n")
+	b.WriteString("	if named == \"\" {\n\t\treturn\n\t}\n")
+	b.WriteString("	path := named + loopFileSuffix\n")
+	b.WriteString("	if err := readLimits(path); err != nil {\n")
+	b.WriteString("		for i := range Limit {\n\t\t\tLimit[i] = noLimit\n\t\t}\n")
+	b.WriteString("		fmt.Fprintln(os.Stderr, \"go-mutants: cannot read the loop limits \"+path+\": \"+err.Error()+\n")
+	b.WriteString("			\"; this mutant is bounded in time alone\")\n")
+	b.WriteString("		return\n")
+	b.WriteString("	}\n")
+	b.WriteString("	enforcing = true\n")
+	b.WriteString("}\n\n")
+
+	b.WriteString("// readLimits fills Limit from the table at path, or reports why it did not.\n")
+	b.WriteString("func readLimits(path string) error {\n")
+	b.WriteString("	file, err := os.Open(path)\n")
+	b.WriteString("	if err != nil {\n\t\treturn err\n\t}\n")
+	b.WriteString("	defer file.Close()\n")
+	b.WriteString("	scanner := bufio.NewScanner(file)\n")
+	b.WriteString("	if !scanner.Scan() || scanner.Text() != limitsHeader {\n")
+	b.WriteString("		return fmt.Errorf(\"the table was not written for this tree\")\n")
+	b.WriteString("	}\n")
+	b.WriteString("	for scanner.Scan() {\n")
+	b.WriteString("		left, right, ok := strings.Cut(scanner.Text(), \" \")\n")
+	b.WriteString("		if !ok {\n\t\t\treturn fmt.Errorf(\"%q is not a site and a ceiling\", scanner.Text())\n\t\t}\n")
+	b.WriteString("		site, siteErr := strconv.Atoi(left)\n")
+	b.WriteString("		if siteErr != nil || site < 0 || site >= len(Limit) {\n")
+	b.WriteString("			return fmt.Errorf(\"%q names no loop of this tree\", left)\n\t\t}\n")
+	b.WriteString("		ceiling, ceilErr := strconv.ParseUint(right, 10, 64)\n")
+	b.WriteString("		if ceilErr != nil {\n\t\t\treturn ceilErr\n\t\t}\n")
+	b.WriteString("		Limit[site] = ceiling\n")
+	b.WriteString("	}\n")
+	b.WriteString("	return scanner.Err()\n")
+	b.WriteString("}\n")
 }
 
 // renderProbeRuntime generates the source of the probe package.
@@ -225,12 +425,27 @@ func renderRuntime(pkgName string, catalog *mutation.Catalog) ([]byte, error) {
 // and threading that through one template would produce a function whose every
 // line asks which tree it is generating, in exchange for saving a preamble.
 //
-// The package holds exactly one exported name, [ProbeEnv]'s reader excepted
-// because it is init. Infect is what a probe form calls when the mutated value
-// at its site would have differed from the original's; the file it appends to,
-// the guard array, and the header are unexported, because a probe tree has no
-// business reaching for any of them and a second export would be a second thing
-// to keep compatible.
+// The package holds two exported names, [ProbeEnv]'s reader excepted because it
+// is init, and the second one arrived with a form that could not use the first.
+// Infect is what a probe form calls when it has decided that the mutated
+// reading of its site would have differed from the original's. Differs makes
+// that decision for the one form that has both readings in hand as values: it
+// takes them, records through Infect when they disagree, and yields the
+// original's, so the site keeps the value the program it stands in for would
+// have had.
+//
+// A second export is a second thing to keep compatible, and it is worth it
+// here for a reason the guard forms do not share. internal/instrument's own
+// doc.go argues against helper calls in general — they break on untyped
+// constants, on shifts, and on named types, all of which the guard forms leave
+// to the compiler — and none of that reaches a helper whose parameters are the
+// universe `bool`, which is exactly and only what a Form C site is. Written
+// inline instead, the same measurement would need a temporary, a name chosen
+// against the file's scopes, and a statement to declare it in, at every site
+// that is an expression.
+//
+// The file the two append to, the guard array, and the header stay unexported,
+// because a probe tree has no business reaching for any of them.
 //
 // There is no table from mutant ID to index here, and that is the difference
 // that matters: a probe tree activates nothing, so it never resolves an ID.
@@ -298,6 +513,19 @@ func renderProbeRuntime(pkgName string, catalog *mutation.Catalog) ([]byte, erro
 	b.WriteString("\tif _, err := fmt.Fprintln(probeFile, i); err != nil {\n")
 	probeDiagnostic(&b, "\t\t", `"go-mutants: cannot append to the infection log "+probeFile.Name()`, "err")
 	b.WriteString("\t}\n")
+	b.WriteString("}\n\n")
+
+	b.WriteString("// Differs yields v, having recorded through Infect that mutant i's site would\n")
+	b.WriteString("// have read as m instead wherever the two disagree.\n")
+	b.WriteString("//\n")
+	b.WriteString("// It is what the boolean probe form is written as. Both readings are\n")
+	b.WriteString("// evaluated before the call, by the compiler, in the site's own context; what\n")
+	b.WriteString("// this adds is one comparison and, the first time it fails, one line in the\n")
+	b.WriteString("// log. The value returned is the original's, so the program this is spliced\n")
+	b.WriteString("// into is the program without it.\n")
+	b.WriteString("func Differs(i uint32, v, m bool) bool {\n")
+	b.WriteString("\tif v != m {\n\t\tInfect(i)\n\t}\n")
+	b.WriteString("\treturn v\n")
 	b.WriteString("}\n\n")
 
 	b.WriteString("// init opens the log the environment names and writes this process's header,\n")

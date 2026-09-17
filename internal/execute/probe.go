@@ -267,7 +267,11 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 
 		logPath := logs.path(i)
 		spec, result := startTarget(ctx, opts, trace.ExecKindProbeRun, subject, bin, env,
-			p.Timeout, p.MemoryLimit, p.Args, nil, logPath, p.OutputLimit)
+			// Never stopped at a failure: a probe pass's product is the set
+			// of mutants every test that ran could have ruled out, and a pass
+			// that stopped early would record a smaller one and license
+			// skipping the executions that would have found the kills.
+			p.Timeout, p.MemoryLimit, p.Args, nil, logPath, p.OutputLimit, false)
 		attempt.Duration += result.Duration
 		attempt.PeakMemory = max(attempt.PeakMemory, result.PeakMemory)
 		attempt.ExitCode = result.ExitCode

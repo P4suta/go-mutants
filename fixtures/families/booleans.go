@@ -45,11 +45,17 @@ func Missing(names map[string]bool, name string) bool {
 // Toggle inverts a flag, and is the fixture's deliberately under-tested
 // condition.
 //
-// SURVIVES, all three of its mutants. TestToggle calls it with both inputs, so
+// SURVIVES, all five of its mutants. TestToggle calls it with both inputs, so
 // every line is covered and every mutant is really executed, and then asserts
 // nothing at all about what came back. That is the commonest gap a mutation run
 // finds in a real suite — a test that exercises rather than checks — and a run
-// that did not report these three as survivors would not be measuring anything.
+// that did not report these five as survivors would not be measuring anything.
+//
+// Five rather than three because the condition is now settled both ways as well
+// as negated. That is the right answer for the wrong-looking reason: a test
+// that asserts nothing cannot tell a guard that always fires from one that
+// never does either, so the two new mutants are exactly as undetected as the
+// three that were here first, and for exactly the same missing assertion.
 func Toggle(on bool) bool {
 	if on {
 		return false

@@ -140,6 +140,13 @@ func Parse(r io.Reader) (Log, error) {
 	// header is complete and empty: a binary that ran to the end and consulted
 	// nothing.
 	log := Log{Complete: data[len(data)-1] == '\n'}
+	// The condition and the break below do one job between them, and the
+	// condition is the half that is not observable: an empty body reaches the
+	// cut, finds no separator, and breaks. It stays because the alternative --
+	// `for {}` with the break doing all of it -- makes two of this package's
+	// mutants never return where today none does, and a loop nobody can leave
+	// is a cost the gate pays twice for every one of them. See the
+	// `[[mutation.expect]]` row this line carries.
 	for len(body) > 0 {
 		line, rest, terminated := bytes.Cut(body, []byte("\n"))
 		if !terminated {

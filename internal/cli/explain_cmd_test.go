@@ -178,6 +178,17 @@ func explainReport() *report.Report {
 	}
 }
 
+// positionAccount gathers what the command would render for one position.
+//
+// The tests drive the join rather than the renderer, which is what the command
+// does: a renderer given a hand-built document would pass while the gatherer
+// that feeds it in production was wrong.
+func positionAccount(
+	r *report.Report, where position, sites []discover.SkipSite, mutants []catalogMutant,
+) explainPositionDocument {
+	return gatherPosition(r, "mutation.json", where, sites, mutants, outcomesOf(r))
+}
+
 // inExplainWorkspace puts the working directory in a temporary one holding the
 // report, and returns that directory.
 //
@@ -581,8 +592,8 @@ func TestExplainPositionListsSkipSitesAndMutantsOnThatLine(t *testing.T) {
 		{ID: otherTwinID, DisplayID: displayOf(otherTwinID), Path: "clamp.go", Line: 47, Column: 9,
 			Family: "arithmetic", Rule: "sub-to-add", Original: "hi - 1", Replacement: "hi + 1"},
 	}
-	if err := explainPosition(&out, false, position{path: "clamp.go", line: 41},
-		sites, mutants, outcomesOf(r)); err != nil {
+	if err := explainPosition(&out, false,
+		positionAccount(r, position{path: "clamp.go", line: 41}, sites, mutants)); err != nil {
 		t.Fatalf("explainPosition: %v", err)
 	}
 
@@ -606,24 +617,6 @@ func TestExplainPositionListsSkipSitesAndMutantsOnThatLine(t *testing.T) {
 	}
 	if strings.Contains(text, "ready.go") {
 		t.Errorf("a skip site in another file was listed:\n%s", text)
-	}
-}
-
-// TestExplainRefusesJSON keeps the command honest about what it is. Every fact
-// it prints is already in the two documents it read, so a `--json` that
-// re-encoded them would be a third spelling of the same facts for nobody.
-func TestExplainRefusesJSON(t *testing.T) {
-	inExplainWorkspace(t, explainReport())
-
-	code, stdout, stderr := explain(t, "--json", killedID[:8])
-	if code != 2 {
-		t.Errorf("exit = %d, want 2\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
-	if !strings.Contains(stderr, string(CodeConflictingFlags)) {
-		t.Errorf("the refusal carries no %s:\n%s", CodeConflictingFlags, stderr)
-	}
-	if !strings.Contains(stderr, "v2") {
-		t.Errorf("the refusal does not say when a document might exist:\n%s", stderr)
 	}
 }
 
@@ -849,7 +842,8 @@ func TestExplainDoesNotBlameTheMutantForAForeignRecording(t *testing.T) {
 func TestExplainPositionShowsAWholeFileSkip(t *testing.T) {
 	var out bytes.Buffer
 	sites := []discover.SkipSite{{Path: "gen.go", Reason: discover.SkipGenerated}}
-	if err := explainPosition(&out, false, position{path: "gen.go", line: 6}, sites, nil, nil); err != nil {
+	if err := explainPosition(&out, false,
+		positionAccount(nil, position{path: "gen.go", line: 6}, sites, nil)); err != nil {
 		t.Fatalf("explainPosition: %v", err)
 	}
 	if !strings.Contains(out.String(), "generated") {
@@ -871,7 +865,8 @@ func TestExplainPositionMatchesAMutantThatSpansLines(t *testing.T) {
 		Family: "comparison", Rule: "lt-to-le",
 		Original: "v < hi &&\n\t\tv > lo", Replacement: "v <= hi &&\n\t\tv > lo",
 	}}
-	if err := explainPosition(&out, false, position{path: "clamp.go", line: 42}, nil, mutants, nil); err != nil {
+	if err := explainPosition(&out, false,
+		positionAccount(nil, position{path: "clamp.go", line: 42}, nil, mutants)); err != nil {
 		t.Fatalf("explainPosition: %v", err)
 	}
 	if !strings.Contains(out.String(), displayOf(killedID)) {

@@ -1,0 +1,55 @@
+Say why one mutant got its verdict, and how to reproduce it.
+
+It reads the run report and, when the run recorded one, the trace beside it,
+and joins the two for one mutant: what the mutant is, what happened to it,
+which test binaries cover it, every pass this run made over them with the
+commands underneath, the stages those passes happened inside, and a command to
+paste.
+
+The source is the latest run of this module by default — the one
+`go-mutants report latest` names — or `--report FILE` for a document you name,
+or `--run RUN-ID` for another run in this module's history.
+
+The recording is the one filed under report.directory/trace/<run-id>/, or the
+one inside the diagnostics bundle of a run that failed, or `--trace DIR` for a
+recording you were sent. A run that recorded nothing is not an error: the
+sections that would have come out of a recording say there is none instead of
+guessing, and the account says how to get one.
+
+The target is a mutant id prefix — as short as a listing prints, as long as the
+report carries — resolved against the mutants this run measured and the ones
+validation refused. A prefix that names several is refused with all of them
+listed, because "why did this one survive" is not a question two mutants can
+answer.
+
+The target may instead be a position: a path, optionally with a line, as in
+`clamp.go:41`. That runs a discovery pass over this workspace and prints every
+mutant there and every site discovery passed over, each with what the report
+says became of it — which is "there should be a mutant here, where is it" asked
+the other way round.
+
+The command it prints to paste is quoted for a POSIX shell. On Windows it is a
+line to read rather than one to paste: the directory, the activation and the
+argument vector are all there, and PowerShell spells the first two differently.
+
+--json is refused. Everything printed here is already in the run report and in
+the recording, which are the machine-readable forms; a v2 with something to say
+that neither document carries may add one.
+
+Usage:
+  go-mutants explain TARGET [flags]
+
+Flags:
+  -h, --help          help for explain
+      --json          print a go-mutants/explain v1 document instead of the account in prose
+      --no-color      never colourise output, even on a terminal
+      --report FILE   read the run report at FILE instead of this module's latest run
+      --run RUN_ID    read the stored report of RUN_ID, or of the one run whose id starts with it, instead of this module's latest run
+      --trace DIR     read the recording in DIR instead of the one filed beside the report
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)

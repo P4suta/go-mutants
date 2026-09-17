@@ -6,6 +6,7 @@ package engine
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -114,6 +115,17 @@ type temporaries struct {
 	// scratch is empty, because a directory is only recorded here once it has
 	// been claimed.
 	scratchOwner *tempowner.Owner
+	// probe is the second snapshot a probing run instruments as its probe
+	// tree, or nil. It is a tree of its own rather than a copy of the mutant
+	// one: the mutant tree is instrumented in place by the time the probe phase
+	// runs, and a probe tree has to be the *original* program.
+	probe *snapshot.Snapshot
+	// workers are the per-worker copies of the instrumented tree an isolating
+	// run made, in worker order, or nil. Each is a snapshot in its own right --
+	// its own directory, its own lock, its own manifest of the instrumented
+	// tree -- which is what lets a worker be put back between mutants by asking
+	// it what drifted.
+	workers []*snapshot.Snapshot
 }
 
 // keepsTemporaries decides whether one run's directories survive it.
@@ -137,6 +149,53 @@ func keepsTemporaries(keep KeepTemp, err error) bool {
 	return false
 }
 
+// forceRemoveAll removes the run's own scratch directory, clearing the modes
+// that stop it.
+//
+// A mutation run kills test processes on purpose -- that is what a per-mutant
+// timeout is, and what an interrupted run does to every worker at once -- so a
+// suite that had made one of its own directories unreadable and would have put
+// it back is a suite that never got the chance. What is left is a directory
+// nothing can list, under a scratch directory this process made, handed to
+// nobody else, and is about to delete: widening its mode takes nothing away
+// from anyone, and leaving it behind means a directory per killed test
+// accumulating in the operating system's temporary area for as long as anybody
+// runs this tool.
+//
+// The widening is one pass and the removal is tried once more, not in a loop. A
+// second failure is a real one -- a file another process holds open, a
+// filesystem that refuses -- and it is reported rather than retried, because
+// the caller's whole answer to a directory that will not go is to say so.
+func forceRemoveAll(root string) error {
+	err := os.RemoveAll(root)
+	if err == nil {
+		return nil
+	}
+	widen(root)
+	return os.RemoveAll(root)
+}
+
+// widen makes one directory and everything under it listable, searchable and
+// writable.
+//
+// The directory's own mode is changed before it is listed, which is the whole
+// point: a directory that cannot be searched cannot be walked into, so a widener
+// that read first would stop at exactly the entry it exists for. Every failure
+// is dropped -- this runs only after a removal has already failed, and the
+// removal that follows is what reports whether it worked.
+func widen(dir string) {
+	_ = os.Chmod(dir, 0o700)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			widen(filepath.Join(dir, entry.Name()))
+		}
+	}
+}
+
 // release settles the run's temporary directories on every path out of the
 // pipeline, and is the only place either of them is removed or kept.
 //
@@ -157,9 +216,30 @@ func (s *session) release(temps *temporaries, keep KeepTemp, out *RunOutcome, er
 	if scratch, owner := temps.scratch, temps.scratchOwner; scratch != "" {
 		// The lock is dropped before the removal: on Windows an open handle
 		// inside a directory is exactly what makes RemoveAll fail.
-		remove := func() error { return errors.Join(owner.Release(), os.RemoveAll(scratch)) }
+		remove := func() error { return errors.Join(owner.Release(), forceRemoveAll(scratch)) }
 		if s.settle(keeping, "per-run temporary directory", CodeScratchNotRemoved, owner.Keep, remove) {
 			preserved = append(preserved, PreservedDir{Kind: KeptScratch, Path: scratch})
+		}
+	}
+	// Before the snapshot they were copied from, so that a keep preserves the
+	// worker copies beside it rather than under a directory already reported.
+	// They are reported under the same kind, because that is what they are: a
+	// worker copy is a snapshot of the instrumented tree, made by the same
+	// package and removed by the same call.
+	for _, worker := range temps.workers {
+		if worker == nil {
+			continue
+		}
+		if s.settle(keeping, "worker snapshot directory", CodeSnapshotNotRemoved, worker.Keep, worker.Cleanup) {
+			preserved = append(preserved, PreservedDir{Kind: KeptSnapshot, Path: worker.Dir()})
+		}
+	}
+	// And the probe tree before the mutant one, for the worker copies' reason:
+	// it is a snapshot in its own right, made by the same package and removed
+	// by the same call, and it lives beside the tree it was taken from.
+	if tree := temps.probe; tree != nil {
+		if s.settle(keeping, "probe snapshot directory", CodeSnapshotNotRemoved, tree.Keep, tree.Cleanup) {
+			preserved = append(preserved, PreservedDir{Kind: KeptSnapshot, Path: tree.Dir()})
 		}
 	}
 	if snap := temps.snapshot; snap != nil {

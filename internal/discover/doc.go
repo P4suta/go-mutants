@@ -18,12 +18,19 @@
 // type-directed to some degree — a boolean literal is only a candidate when it
 // really is the universe constant, a type argument is only recognisable as a
 // type through [types.Info] — and a partially typed tree would silently
-// produce a different, smaller catalog rather than an error. Since the run
-// would fail at the baseline build minutes later anyway, failing here is both
-// faster and more precise: the message names the first few errors and where
-// they are.
+// produce a different, smaller catalog rather than an error.
 //
-// The single exception is a package that imports "C". Those are excluded from
+// The precondition reaches exactly as far as that argument does: over the
+// packages discovery walks, and not over their test variants. A `_test.go`
+// file is never mutated and its types are never read here, so a compiler error
+// in one says nothing about the type information this phase takes its answers
+// from — and the loader is not asked for the test variants at all, which is
+// what makes a catalogue cost one parse per file walked rather than three.
+// A broken test file inside the test command's scope still stops the run: the
+// baseline builds and runs that command before discovery starts, and names the
+// file when it does.
+//
+// The other exception is a package that imports "C". Those are excluded from
 // mutation wholesale (v1 limitation), so their own build failures are not
 // something the user has to fix before mutation testing can start; whatever
 // depends on them still fails the gate, because that dependency is real.
@@ -46,7 +53,7 @@
 // and exclude patterns removed), individual expressions sitting in a context
 // that instrumentation cannot rewrite — constant declarations, array lengths,
 // case labels, package-level variable initialisers, and type parameter lists
-// or explicit type arguments — and edits whose rewrite site none of the three
+// or explicit type arguments — and edits whose rewrite site none of the
 // guard forms can express, which are [SkipUnnameableDeclType]. The reason
 // reported for an expression is the outermost suppressed region containing it:
 // that is the region a walker would have declined to descend into, so it is
@@ -71,7 +78,7 @@
 //
 // # The guard site hint
 //
-// Every candidate carries a [Guard]: which of the three rewrite forms the
+// Every candidate carries a [Guard]: which rewrite form the
 // instrumentation phase has to use for it, over which bytes, and — for the
 // declaration form — the source spelling of every type the site declares.
 //
@@ -144,7 +151,16 @@
 //
 // The child also runs with GOWORK=off. A snapshot is meant to be the whole
 // truth about what is being tested, and a `go.work` in one of its parent
-// directories or named by $GOWORK is a file the snapshot does not contain; a
-// workspace at the snapshot root itself is a different matter and is refused
-// outright with [CodeWorkspace].
+// directories or named by $GOWORK is a file the snapshot does not contain.
+//
+// A workspace at the snapshot root itself is a different matter, because that
+// file *is* in the snapshot. [DetectWorkspace] reads it, and what happens next
+// depends on which question was asked. [Discover] refuses it with
+// [CodeWorkspace] -- everything below that phase assumes one module path, one
+// set of module-relative identities, one baseline -- and refuses it having read
+// it, so a workspace file that is itself malformed says which line is wrong.
+// [DiscoverWorkspace] names it in GOWORK and discovers each of its modules,
+// because a module of a workspace resolves its siblings through that file and
+// does not load without it. The sentence above is unchanged by either: the only
+// workspace file anything here obeys is the one the snapshot carries.
 package discover

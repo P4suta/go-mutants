@@ -10,6 +10,8 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/interval"
 	"github.com/P4suta/go-mutants/internal/mutation"
+
+	"github.com/P4suta/go-mutants/internal/discover"
 )
 
 // This file hands the package's external tests the flattener's self-check
@@ -77,9 +79,12 @@ func ParseSnapshot(srcPath string, src []byte) (*ast.File, *token.File, error) {
 	return parseSnapshotFile(srcPath, src)
 }
 
-// ImportSplices runs the runtime import injection over a syntax tree.
-func ImportSplices(file *ast.File, tok *token.File, srcPath, alias, importPath string) ([]Splice, error) {
-	return importSplices(file, tok, srcPath, alias, importPath)
+// ImportSplices runs the runtime import injection over a syntax tree, with
+// whatever completions a guard's spelling asked the file to gain.
+func ImportSplices(
+	file *ast.File, tok *token.File, srcPath, alias, importPath string, completions ...discover.Completion,
+) ([]Splice, error) {
+	return importSplices(file, tok, srcPath, alias, importPath, completions)
 }
 
 // AliasFor runs the alias choice over one file and the names the caller says
@@ -111,5 +116,15 @@ func PackageNames(dir, pkg string) ([]string, error) {
 // names, so that a write failure can be provoked without depending on file
 // modes — which are advice rather than law on some filesystems.
 func WriteRuntime(root, dir string, catalog *mutation.Catalog) error {
-	return writeRuntime(root, dir, catalog)
+	return writeRuntime(root, dir, "example.com/mini", catalog, nil)
 }
+
+// WrappableStatement runs this package's own answer to "may this statement be
+// buried in a block", which internal/discover answers separately for the same
+// statements. See TestBothPhasesAgreeOnWhatFormSCanWrap.
+func WrappableStatement(stmt ast.Stmt) bool { return wrappableStatement(stmt) }
+
+// ClosurableStatement runs this package's own answer to "may this statement be
+// moved into a closure", which internal/discover answers separately for the
+// same statements. See TestBothPhasesAgreeOnWhatFormFCanClose.
+func ClosurableStatement(stmt ast.Stmt) bool { return closurableStatement(stmt) }

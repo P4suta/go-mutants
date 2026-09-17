@@ -58,7 +58,7 @@
       "not_run_reason": null,
       "original": "true",
       "outcome": "killed",
-      "output_tail": "--- FAIL: TestPlain (0.00s)\n    plain_test.go:11: Plain() = false, want true\nFAIL\ncoverage: 66.7% of statements in fixture.example/tagged/...",
+      "output_tail": "--- FAIL: TestPlain (0.00s)\n    plain_test.go:11: Plain() = false, want true\nFAIL\ncoverage: 18.5% of statements in fixture.example/tagged/...",
       "package": "fixture.example/tagged",
       "path": "plain.go",
       "peak_memory_bytes": 0,
@@ -223,6 +223,12 @@
       {
         "duration_ms": 0,
         "name": "drift",
+        "phase": "mutate",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "divergence",
         "phase": "mutate",
         "result": "succeeded"
       },

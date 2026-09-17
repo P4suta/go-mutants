@@ -20,6 +20,35 @@ import (
 // --porcelain --ignored -- fixtures` is a CI gate.
 const WitnessFile = "witness.txt"
 
+// TestTheDirectoryHoldsNoOtherMutantsWitness is the isolation proof, and it is
+// the first test in this file because it has to run before the one that writes.
+//
+// Under `--isolate` every worker has its own copy of the instrumented tree and
+// that copy is put back between mutants, so each mutant finds the directory as
+// the run left it. Drop the restore and this fails for every mutant after the
+// first — turning [Nudge]'s survivors into kills, which is a signal no count of
+// drifted files can give.
+//
+// It is conditional on a mutant being active, and that is not a convenience.
+// The baseline runs this suite several times in one tree on purpose; an
+// unconditional check would fail the second of those and stop the run at the
+// baseline gate, which is a different refusal proven by a different fixture.
+func TestTheDirectoryHoldsNoOtherMutantsWitness(t *testing.T) {
+	if os.Getenv("GO_MUTANTS_ACTIVE") == "" {
+		t.Skip("no mutant is active, so this is a baseline run and the tree may carry the previous one's witness")
+	}
+	if _, err := os.Stat(WitnessFile); err == nil {
+		t.Fatalf("%s is already here, so this mutant is being measured in a directory an earlier one wrote into",
+			WitnessFile)
+	}
+}
+
+// TestNudge calls the fixture's survivor and asserts nothing about it, which is
+// what makes every mutant of [Nudge] live in a passing binary.
+func TestNudge(t *testing.T) {
+	_ = Nudge(1)
+}
+
 // TestTrimAndWriteAWitness passes, and writes a file into its own package
 // directory on the way.
 //

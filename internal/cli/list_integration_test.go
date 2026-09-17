@@ -108,22 +108,40 @@ var wantMutants = []listedMutant{
 	{"suppressed/suppressed.go", 59, 33, "return-replacement", "return-empty-string", "Data", "\"\""},
 	{"suppressed/suppressed.go", 66, 5, "condition-negation", "negate-condition", "limit", "!(limit)"},
 	{"suppressed/suppressed.go", 67, 10, "return-replacement", "return-zero-numeric", "a", "0"},
-	{"suppressed/suppressed.go", 77, 6, "condition-negation", "negate-condition", "ok == true", "!(ok == true)"},
-	{"suppressed/suppressed.go", 77, 9, "comparison", "eq-to-neq", "==", "!="},
-	{"suppressed/suppressed.go", 77, 12, "boolean-literal", "true-to-false", "true", "false"},
-	{"suppressed/suppressed.go", 78, 11, "return-replacement", "return-empty-string", "\"equal and ok\"", "\"\""},
-	{"suppressed/suppressed.go", 81, 10, "return-replacement", "return-empty-string", "\"not ok\"", "\"\""},
-	{"suppressed/suppressed.go", 85, 6, "condition-negation", "negate-condition", "v > b", "!(v > b)"},
-	{"suppressed/suppressed.go", 85, 8, "comparison", "gt-to-ge", ">", ">="},
-	{"suppressed/suppressed.go", 86, 11, "return-replacement", "return-empty-string", "\"greater\"", "\"\""},
-	{"suppressed/suppressed.go", 89, 10, "return-replacement", "return-empty-string", "v", "\"\""},
-	{"suppressed/suppressed.go", 91, 9, "return-replacement", "return-empty-string", "\"none\"", "\"\""},
-	{"suppressed/suppressed.go", 98, 10, "return-replacement", "return-empty-string", "\"sent\"", "\"\""},
-	{"suppressed/suppressed.go", 100, 6, "condition-negation", "negate-condition", "v == true", "!(v == true)"},
-	{"suppressed/suppressed.go", 100, 8, "comparison", "eq-to-neq", "==", "!="},
-	{"suppressed/suppressed.go", 100, 11, "boolean-literal", "true-to-false", "true", "false"},
-	{"suppressed/suppressed.go", 101, 11, "return-replacement", "return-empty-string", "\"received\"", "\"\""},
-	{"suppressed/suppressed.go", 104, 9, "return-replacement", "return-empty-string", "\"none\"", "\"\""},
+	// The tagless switch's own labels, which a tag-carrying one would not have:
+	// `a == b` and the `==` of `ok == false` are exactly `bool`, so they are
+	// ordinary boolean contexts rather than suppressed ones.
+	{"suppressed/suppressed.go", 81, 9, "comparison", "eq-to-neq", "==", "!="},
+	{"suppressed/suppressed.go", 82, 6, "condition-negation", "negate-condition", "ok == true", "!(ok == true)"},
+	{"suppressed/suppressed.go", 82, 9, "comparison", "eq-to-neq", "==", "!="},
+	{"suppressed/suppressed.go", 82, 12, "boolean-literal", "true-to-false", "true", "false"},
+	{"suppressed/suppressed.go", 83, 11, "return-replacement", "return-empty-string", "\"equal and ok\"", "\"\""},
+	{"suppressed/suppressed.go", 85, 10, "comparison", "eq-to-neq", "==", "!="},
+	{"suppressed/suppressed.go", 85, 13, "boolean-literal", "false-to-true", "false", "true"},
+	{"suppressed/suppressed.go", 86, 10, "return-replacement", "return-empty-string", "\"not ok\"", "\"\""},
+	// The tagged switch, labels and bodies alike. The labels are expressions of
+	// the tag's type, and the form that returns a type from a closure stands
+	// exactly where one stood; they used to be suppressed before the guard
+	// chooser was ever asked about them.
+	{"suppressed/suppressed.go", 89, 9, "integer-arithmetic", "add-to-sub", "+", "-"},
+	{"suppressed/suppressed.go", 90, 10, "return-replacement", "return-empty-string", "\"one more\"", "\"\""},
+	{"suppressed/suppressed.go", 91, 9, "integer-arithmetic", "mul-to-div", "*", "/"},
+	{"suppressed/suppressed.go", 92, 10, "return-replacement", "return-empty-string", "\"twice\"", "\"\""},
+	{"suppressed/suppressed.go", 96, 6, "condition-negation", "negate-condition", "v > b", "!(v > b)"},
+	{"suppressed/suppressed.go", 96, 8, "comparison", "gt-to-ge", ">", ">="},
+	{"suppressed/suppressed.go", 97, 11, "return-replacement", "return-empty-string", "\"greater\"", "\"\""},
+	{"suppressed/suppressed.go", 100, 10, "return-replacement", "return-empty-string", "v", "\"\""},
+	{"suppressed/suppressed.go", 102, 9, "return-replacement", "return-empty-string", "\"none\"", "\"\""},
+	// The boolean expression inside a communication clause: the clause is
+	// neither a Form S site nor a Form C one, and the value it sends is an
+	// ordinary expression with an ordinary boolean inside it.
+	{"suppressed/suppressed.go", 114, 16, "comparison", "lt-to-le", "<", "<="},
+	{"suppressed/suppressed.go", 115, 10, "return-replacement", "return-empty-string", "\"sent\"", "\"\""},
+	{"suppressed/suppressed.go", 117, 6, "condition-negation", "negate-condition", "v == true", "!(v == true)"},
+	{"suppressed/suppressed.go", 117, 8, "comparison", "eq-to-neq", "==", "!="},
+	{"suppressed/suppressed.go", 117, 11, "boolean-literal", "true-to-false", "true", "false"},
+	{"suppressed/suppressed.go", 118, 11, "return-replacement", "return-empty-string", "\"received\"", "\"\""},
+	{"suppressed/suppressed.go", 121, 9, "return-replacement", "return-empty-string", "\"none\"", "\"\""},
 
 	// A boolean literal used as a map key is value code: the type-argument
 	// suppression must not reach an ordinary index expression — that is the
@@ -146,9 +164,12 @@ var wantSkips = []catalogSkip{
 	{Path: "generated/generated.go", Reason: "generated", Count: 1},
 	{Path: "generics/generics.go", Reason: "type-param", Count: 5},
 	{Path: "suppressed/suppressed.go", Reason: "array-length", Count: 2},
-	{Path: "suppressed/suppressed.go", Reason: "case-label", Count: 4},
 	{Path: "suppressed/suppressed.go", Reason: "const-decl", Count: 4},
-	{Path: "suppressed/suppressed.go", Reason: "package-var-init", Count: 5},
+	// Four rather than five: the function literal in the last initialiser
+	// returns a constant comparison, so one of its two return replacements was
+	// never an edit to decline -- the mutation and the source are one program,
+	// and discovery refuses it before the suppression is recorded.
+	{Path: "suppressed/suppressed.go", Reason: "package-var-init", Count: 4},
 }
 
 // inFixture points the process at a copy of the discovery fixture for the
@@ -798,50 +819,71 @@ func TestListCommandLineEndToEnd(t *testing.T) {
 	}
 }
 
-// TestListAtAWorkspaceRootIsRefusedBeforeAnythingIsCopied is the same refusal
-// `run` makes, in the command that reaches a workspace first.
+// TestListAtAWorkspaceRootListsEveryModule is the listing half of ADR 0012.
 //
-// A multi-module workspace has no single module path, no single set of
-// module-relative identities and no single baseline, and discovery has always
-// said so. What it could not say usefully was *which file*: it is handed the
-// snapshot, so the `go.work` it named was the one inside a `go-mutants-snap-…`
-// directory in the temporary area — which this command's own deferred cleanup
-// removes before the message reaches a terminal. The one actionable thing in
-// the sentence pointed at nothing.
-//
-// So the question is asked of the user's own tree before the copy, and both
-// halves are asserted: the code, which is what somebody searches for, and the
-// path, which is what they open. The empty temporary directory is the third
-// half — a refusal that had already copied the module would leave a snapshot to
-// clean up and would have paid for a tree it never looked at.
-func TestListAtAWorkspaceRootIsRefusedBeforeAnythingIsCopied(t *testing.T) {
+// A workspace is measured as one run over one catalogue that spans its modules,
+// and a listing is that catalogue before anything is executed -- so the
+// document names the modules rather than a module path, every mutant says which
+// module it belongs to, and the lines a reader sees are workspace-relative,
+// because two modules can each hold an `app.go` and the path alone would not
+// say which.
+func TestListAtAWorkspaceRootListsEveryModule(t *testing.T) {
 	root := testkit.Copy(t, "workspace")
-	temp := t.TempDir()
-	t.Setenv("TMPDIR", temp)
-	t.Setenv("TMP", temp)
-	t.Setenv("TEMP", temp)
 	t.Chdir(root)
 
 	var out, errOut bytes.Buffer
-	if code := ExecuteContext(t.Context(), []string{"list", "--json"}, &out, &errOut); code == 0 {
-		t.Fatalf("`go-mutants list` at a go.work root exited 0\nstdout:\n%s", out.String())
+	if code := ExecuteContext(t.Context(), []string{"list", "--json"}, &out, &errOut); code != 0 {
+		t.Fatalf("`go-mutants list` at a go.work root exited %d\nstderr:\n%s", code, errOut.String())
 	}
-	if out.String() != "" {
-		t.Errorf("a refused listing wrote %q to standard output, want nothing", out.String())
+	var doc struct {
+		Workspace struct {
+			ModulePath string `json:"module_path"`
+			Modules    []struct {
+				Dir        string `json:"dir"`
+				ModulePath string `json:"module_path"`
+			} `json:"modules"`
+		} `json:"workspace"`
+		Mutants []struct {
+			Path       string `json:"path"`
+			ModulePath string `json:"module_path"`
+		} `json:"mutants"`
 	}
-	for _, phrase := range []string{
-		"GOM4102",
-		"multi-module workspaces are not yet supported",
-		"run go-mutants inside one of its modules instead",
-		filepath.Join(root, "go.work"),
-	} {
-		if !strings.Contains(errOut.String(), phrase) {
-			t.Errorf("the refusal does not say %q:\n%s", phrase, errOut.String())
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("decoding the listing: %v", err)
+	}
+	if doc.Workspace.ModulePath != "" {
+		t.Errorf("workspace.module_path = %q; a workspace has no single answer for it",
+			doc.Workspace.ModulePath)
+	}
+	want := []string{
+		"fixture.example/workspace/app",
+		"fixture.example/workspace/cross",
+		"fixture.example/workspace/lib",
+	}
+	var got []string
+	for _, module := range doc.Workspace.Modules {
+		got = append(got, module.ModulePath)
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("workspace.modules = %v, want %v in `use` order", got, want)
+	}
+	if len(doc.Mutants) != 11 {
+		t.Errorf("the listing holds %d mutants, want the workspace's eleven", len(doc.Mutants))
+	}
+	for _, m := range doc.Mutants {
+		if m.ModulePath == "" {
+			t.Errorf("the mutant at %s names no module", m.Path)
 		}
 	}
-	if left, err := os.ReadDir(temp); err != nil {
-		t.Fatalf("reading %s: %v", temp, err)
-	} else if len(left) != 0 {
-		t.Errorf("the refused listing copied the workspace: %s holds %d entry/entries", temp, len(left))
+
+	// And the lines a reader sees, which are the ones that have to be openable.
+	out.Reset()
+	if code := ExecuteContext(t.Context(), []string{"list"}, &out, &errOut); code != 0 {
+		t.Fatalf("`go-mutants list` exited %d\nstderr:\n%s", code, errOut.String())
+	}
+	for _, phrase := range []string{"app/app.go:", "cross/cross.go:", "lib/lib.go:"} {
+		if !strings.Contains(out.String(), phrase) {
+			t.Errorf("the listing does not name %q:\n%s", phrase, out.String())
+		}
 	}
 }

@@ -263,3 +263,139 @@ func TestChangedLinesAreNotResolvedWithoutTheFlag(t *testing.T) {
 		t.Error("a run with no --changed resolved a diff")
 	}
 }
+
+// TestAChangedTestFileIsNotSilentlyNarrowedAway is the third outcome of a
+// narrowing, and the reason it has to exist is that the other two are both
+// wrong here.
+//
+// `--changed` keeps the mutants the diff touched, and a `_test.go` file holds
+// none: internal/discover never mutates one. So a diff that edited only tests
+// touches no mutant, the selection comes back empty, and the run publishes a
+// score over nothing as though it had looked — which is the same fiction
+// [scopedBinaries] refuses at the pattern, arriving by a different road.
+//
+// Keeping every mutant instead is the other wrong answer: almost every real
+// commit edits a test beside the code it tests, so that rule would turn the
+// flag off for the runs it was built for.
+//
+// What a test edit changes is which mutants the suite kills, and nothing at
+// this point in the run knows which those are — the coverage mapping that could
+// say is built from the selection this function produces. So the run says the
+// narrowing could not see them rather than answering as if it had.
+func TestAChangedTestFileIsNotSilentlyNarrowedAway(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan Event, 8)
+	s := &session{events: events}
+	st := &state{
+		changed: &gitdiff.Changed{
+			Ref: "origin/main",
+			Files: map[string][]gitdiff.Range{
+				"internal/thing/thing_test.go": {{First: 1, Last: 40}},
+			},
+		},
+		display: map[string]MutantResult{},
+	}
+	for _, id := range ids {
+		st.display[id] = MutantResult{Path: "internal/thing/thing.go", Line: 5, Original: "=="}
+	}
+
+	if got := s.narrowSelection(slices.Clone(ids), st); len(got) != 0 {
+		t.Fatalf("the diff touched no mutant line, so the selection is %d, not %d", 0, len(got))
+	}
+	close(events)
+
+	var warned Warning
+	for e := range events {
+		if w, ok := e.(Warning); ok && w.Code == string(CodeChangedTestsUnaccounted) {
+			warned = w
+		}
+	}
+	if warned.Code == "" {
+		t.Fatal("a diff that changed only tests narrowed to nothing without saying so")
+	}
+	if !strings.Contains(warned.Detail, "internal/thing/thing_test.go") {
+		t.Errorf("the warning names the test files it could not account for, and said %q", warned.Detail)
+	}
+}
+
+// TestADiffOfCodeAloneSaysNothingAboutTests is the counterpart that proves the
+// warning above is a warning and not a banner.
+//
+// A gate only ever observed firing is a gate whose silence nobody has checked:
+// one that fired on every `--changed` run would pass the test above and say
+// nothing true. So a diff that edited no test file has to narrow without a
+// word, and it is the test file in the diff — never the size of the selection —
+// that decides which happens.
+func TestADiffOfCodeAloneSaysNothingAboutTests(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan Event, 8)
+	s := &session{events: events}
+	st := &state{
+		changed: &gitdiff.Changed{
+			Ref:   "origin/main",
+			Files: map[string][]gitdiff.Range{"internal/thing/thing.go": {{First: 900, Last: 901}}},
+		},
+		display: map[string]MutantResult{},
+	}
+	for _, id := range ids {
+		st.display[id] = MutantResult{Path: "internal/thing/thing.go", Line: 5, Original: "=="}
+	}
+
+	if got := s.narrowSelection(slices.Clone(ids), st); len(got) != 0 {
+		t.Fatalf("the diff touched line 900 and every mutant is on line 5, so %d were kept", len(got))
+	}
+	close(events)
+	for e := range events {
+		if w, ok := e.(Warning); ok && w.Code == string(CodeChangedTestsUnaccounted) {
+			t.Error("a diff that edited no test file was told its tests were unaccounted for")
+		}
+	}
+}
+
+// TestAChangedTestIsUnaccountedForEvenWhenMutantsWereKept pins the condition
+// the warning is really about.
+//
+// The tempting rule is "warn when the selection came back empty", and it is
+// wrong in the direction that costs a finding: a commit that edits `a.go` and
+// `b_test.go` keeps the mutants on the lines of `a.go` — a selection nobody
+// would call suspicious — while the edit to `b_test.go` can have changed the
+// verdict of a mutant in `b.go` that this run does not execute at all.
+func TestAChangedTestIsUnaccountedForEvenWhenMutantsWereKept(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan Event, 8)
+	s := &session{events: events}
+	st := &state{
+		changed: &gitdiff.Changed{
+			Ref: "origin/main",
+			Files: map[string][]gitdiff.Range{
+				"internal/thing/a.go":      {{First: 1, Last: 100}},
+				"internal/other/b_test.go": {{First: 1, Last: 40}},
+			},
+		},
+		display: map[string]MutantResult{},
+	}
+	for _, id := range ids {
+		st.display[id] = MutantResult{Path: "internal/thing/a.go", Line: 5, Original: "=="}
+	}
+
+	if got := s.narrowSelection(slices.Clone(ids), st); len(got) != len(ids) {
+		t.Fatalf("the diff covers every mutant's line, so %d of %d were kept", len(got), len(ids))
+	}
+	close(events)
+
+	said := false
+	for e := range events {
+		if w, ok := e.(Warning); ok && w.Code == string(CodeChangedTestsUnaccounted) {
+			said = true
+			if strings.Contains(w.Detail, "internal/thing/a.go") {
+				t.Errorf("the warning listed a file that is not a test: %q", w.Detail)
+			}
+		}
+	}
+	if !said {
+		t.Error("a full selection beside a changed test reported nothing unaccounted for")
+	}
+}

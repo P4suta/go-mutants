@@ -297,7 +297,7 @@ func TestSweepReportsEveryFailureAndStillRemovesTheRest(t *testing.T) {
 	claimAt(t, removable, now.Add(-time.Hour))
 
 	failure := errors.New("device is busy")
-	sweep := sweeper{now: now, remove: func(path string) error {
+	sweep := sweeper{now: now, acquire: Acquire, remove: func(path string) error {
 		if path == stubborn {
 			return failure
 		}

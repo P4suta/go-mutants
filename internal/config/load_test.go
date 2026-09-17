@@ -866,8 +866,9 @@ func TestParseAccepts(t *testing.T) {
 		"timeout = \"1m30s\"\n" +
 		"memory = \"2GiB\"\n" +
 		"baseline_runs = 1\n" +
-		"narrowing = \"package\"\n\n" +
-		"[execution]\njobs = 32\n\n" +
+		"narrowing = \"package\"\n" +
+		"probing = \"on\"\n\n" +
+		"[execution]\njobs = 32\nisolate = true\n\n" +
 		"[cache]\nmode = \"off\"\ndirectory = \"team/cache\"\n\n" +
 		"[policy]\nstrict = true\nminimum_score = 66.5\nrequire_mutants = false\n\n" +
 		"[report]\ndirectory = \"out/mutation\"\nformats = [\"html\"]\nhigh = 100\nlow = 0\n"
@@ -892,7 +893,9 @@ func TestParseAccepts(t *testing.T) {
 		Memory:          Explicit(int64(2) << 30),
 		BaselineRuns:    Explicit(1),
 		Narrowing:       Explicit(NarrowingPackage),
+		Probing:         Explicit(ProbingOn),
 		Jobs:            Explicit(32),
+		Isolate:         Explicit(true),
 		CacheMode:       Explicit(CacheOff),
 		CacheDirectory:  Explicit("team/cache"),
 		Strict:          Explicit(true),

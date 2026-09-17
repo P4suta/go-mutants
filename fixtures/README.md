@@ -39,17 +39,19 @@ at.
 | `failing-baseline/` | `fixture.example/failingbaseline` | A workspace that compiles but whose test fails. Proves the baseline gate: the run must stop with a typed baseline error carrying the tail of the test output, not proceed to mutate a red suite. |
 | `discovery/` | `fixture.example/discovery` | Five packages holding one live candidate next to every context discovery refuses to mutate: all six comparisons and both boolean literals, a package that shadows `true`, const blocks, an array length, switch and type-switch and select labels against their bodies, package-level initialisers, a `//go:embed` variable, a generated file, and generic type parameters against a generic body. `list` asserts the exact catalogue and the exact skip counts against it. |
 | `killable/` | `fixture.example/killable` | The end-to-end kill. Thirteen mutants with predetermined fates: nine in `Clamp` and one boolean literal in `IsReady` that the tests kill, and three in `Untested` that survive because nothing calls it. One function per file and no repeated operator, so a mutant can be named by path, line and rule alone. |
-| `rejectable/` | `fixture.example/rejectable` | Compile validation's oracle. Nineteen candidates over three files, three of which are not programs once the mutation is applied: two constant divisions by zero (`v*0` swapped to `v/0`) and an untyped constant that stops fitting its context (`200 - 100` returned as a `uint8`, swapped to `200 + 100`). The other sixteen are healthy, share their files with the traps, and are all killed by the fixture's tests, so a phase that rejected a file rather than a candidate would be caught. Four of the sixteen are the control in `named.go`: the named boolean type that used to be this module's trap and is now an ordinary mutant. |
+| `rejectable/` | `fixture.example/rejectable` | Compile validation's oracle. Twenty-one candidates over three files at the default profile, three of which are not programs once the mutation is applied: two constant divisions by zero (`v*0` swapped to `v/0`) and an untyped constant that stops fitting its context (`200 - 100` returned as a `uint8`, swapped to `200 + 100`). The other eighteen are healthy, share their files with the traps, and are all killed by the fixture's tests, so a phase that rejected a file rather than a candidate would be caught. Six of the eighteen are the control in `named.go`: the named boolean type that used to be this module's trap, reached through the statement form where it is a result and through Form C' where it is a condition. |
 | `coverage/` | `fixture.example/coverage` | Coverage-guided selection. Two packages, two test binaries, and three functions in one file with three different coverage fates, eleven mutants between them: `AboveZero` is reached only by its own package's tests, `Differs` only by the caller package's, and `Orphan` by nothing at all. It is the one fixture where the *right* answer and the *fast* answer differ, so a mutant measured against the wrong binary would survive rather than merely cost time. |
 | `vetsuspect/` | `fixture.example/vetsuspect` | The toolchain's opinion of the rewrite. Two functions, ten mutants, all killed — and two of the ten are the point: a Form C guard renders each alternative from the pristine bytes with one edit applied, so `or-to-and` writes `s == "." && s == ".."` into the snapshot and `and-to-or` writes `s != "." || s != ".."`. Both are legal Go and both are what vet's `bools` analyzer reports, and `go test` and `go test -c` run it by default. It is the only fixture whose subject is a command line rather than a program. |
-| `probeable/` | `fixture.example/probeable` | The probe session. Three mutants and no other mutable expression: two return-value ones a probe tree has a form for and one boolean literal it has none for, so both directions of the layer can be stated — a probed mutant whose absence from a measurement is a fact, and an unprobed one whose absence means nothing at all and which a consumer has to treat as infected by every test. Every probed function returns a value differing from its mutant's constant on every call, so a test that does not name it is a test that never reached it. Its `isolated/` package holds nothing to mutate and imports nothing that does, so its binary links no runtime and writes no log — the one absence a probe pass must read as the empty set rather than as a failure. |
-| `families/` | `fixture.example/families` | The whole operator catalogue. Twenty small functions in one package holding at least one live candidate for each of the 42 rules the frozen registry names — 76 mutants at profile `all`, 72 at `strong`, 59 at `balanced`. Every other fixture proves one mechanism against a handful of operators; this one proves the operators, and a family that stopped being discovered, instrumentable, or compilable shows up as a missing row rather than as a smaller number. |
-| `workspace/` | `fixture.example/workspace/app`, `fixture.example/workspace/lib` | A `go.work` joining two modules. Pointed at `app/` it is a scope test: the snapshot is that module alone, six mutants, all killed. Pointed at its own root it is a refusal — a workspace has no single module path, no single set of identities and no single baseline, so the run stops with GOM4102 before anything is copied. `app` deliberately imports nothing from `lib`; see below. |
+| `probeable/` | `fixture.example/probeable` | The probe session. Four mutants and no other mutable expression: three a probe tree has a form for — two return-value ones and a boolean literal — and, in `Doubled`, one it has none for, so both directions of the layer can be stated: a probed mutant whose absence from a measurement is a fact, and an unprobed one whose absence means nothing at all and which a consumer has to treat as infected by every test. The unprobed one is unprobed for a reason no later form can lift, rather than for want of a form: its statement's operands are calls, and a probe stands in for a mutant by evaluating what the original evaluates. It returns a struct so that no return-value rule proposes a second mutant beside it, which keeps the fixture's own rule that a rule names exactly one mutant. Every probed function returns a value differing from its mutant's constant on every call, so a test that does not name it is a test that never reached it. Its `isolated/` package holds nothing to mutate and imports nothing that does, so its binary links no runtime and writes no log — the one absence a probe pass must read as the empty set rather than as a failure. |
+| `unobserved/` | `fixture.example/unobserved` | The two answers a probe pass can give, one mutant each. `Gate`'s comparison is read differently by the two binaries — this package's own tests pass the boundary value, where `<` and `<=` disagree, and the caller's never do — so the mutant is covered by both and narrowed to one. `Same`'s `n * 1` and `n / 1` are the same number for every int, so no binary can name it and the run reports it as a survivor without executing it. The second is a genuinely equivalent mutant, which is the class a probe exists to stop paying for, and one contrived enough to check by eye. |
+| `families/` | `fixture.example/families` | The whole operator catalogue. Twenty-four small functions in one package holding at least one live candidate for each of the 49 rules the frozen registry names — 111 mutants at profile `all`, 102 at `strong`, 69 at `balanced`. Every other fixture proves one mechanism against a handful of operators; this one proves the operators, and a family that stopped being discovered, instrumentable, or compilable shows up as a missing row rather than as a smaller number. |
+| `workspace/` | `fixture.example/workspace/app`, `fixture.example/workspace/cross`, `fixture.example/workspace/lib` | A `go.work` joining three modules, and the two things a workspace has to be able to say. Pointed at `app/` it is a scope test: the snapshot is that module alone, six mutants, all killed. Pointed at its own root it is one run over eleven mutants, all killed — and three of those are `lib`'s, whose own test asserts nothing, so only `cross`'s tests can kill them. Three separate runs would report them as survivors in a module whose tests are green, which is why a workspace is one run. `app` deliberately imports nothing from `lib`; see below. |
 | `tagged/` | `fixture.example/tagged` | Build constraints as an input to the catalogue. Two boolean literals, one of them in a file under `//go:build special`, so a run under `GOFLAGS=-tags=special` catalogues two mutants where a run without it catalogues one — and the two runs key their cached outcomes differently, because GOFLAGS is in the cache context. |
 | `untested/` | `fixture.example/untested` | A package with tests beside one without. `lib/`'s two mutants are killed; `orphan/`'s two are settled as uncovered survivors without being executed, because no test binary reaches the line. It is also the specimen for the one test command that names real packages and still builds nothing: `go test ./orphan/...` is refused with GOM4022 rather than reported as a score of zero. |
-| `selfwriting/` | `fixture.example/selfwriting` | A passing test suite that writes a file into the package directory it runs in. Every mutant is measured against the snapshot the baseline was measured against, so a suite that edits that tree makes the score a mixture of two programs; the run stops at the drift gate with GOM4014, and `Prepare` refuses the same tree at its verification stage with a `*DriftError`. |
-| `runaway/` | `fixture.example/runaway` | The memory bound. One countdown whose loop condition, negated, is true for exactly the input the original loop ran zero times for — so the mutant appends to a slice until something stops it, which is what a per-mutant timeout derived from a millisecond suite never does in time. Two more mutants on the same lines are killed by ordinary assertions, so a run in which the runaway is reported killed can be shown to have been killed by the bound and not by the suite going red for another reason. |
-| `unnameable/` | `fixture.example/unnameable` | A declaration whose type cannot be written down: `hidden.New` returns a `*counter` that is not exported, so a guard at the addition inside the call would have to declare a temporary of a type this file has no source form for. Discovery records it as an `unnameable-decl-type` skip with its coordinates and carries on, and the ordinary candidate on the next line is catalogued and killed. |
+| `selfwriting/` | `fixture.example/selfwriting` | A passing test suite that writes a file into the package directory it runs in. Every mutant is measured against the snapshot the baseline was measured against, so a suite that edits that tree makes the score a mixture of two programs; the run stops at the drift gate with GOM4014, and `Prepare` refuses the same tree at its verification stage with a `*DriftError`. It is also the fixture for `--isolate`, the way through: its suite refuses, at the top, to find an earlier mutant's witness, and `Nudge` is a function nothing asserts about — so under isolation `Nudge`'s mutants survive and without the copy being put back between passes they are killed by the check instead. One mutant is reported as *killed* without the flag and *survived* with it, and the survival is the true answer. |
+| `runaway/` | `fixture.example/runaway` | A mutant that does not return. One countdown whose loop condition, negated, is true for exactly the input the original loop ran zero times for — so the mutant appends to a slice until something stops it, which is what a per-mutant timeout derived from a millisecond suite never does in time. What stops it is [ADR 0013](../docs/adr/0013-a-mutant-that-does-not-return-is-decided-by-work.md)'s count of the loop's own work; eight bytes a turn does not reach a memory bound before the ceiling does, which is what `memorybound/` is for. Two more mutants on the same lines are killed by ordinary assertions, so a run in which the runaway is reported killed can be shown to have been killed by the bound and not by the suite going red for another reason. |
+| `memorybound/` | `fixture.example/memorybound` | The memory bound. `runaway/` with one number changed: a turn of the loop costs a megabyte rather than eight bytes, so the runaway crosses a 256 MiB bound in 256 turns — four thousand times inside the smallest ceiling [ADR 0013](../docs/adr/0013-a-mutant-that-does-not-return-is-decided-by-work.md) ever sets, which is what `runaway/` itself no longer gets past. The bytes are written through `bytes.Repeat` rather than merely asked for, because resident memory is what the sampler reads and a large `make` can come back as pages the kernel has not handed over yet. |
+| `unnameable/` | `fixture.example/unnameable` | A type the file being rewritten cannot spell, with both of the answers to it. `hidden.Get` returns an unexported named type, so the addition between two of them inside a `switch` tag has a type no import makes writable: discovery records an `unnameable-decl-type` skip with its coordinates and carries on. The `split/` package is the same shape with an *exported* type in a package a sibling file already imports, so the rewrite is given that import and the mutant exists — which is how the corpus proves an instrumented tree compiles with an import this tool added. |
 
 The discovery fixture is the one module in the corpus with no test files, which
 is deliberate: `list` builds nothing and runs nothing, so a test here would add
@@ -94,7 +96,7 @@ integration test waiting for a failure that can no longer happen.
 ## What the families fixture deliberately misses
 
 `families/` is the one fixture whose *tests* are part of the specimen. Most of
-its functions are pinned by a test that fails for every mutant of them; four are
+its functions are pinned by a test that fails for every mutant of them; five are
 under-tested on purpose, and one is not called at all. Without both fates the
 fixture would prove very little — a run in which everything died is
 indistinguishable from a suite that is simply strong, and one in which
@@ -104,13 +106,14 @@ The gaps, and what each leaves out:
 
 | Function | Test | What the test leaves out | Survivors |
 | --- | --- | --- | --- |
-| `Toggle` | `TestToggle` | Calls it with both inputs and asserts nothing at all about either answer. The commonest gap there is: a test that exercises rather than checks, invisible to `go test` and to coverage alike. | 3 |
+| `Toggle` | `TestToggle` | Calls it with both inputs and asserts nothing at all about either answer. The commonest gap there is: a test that exercises rather than checks, invisible to `go test` and to coverage alike. | 5 |
 | `Weigh` | `TestWeigh` | Only the zero row. At zero the multiplication, the addition, and the whole returned expression all agree with the `0` that `return-zero-numeric` puts there; one non-zero row would kill all three. | 3 |
 | `Salt` | `TestSalt` | Calls it and throws the result away, the same shape as `TestToggle` in a different family. | 3 |
 | `Drift` | `TestDrift` | Accumulates a slice of *zeros*, so the loop body really runs — these are survivors the run measured, not ones coverage inferred — but adding zero and subtracting zero come to the same thing. | 2 |
+| `Tags` | `TestTags` | Everything except that the result is not nil, which is the check a great many Go tests actually make. It kills `return-nil` outright and cannot touch `return-empty-slice`: `[]string{}` is not nil either. That asymmetry is the whole argument for the `neutral-value` family, stated here as a fate rather than as a sentence. | 1 |
 | `Orphan` | none | Nothing calls it, from a test or from anywhere else. No test binary reaches the line, so coverage settles both of its mutants without executing either. | 2 |
 
-Four under-tested functions rather than one is deliberate: a table with a
+Five under-tested functions rather than one is deliberate: a table with a
 single survivor row could not tell "the run reports survivors" from "the run
 reports this one". `Orphan` is the fixture's only *uncovered* pair and is the
 reason the run's coverage narrowing is observable here at all; calling it from a
@@ -127,6 +130,17 @@ a degenerate value to. Adding a zero row to `TestSteps` would not fail the suite
 it would hang one mutant until the run's timeout and turn a kill into a
 `timed-out`.
 
+Those two answers stopped being enough when a `for` post statement became a
+site. A counted loop has exactly one thing keeping it finite, and *every* edit
+to that one thing is a loop that never ends: reverse the step and the variable
+runs away from the bound, delete the step and it never reaches it. There is no
+value a test can pass that makes both of those terminate and leaves
+`negate-loop-condition` terminating too — the first two need a limit of zero or
+below and the third needs one above. So `Steps` is given a **second bound**,
+advanced by its body rather than by its post statement, and no single edit can
+remove both. That is the general answer for a counted loop in a fixture that
+promises this, and the only one.
+
 ## Who drives them
 
 `internal/engine`'s integration suite runs the whole pipeline — snapshot,
@@ -135,10 +149,10 @@ gate, the coverage pass, execution, and the report — against `simple/`,
 `killable/`, `rejectable/`, `coverage/`, `families/`, `vetsuspect/`, and
 `failing-baseline/`. It asserts the exact tally each of them produces, so the
 numbers in those tests are the fixtures' documented claims about themselves
-stated as data: `killable/` is 10 killed and 3 survived, `rejectable/` is 16
+stated as data: `killable/` is 10 killed and 3 survived, `rejectable/` is 18
 accepted and 3 rejected, `coverage/` is 8 killed and 3 uncovered survivors
-across 2 test binaries, `families/` is 63 killed and 13 survived over all
-eleven families, `vetsuspect/` is 10 killed and nothing left unexecuted, and
+across 2 test binaries, `families/` is 95 killed and 16 survived over all
+fourteen families, `vetsuspect/` is 10 killed and nothing left unexecuted, and
 `simple/` is a green run whose event sequence is pinned whole. A fixture
 edited without its test is a fixture whose claim quietly stopped being true.
 
@@ -174,11 +188,12 @@ proving nothing.
 `families/` is driven twice. `TestFamiliesRunReachesEveryOperatorFamily` runs it
 at profile `all` and holds it against a per-family table of kills and survivors,
 the exact list of survivors by file and line, and the requirement that every one
-of the 42 catalogued rules produced a mutant.
+of the 49 catalogued rules produced a mutant.
 `TestProfileTiersSelectMonotonicallyOverTheWholeCatalogue` runs it three more
 times, once per tier, and asserts not only that the counts differ but that the
 mutant *identities* nest — `balanced ⊂ strong ⊂ all` — and that the families
-each tier adds are exactly `bitwise` and `arithmetic-assignment`, then
+each tier adds are exactly `arithmetic-assignment`, `bitwise`,
+`branch-replacement` and `neutral-value`, then `labeled-branch` and
 `statement-deletion`.
 
 The coverage fixture's *absences* are load-bearing in the way the killable
@@ -191,21 +206,24 @@ detail: it is the only input at which `>` and `>=` disagree, so deleting it
 turns the fixture's first claim from "killed by the binary that covers it" into
 "survived".
 
-The five modules below are the cases the instrumentation and the run have to get
+The six modules below are the cases the instrumentation and the run have to get
 right around the edges of an ordinary module, and each is driven by tests named
 here so that a fixture and its claim can be read together. The sixth case, CRLF
 sources, has no directory and has a section of its own:
 
 | Fixture | Driving tests |
 | --- | --- |
-| `workspace/` | `internal/engine`: `TestRunInsideAGoWorkspaceSeesOnlyTheModuleItWasPointedAt`, `TestRunAtTheWorkspaceRootIsRefused` |
+| `workspace/` | `internal/engine`: `TestRunInsideAGoWorkspaceSeesOnlyTheModuleItWasPointedAt`, `TestRunAtTheWorkspaceRootMeasuresEveryModuleAtOnce`; `internal/cli`: `TestListAtAWorkspaceRootListsEveryModule` |
 | `tagged/` | `internal/engine`: `TestBuildTagsNarrowTheCatalogueThroughGOFLAGS`, `TestFixtureReportsMatchTheirGoldens` |
 | `untested/` | `internal/engine`: `TestAPackageWithoutTestsReportsItsMutantsAsUncoveredSurvivors`, `TestScopingTheTestCommandToTheUntestedPackageIsRefused`, `TestFixtureReportsMatchTheirGoldens` |
-| `selfwriting/` | `internal/engine`: `TestATestThatWritesIntoItsOwnDirectoryStopsTheRunAtTheDriftGate`; root package: `TestPrepareRefusesDriftFromTheBaselineItself` |
+| `selfwriting/` | `internal/engine`: `TestATestThatWritesIntoItsOwnDirectoryStopsTheRunAtTheDriftGate`, `TestIsolateGivesEveryWorkerATreeAndPutsItBackBetweenMutants`; root package: `TestPrepareRefusesDriftFromTheBaselineItself` |
 | `unnameable/` | `internal/engine`: `TestAnUnnameableDeclarationIsSkippedWithItsReasonAndTheRunStaysGreen` |
+| `unobserved/` | `internal/engine`: `TestProbingReachesTheSameVerdictsForLessWork`, `TestAProbeSettledSurvivorIsNotAnUncoveredOne` |
 | `simple/`, `killable/`, `untested/`, `tagged/` | `internal/engine`: `TestFixtureReportsMatchTheirGoldens`, against `internal/engine/testdata/<fixture>.report.golden.json` |
 
-The workspace fixture's one constraint is the one a reader will want to relax:
+The workspace fixture carries two constraints, and both are ones a reader will
+want to relax.
+
 **`app` imports nothing from `lib`.** A run pointed at `app/` snapshots `app/`
 alone — the workspace file is one directory above the root it was given and is
 not copied — so the snapshot is resolved as the single module it contains. An
@@ -213,10 +231,19 @@ import of the sibling would therefore not be a scope test at all: it would be a
 `go build` failure inside the snapshot, and the fixture would stop being able to
 say anything about what a run inside a workspace measures. What makes the
 absence of `lib` observable instead is its *fate*: all three of its mutants
-survive on purpose — `neq-to-eq` on the comparison, `return-true` and
-`return-false` on the expression it returns — so a run that reached across the
-workspace would report survivors and a lower score where the test requires
-every mutant killed.
+survive anything but `cross`'s tests — `neq-to-eq` on the comparison,
+`return-true` and `return-false` on the expression it returns — and `cross` is
+not in that snapshot either, so a run that reached across the workspace would
+report survivors and a lower score where the test requires every mutant killed.
+
+**`lib`'s own test asserts nothing, and `cross` is the module that tests it.**
+That is the whole of what a workspace run can do that three separate runs
+cannot: `lib`'s mutants are killed by another module's tests or not at all. A
+test added to `lib` would leave the suite green, the score unchanged, and the
+fixture unable to tell a run that measured the modules together from one that
+measured them apart. `cross` requires `lib` neither directly nor through a
+replace, so it builds inside the workspace and nowhere else — the same probe
+`internal/discover`'s own `testdata/workspace` uses, for the same reason.
 
 `untested/orphan` and `selfwriting/`'s witness file are load-bearing in the same
 way. Adding an `orphan_test.go` would leave the module compiling and the suite

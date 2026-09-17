@@ -1,0 +1,114 @@
+Snapshot the workspace, prove the baseline, and run the mutants.
+
+The workspace root is the current directory, and .go-mutants.toml is read from
+there. Flags override the file; the file overrides the built-in defaults.
+
+Everything after `--` replaces test.command verbatim. It is never passed
+through a shell, so no element is word-split, glob-expanded, or substituted:
+
+  go-mutants run -- go test -run TestParser ./internal/...
+
+Your own tree is only ever read. The run works in a disposable snapshot: it
+builds it, proves its tests pass unmutated, rewrites it so that every mutant is
+present at once behind a guard, proves the rewritten tree still passes with
+nothing activated, and then measures one mutant per test process.
+
+--mutant is a selector here, not the filter it is in `list`: it must name
+exactly one mutant, because "why did this one survive" is not a question two
+mutants can answer. Everything else is still catalogued and still reported, as
+not-run. `list` does not compile what it prints, so a prefix from it can name a
+mutant that turns out not to build; the run then executes nothing and warns,
+quoting the compiler, rather than exiting 0 in silence.
+
+--changed and --shard narrow what is executed and nothing else: discovery,
+validation, and the report still cover the whole module, so the ids and the
+rejections match a full run's and two reports can be compared mutant for mutant.
+Everything left out is reported as not-run with the reason it was left out.
+
+  go-mutants run --changed=origin/main
+  go-mutants run --shard 2/4
+
+--changed diffs against the merge base of the ref and HEAD, so a branch is
+measured against the commit it left rather than against whatever has landed on
+the target since; bare --changed follows the upstream of HEAD and reports it by
+name. Its ref needs an equals sign, because the value is optional. What counts
+as changed is the working tree, uncommitted edits and never-added files alike.
+--shard assigns each mutant from its id alone, so editing one file never
+reshuffles the rest, and every shard reports the whole catalogue —
+`go-mutants report merge` proves the shards describe one run and combines them.
+
+Outcomes go-mutants has already proven are reused between runs, so a second run
+over unchanged code measures only what has moved. --cache off turns that off and
+--cache on asks for it even for a test command go-mutants cannot reason about;
+`go-mutants cache status` says what is stored.
+
+--json writes the run-report-v1 document to standard output and nothing else;
+the progress lines, warnings, and errors go to standard error, so the document
+can be piped straight into a validator. --explain is the opposite half and the
+two are refused together: it prints, underneath the summary, every rejected
+mutant with the compiler's own words and every suppressed site by reason.
+
+A run that fails writes a diagnostics bundle: the rendered error and its typed
+chain, this run's trace, the environment's variable names, the doctor table, and
+the report if there was one. It goes into the run's trace directory when the run
+was traced and into report.directory/diagnostics/<run-id>/ otherwise, and the
+newest 10 are kept. --no-diagnostics turns it off, and GO_MUTANTS_DIAGNOSTICS=0
+does the same for an invocation nobody can add a flag to. An interrupted run
+writes none: nothing went wrong.
+
+--keep-temp leaves the run's snapshot and scratch directory on disk instead of
+removing them, which is the only way to answer "what did the tree this mutant
+ran in look like". A bare --keep-temp keeps them whatever happened;
+--keep-temp=on-failure keeps them only when the run failed, which is the mode a
+CI job can leave on. The value takes an equals sign, and
+GO_MUTANTS_KEEP_TEMP=1|true|always|on-failure asks for the same. It is off by
+default because a kept snapshot is a whole copy of your module and nothing will
+ever remove it.
+
+-v prints the same run in more detail: how long each phase took, which test
+binary killed each mutant, how many attempts it took, and which suites cover a
+survivor — or that none does. -vv adds one line for every event the run records,
+which is the trace printed as it happens rather than read back afterwards, so
+two runs can be diffed without either of them writing a file. Both print lines
+rather than the dashboard, and neither can be combined with --quiet or --json.
+
+A completed run exits 0 unless a policy gate the user opted into failed. Nothing
+here fails a build by default: --strict and policy.minimum_score are how you ask
+for one.
+
+Usage:
+  go-mutants run [flags] [-- test argv ...]
+
+Flags:
+      --cache MODE                        outcome cache MODE: auto, on, or off (default: cache.mode, or auto — which reuses outcomes only for the built-in test command)
+      --changed GIT_REF[="@{upstream}"]   execute only the mutants on lines changed since GIT_REF (default: the upstream of HEAD); write it as --changed=REF
+      --exclude GLOB                      GLOB that removes a file again; repeat for more (default: mutation.exclude)
+      --explain                           after the summary, print every rejected mutant with the compiler's own words, and the suppressed sites by reason
+  -h, --help                              help for run
+      --include GLOB                      GLOB a file must match to be mutated; repeat for more (default: mutation.include, or **/*.go)
+      --isolate                           give every worker its own copy of the instrumented tree (default: execution.isolate)
+  -j, --jobs int                          mutants to execute concurrently (default: execution.jobs, or min(CPUs, 8))
+      --json                              write the run-report-v1 document to standard output and nothing else
+      --keep-temp MODE[="always"]         leave the run's snapshot and scratch directory on disk instead of removing them: MODE is always or on-failure, a bare --keep-temp is always, and the value takes an equals sign (also GO_MUTANTS_KEEP_TEMP)
+      --memory string                     per-mutant memory bound, e.g. 2GiB; unset derives max(1GiB, largest baseline peak x 4)
+      --mutant ID_PREFIX                  run only the mutant whose id starts with ID_PREFIX; it must select exactly one
+      --no-color                          never colourise output, even on a terminal; implies --no-tui
+      --no-diagnostics                    do not write a diagnostics bundle when the run fails (also GO_MUTANTS_DIAGNOSTICS=0)
+      --no-strict                         never exit 1 for survivors, overriding policy.strict
+      --no-tui                            never draw the live dashboard; print the plain lines even on a terminal
+      --operator NAME                     NAME of an operator family or rule, from the whole catalogue rather than from the profile; repeat for more
+      --profile NAME                      operator tier NAME: balanced, strong, or all (default: mutation.profile, or balanced)
+  -q, --quiet                             print only the baseline summary, warnings, and the closing summary block
+      --report FORMATS                    project report FORMATS to write into report.directory: none, json, html, or json,html (default: report.formats, or json,html)
+      --shard K/N                         execute only shard K/N of the mutants, 1-based; every shard reports the whole catalogue, and `go-mutants report merge` combines them
+      --strict                            exit 1 when any mutant survives unexpectedly (default: policy.strict)
+      --timeout duration                  per-mutant timeout; unset derives max(10s, slowest baseline x 5)
+      --trace DIR[="default"]             record this run's diagnostic account into DIR; a bare --trace records under report.directory/trace, the value takes an equals sign, and GO_MUTANTS_TRACE=1|true|DIR asks for the same
+  -v, --verbose count                     print more: -v adds phase durations, what killed each mutant, and which suites cover a survivor; -vv adds one line per recorded event. Implies --no-tui
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)
