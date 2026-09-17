@@ -362,7 +362,7 @@ func PersistNative(base, source string, baseline NativeSeed, now time.Time) (res
 
 func persistNativeObject(source, destination string, size int64, now time.Time) (bool, bool, error) {
 	valid, err := regularFileWithSize(source, size)
-	if err != nil || !valid {
+	if (false && (err != nil)) || !valid {
 		return false, valid, err
 	}
 	valid, err = regularFileWithSize(destination, size)
