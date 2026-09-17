@@ -343,3 +343,141 @@ id = 'd3775f0194119f4f'
 reason = 'the table being encoded holds four strings, so toml has no value in it that can fail to marshal'
 expires = '2027-09-17T00:00:00Z'
 owner = 'goatest'
+
+[[acceptance]]
+id = '4ce1b30aa909867d'
+reason = 'reading the empty path gives the same absence this guard answers with, so the sweep of a parent nobody named ends the same way by a longer route; the guard is written out because an unnamed parent is a decision rather than a missing directory'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '75ddb4e1cdd11802'
+reason = 'a verdict returned beside an error is never read: the sweep records the error and moves to the next entry without looking at what the classification decided'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '22e402006edb0707'
+reason = 'a verdict returned beside an error is never read: the sweep records the error and moves to the next entry without looking at what the classification decided'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '4aaba9a20c50e68c'
+reason = 'a verdict returned beside an error is never read: the sweep records the error and moves to the next entry without looking at what the classification decided'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'c8bca686b8946d27'
+reason = 'a verdict returned beside an error is never read: the sweep records the error and moves to the next entry without looking at what the classification decided'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '1f9c1f678d2aa115'
+reason = 'a verdict returned beside an error is never read: the sweep records the error and moves to the next entry without looking at what the classification decided'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '447853bc61dfd347'
+reason = 'the lock being released was taken by the line above it and is still held, so releasing it fails only for a kernel that has forgotten the descriptor it just gave out'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '670847f5f0a1e515'
+reason = 'fs.DirEntry.Info fails only for an entry removed between the directory listing that produced it and this call, which is another process working in the same parent'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '12bfdfb7c625e79c'
+reason = 'fs.DirEntry.Info fails only for an entry removed between the directory listing that produced it and this call, which is another process working in the same parent'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '4422877e2cdf69fd'
+reason = 'fs.DirEntry.Info fails only for an entry removed between the directory listing that produced it and this call, which is another process working in the same parent'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'ce2ec76bb5620684'
+reason = 'fs.DirEntry.Info fails only for an entry removed between the directory listing that produced it and this call, which is another process working in the same parent'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '3ef36bf341f4d239'
+reason = 'fs.DirEntry.Info fails only for an entry removed between the directory listing that produced it and this call, which is another process working in the same parent'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '9fbe7b545e23b9fd'
+reason = 'fs.DirEntry.Info fails only for an entry removed between the directory listing that produced it and this call, which is another process working in the same parent'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'ff227856db957f59'
+reason = 'filepath.WalkDir reports an error for a directory it cannot read, which is permission denial, and a test that removes its own read permission passes silently for a process running as root'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '7c140108df41bb3f'
+reason = 'a marker holds a schema string, a run identity, a process id, a timestamp and a bool, so encoding/json has no value in it that can fail to marshal'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '308c70637281f671'
+reason = 'a marker holds a schema string, a run identity, a process id, a timestamp and a bool, so encoding/json has no value in it that can fail to marshal'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '143559238c380e77'
+reason = 'the file being written was created moments earlier in a directory this call has already opened, so a write, a sync or a mode change fails only for a filesystem that has run out of room; every stage of writeAndSync is measured against a file that refuses it'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'ec312dd4757e2156'
+reason = 'the file being written was created moments earlier in a directory this call has already opened, so a write, a sync or a mode change fails only for a filesystem that has run out of room; every stage of writeAndSync is measured against a file that refuses it'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '0961a44808f2c876'
+reason = 'the file being written was created moments earlier in a directory this call has already opened, so a write, a sync or a mode change fails only for a filesystem that has run out of room; every stage of writeAndSync is measured against a file that refuses it'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '97223e6ee783c6d0'
+reason = 'the file being written was created moments earlier in a directory this call has already opened, so a write, a sync or a mode change fails only for a filesystem that has run out of room; every stage of writeAndSync is measured against a file that refuses it'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '58dca0efb3ea88cc'
+reason = 'a sync that reports nothing and a sync that reports nothing through errors.Join are the same value, and the close that follows either way happens exactly once, so no caller can tell the two apart'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '1d3b11e669989af6'
+reason = 'every package in a summary carries a distinct name, so a comparison that also answers true for equal names orders the same list the same way; sort.Slice never asks it about a package and itself'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'e976a7640e27c4fe'
+reason = 'the allowed set of a ledger nobody wrote is only ever ranged over and searched, where an empty slice and a nil slice answer alike'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
