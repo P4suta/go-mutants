@@ -52,12 +52,7 @@ func (service Service) readTrace(root, action string, runs []string) (report.Rep
 		result.Evidence = append(result.Evidence, traceSummaryEvidence("before:"+beforeID, before)...)
 		result.Evidence = append(result.Evidence, traceSummaryEvidence("after:"+afterID, after)...)
 		difference := trace.Diff(before, after)
-		status := "changed"
-		if difference.EventsDelta == 0 && difference.MissingSequencesDelta == 0 && difference.EventsDroppedDelta == 0 &&
-			difference.BeforeVerdict == difference.AfterVerdict && difference.BeforeRunEnd == difference.AfterRunEnd && allZero(difference.CountDelta) &&
-			allZero(difference.PhaseDurationDeltaMS) && allZero(difference.PrepareDurationDeltaMS) {
-			status = "unchanged"
-		}
+		status := traceDiffStatus(difference)
 		result.Evidence = append(result.Evidence, report.Evidence{
 			Kind: "trace-diff", ID: beforeID + ".." + afterID, Status: status,
 			Detail: fmt.Sprintf("events=%+d missing-sequences=%+d dropped=%+d run-end=%t->%t verdict=%s->%s",
@@ -187,6 +182,16 @@ func safeTraceName(name string) bool {
 	}
 	processID, err := strconv.Atoi(process)
 	return err == nil && processID > 0 && strconv.Itoa(processID) == process
+}
+
+func traceDiffStatus(difference trace.SummaryDiff) string {
+	if difference.EventsDelta == 0 && difference.MissingSequencesDelta == 0 && difference.EventsDroppedDelta == 0 &&
+		difference.BeforeVerdict == difference.AfterVerdict && difference.BeforeRunEnd == difference.AfterRunEnd &&
+		allZero(difference.CountDelta) && allZero(difference.PhaseDurationDeltaMS) &&
+		allZero(difference.PrepareDurationDeltaMS) {
+		return "unchanged"
+	}
+	return "changed"
 }
 
 func allZero[T comparable](values map[string]T) bool {

@@ -26,6 +26,7 @@
 # Set GOATEST_TEST_REQUIRE_TOOLS=1 in CI and the harness will fail instead.
 github.com/P4suta/go-mutants/goatest/cmd/goatest TestTheCLIServiceNamesWhatBelongsToTheMachine
 github.com/P4suta/go-mutants/goatest/internal/app TestATraceDirectoryIsJudgedByWhereItLands
+github.com/P4suta/go-mutants/goatest/internal/app TestReadingANamedTraceRefusesEveryRunItCannotTrust
 github.com/P4suta/go-mutants/goatest/internal/app TestAnEntryThatCannotBeStatedKeepsItsPlaceInTheLedger
 github.com/P4suta/go-mutants/goatest/internal/buildcache TestResolvingANativeSourceFollowsALinkToWhatItNames
 github.com/P4suta/go-mutants/goatest/internal/cache TestFlushDoesNotFollowAnEntryReplacedAfterValidation
