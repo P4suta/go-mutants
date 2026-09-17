@@ -48,3 +48,42 @@ func TestPlainProgressForgetsItsEstimateWhenAPhaseRestarts(t *testing.T) {
 		t.Fatalf("a restarted phase kept its old estimate: %q", buffer.String())
 	}
 }
+
+func TestPlainAnnotateReturnsTheDetailUntouchedOnEveryPathButTheEstimate(t *testing.T) {
+	t.Parallel()
+	moment := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+
+	for _, test := range []struct {
+		name    string
+		started time.Time
+		kind    string
+		detail  string
+	}{
+		{"a phase restart", moment, "mutation-target", "4396 mutants"},
+		{"a kind that carries no progress", moment, "baseline-progress", "12/34"},
+		{"progress that is not a fraction", moment, "mutation-progress", "starting"},
+		{"the first progress of a phase", time.Time{}, "mutation-progress", "1/1000"},
+		{"progress with nothing done yet", moment, "mutation-progress", "0/1000"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			renderer := &plain{writer: &bytes.Buffer{}, now: func() time.Time { return moment }, mutationStarted: test.started}
+			if got := renderer.annotate(test.kind, test.detail); got != test.detail {
+				t.Errorf("annotate(%q, %q) = %q, want the detail unchanged", test.kind, test.detail, got)
+			}
+		})
+	}
+}
+
+func TestPlainAnnotateForgetsThePhaseClockOnAMutationTarget(t *testing.T) {
+	t.Parallel()
+	moment := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	renderer := &plain{writer: &bytes.Buffer{}, now: func() time.Time { return moment }, mutationStarted: moment}
+
+	if got := renderer.annotate("mutation-target", "4396 mutants"); got != "4396 mutants" {
+		t.Fatalf("annotate = %q", got)
+	}
+	if !renderer.mutationStarted.IsZero() {
+		t.Error("a new mutation target left the previous phase's clock running")
+	}
+}

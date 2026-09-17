@@ -16,6 +16,30 @@ pre-commit:
       glob: ".github/workflows/*.yml"
       run: actionlint
 
+pre-push:
+  piped: true
+  commands:
+    1_check:
+      run: mise run check
+    2_published:
+      run: mise run build-published
+    3_integration:
+      run: mise run test-cost-integration
+    4_race:
+      run: mise run test-race
+    5_dogfood:
+      run: mise run dogfood
+    6_package:
+      run: mise run package
+    7_corpus:
+      run: |
+        dirty=$(git status --porcelain --ignored -- fixtures)
+        if [ -n "$dirty" ]; then
+          printf '%s\n' "$dirty"
+          echo "a run left something behind in the corpus" >&2
+          exit 1
+        fi
+
 commit-msg:
   commands:
     committed:

@@ -1214,15 +1214,27 @@ The things a change has to keep:
   The `commit-msg` hook and the CI lint job both run it. Pull request titles are
   conventional commits, because this repository squash-merges and the title
   becomes the subject on `main`.
-- **`lefthook`.** `mise run hooks` installs the pre-commit and commit-msg hooks.
-  Pre-commit runs the fast gates only — `mise run fmt`, `typos`, `taplo check` on
-  staged TOML, `actionlint` on staged workflows — so a commit never waits on a
-  full compile. The slow ones stay in `mise run check` and CI.
+- **`lefthook`.** `mise run hooks` installs the pre-commit, commit-msg and
+  pre-push hooks. Pre-commit runs the fast gates only — `mise run fmt`, `typos`,
+  `taplo check` on staged TOML, `actionlint` on staged workflows — so a commit
+  never waits on a full compile.
+- **Pre-push runs what CI gates on**, in CI's order and stopping at the first
+  failure: `check`, `build-published`, `test-cost-integration`, `test-race`,
+  `dogfood`, `package`, and the corpus gate. It takes about as long as the
+  workflow does, and that is the trade: a push that succeeds locally is a push
+  whose CI result is already known, so nobody waits on a runner to learn
+  something a laptop could have said. The one thing it cannot answer is the
+  other two operating systems, which is what the `platform-tests` matrix is for.
 
-Before pushing:
+So pushing is the gate, and this is what it runs:
 
 ```console
 mise run check
+mise run build-published
+mise run test-cost-integration
+mise run test-race
+mise run dogfood
+mise run package
 ```
 
 which is `fmt`, `build`, `build-published`, `test` and `lint` in CI order. Run
