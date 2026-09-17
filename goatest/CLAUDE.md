@@ -74,6 +74,7 @@ and the only question is when.
 | exported doc comments, and the paths and links inside them | the tree | `internal/devgates/docs_test.go` |
 | which files may start a toolchain | the build tags | `internal/devgates/tiers_test.go` |
 | package-level seams | `seam_allowlist.txt` | `internal/devgates/seams_test.go` |
+| the worker ceiling a run derives | the engine's, read from the tree beside this one | `internal/devgates/worker_default_test.go` |
 | which tests may skip | `skip_ledger.txt` | `internal/devtools/testaudit` |
 
 Adding a page that enumerates something means adding its ledger in the same

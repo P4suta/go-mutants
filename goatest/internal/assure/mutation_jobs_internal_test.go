@@ -4,9 +4,9 @@
 package assure
 
 import (
+	"runtime"
 	"testing"
 
-	gomutants "github.com/P4suta/go-mutants"
 	"github.com/P4suta/go-mutants/goatest/internal/config"
 )
 
@@ -33,10 +33,9 @@ func TestMutationJobLimitParallelizesLocalWorkAndSerializesExclusiveResources(t 
 	if got := mutationJobLimit(Options{MutationJobs: 3}, exclusive); got != 1 {
 		t.Fatalf("exclusive-resource mutation jobs = %d, want 1", got)
 	}
-	// The zero case is asserted by TestTheDefaultWorkerCountIsTheEnginesPublishedOne
-	// instead, against the engine's number. Bounding it by the runner's own
-	// derivation here would compare a function with itself and pass for any
-	// value it ever returned.
+	// The zero case is asserted by TestTheDerivedWorkerCountIsTheCapAndTheMachine
+	// instead. Bounding it by the runner's own derivation here would compare a
+	// function with itself and pass for any value it ever returned.
 	if got := mutationJobLimit(Options{MutationJobs: uncappedMutationJobs}, config.Config{}); got != uncappedMutationJobs {
 		t.Fatalf("explicit mutation jobs = %d, want 12: an operator's explicit choice is respected, only the default is capped", got)
 	}
@@ -61,24 +60,20 @@ func TestMutationProgressReportsFirstPercentMilestonesAndLast(t *testing.T) {
 	}
 }
 
-// TestTheDefaultWorkerCountIsTheEnginesPublishedOne pins the two products to a
-// single answer to a single question: how much of a machine a mutation run is
-// allowed to take.
+// TestTheDerivedWorkerCountIsTheCapAndTheMachine pins what a run takes when
+// nothing asked: the ceiling, the machine, whichever is smaller, never zero.
 //
-// They answered it twice. The engine's answer is [gomutants.DefaultJobs], and
-// it carries its argument -- a mutation run is a background chore that should
-// leave a laptop usable, so the derived count is the machine's clamped to a
-// ceiling. The runner's was a bare 4 with nothing beside it, and because the
-// runner always passes Jobs explicitly, the engine's number never applied: on
-// an eighteen-core machine the runner ran four workers and the engine's ceiling
-// was never reached, let alone consulted.
-//
-// This is the test two repositories could not hold. Neither half is wrong on
-// its own; what is wrong is that there are two of them, and nothing either side
-// could import would have said so.
-func TestTheDefaultWorkerCountIsTheEnginesPublishedOne(t *testing.T) {
-	want := gomutants.DefaultJobs()
+// That the ceiling is the *engine's* ceiling is a separate claim, and it is
+// held by internal/devgates, which reads both trees. It cannot be held here:
+// a run is built with GOWORK=off against the engine version go.mod pins, so
+// naming a symbol the engine gained after that pin would fail to compile in
+// exactly the build this package's own gate uses.
+func TestTheDerivedWorkerCountIsTheCapAndTheMachine(t *testing.T) {
+	want := max(1, min(runtime.GOMAXPROCS(0), defaultMutationJobCap))
 	if got := mutationJobLimit(Options{}, config.Config{}); got != want {
-		t.Fatalf("derived mutation jobs = %d, want the engine's published default %d", got, want)
+		t.Fatalf("derived mutation jobs = %d, want %d", got, want)
+	}
+	if got := mutationJobLimit(Options{}, config.Config{}); got < 1 {
+		t.Fatalf("derived mutation jobs = %d, want at least one worker", got)
 	}
 }
