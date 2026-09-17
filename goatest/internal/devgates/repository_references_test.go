@@ -17,7 +17,7 @@ import (
 
 // The repository-reference ledger.
 //
-// `P4suta/goatest` is two different things wearing one spelling. In an import
+// `P4suta/go-mutants` is two different things wearing one spelling. In an import
 // path it is where the code lives, and when this module is folded into
 // go-mutants every one of those is rewritten to
 // github.com/P4suta/go-mutants/goatest. As the name of a GitHub repository it
@@ -28,7 +28,7 @@ import (
 // pattern is. Of the five references this repository makes to itself as a
 // repository, four are spelled `https://github.com/P4suta/go-mutants/goatest…`, which is
 // exactly what a rewrite of import paths looks for; the fifth is a bare
-// `--repo P4suta/goatest`, which a pattern narrow enough to spare the four
+// `--repo P4suta/go-mutants`, which a pattern narrow enough to spare the four
 // misses. go-mutants found the fifth by rehearsing the migration and reading
 // the diff. This file is so that the other four are not found the same way.
 
@@ -38,7 +38,15 @@ const (
 	repositoryReferenceLedger = "internal/devgates/repository_references.txt"
 
 	// repositoryName is the spelling both meanings share.
-	repositoryName = "P4suta/goatest"
+	//
+	// It moved with the products. Before they shared a repository this was
+	// `P4suta/goatest`, and the whole point of the ledger was that the coming
+	// rewrite must not touch it; the rewrite has happened, the four files below
+	// name `P4suta/go-mutants` now, and the question the ledger asks is the same
+	// one it always asked -- which of these spellings is a repository and which
+	// is an import path. The import path gained a segment. The repository did
+	// not.
+	repositoryName = "P4suta/go-mutants"
 
 	// importPrefix precedes the spelling when it is an import path.
 	importPrefix = "github.com/"
@@ -168,7 +176,11 @@ func TestTheClassificationTellsAnImportPathFromARepositoryName(t *testing.T) {
 		{name: "import", content: `import "github.com/P4suta/go-mutants/goatest/internal/report"`},
 		{name: "module", content: "module github.com/P4suta/go-mutants/goatest"},
 		{name: "url", content: "see https://github.com/P4suta/go-mutants/goatest/releases", want: true},
-		{name: "bare", content: "gh attestation verify x --repo P4suta/goatest", want: true},
+		// The bare form README.md still carries, which names the archived
+		// repository on purpose: it is correct about the artefacts it
+		// describes. The row uses the current name because that is what the
+		// classifier is asked about.
+		{name: "bare", content: "gh attestation verify x --repo P4suta/go-mutants", want: true},
 		{name: "import-then-url", content: "github.com/P4suta/go-mutants/goatest/internal and https://github.com/P4suta/go-mutants/goatest", want: true},
 		{name: "absent", content: "nothing here"},
 	} {

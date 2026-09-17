@@ -71,3 +71,5 @@ keeps the number it was accepted under in its own Status line.
 | [0032](../../goatest/docs/adr/0032-instrument-the-test-binary-import-closure.md) | 0019 — Instrument the test binary import closure |
 | [0033](../../goatest/docs/adr/0033-bootstrap-cold-preparation-with-verified-local-work.md) | 0020 — Bootstrap cold preparation with verified local work |
 | [0034](../../goatest/docs/adr/0034-what-a-ledger-cannot-check.md) | 0021 — What a ledger cannot check |
+| [0035](0035-one-repository-two-modules.md) | The engine and the runner live in one repository as two modules joined by `go.work`, so that one proof is one pull request rather than a sequence of two with a version pin between them |
+| [0036](0036-the-runner-reaches-the-engine-through-its-public-api.md) | The runner's production code imports the engine's published API and never its `internal/`, which Go's path-prefix rule permits and a gate refuses |

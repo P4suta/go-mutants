@@ -38,7 +38,9 @@ const (
 	gitleaksConfiguration = ".gitleaks.toml"
 
 	// miseManifest declares the tasks CI runs.
-	miseManifest = "mise.toml"
+	// The repository's, one directory up: this module's own mise.toml was
+	// absorbed into it when the two products came together.
+	miseManifest = "../mise.toml"
 
 	// allowlistedPath is the shape an entry is allowed to take.
 	//

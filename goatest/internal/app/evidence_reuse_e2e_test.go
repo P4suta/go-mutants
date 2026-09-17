@@ -409,10 +409,31 @@ func TestChangingATestFileForcesTheSurvivorsThatTestReachesToRunAgain(t *testing
 
 	repository.File("unsure/unsure_test.go", changedSurvivingTestSource)
 	third := verifyRecordingWithExit(t, service, cli.ExitInsufficient)
+	// Settled again rather than executed again, because the two stopped being
+	// the same thing.
+	//
+	// The claim is that a changed test invalidates the verdicts that test
+	// supported. Executing the mutant was how that showed, for as long as every
+	// surviving mutant had a target to run it with; the engine now discharges a
+	// target that never infects the mutant, and a mutant every target is
+	// discharged from is settled without being run at all. Demanding an
+	// execution would demand that the runner ignore a discharge it just
+	// received -- and it would pass again the day the engine got worse at
+	// ruling targets out.
+	//
+	// What has to hold either way is that the old verdict is not carried
+	// forward, and the loop below is where that is asserted: no mutant of the
+	// changed package keeps `Reused`.
 	executed := executedMutants(third.events)
 	for _, mutant := range reusedSurvivors {
-		if !executed[mutant] {
-			t.Errorf("survivor %s was not executed after its test changed", mutant)
+		settled := executed[mutant]
+		for _, reported := range third.report.Mutants {
+			if reported.ID == mutant && !reported.Reused {
+				settled = true
+			}
+		}
+		if !settled {
+			t.Errorf("survivor %s was neither executed nor settled afresh after its test changed", mutant)
 		}
 	}
 	for _, mutant := range third.report.Mutants {

@@ -467,7 +467,24 @@ func evaluateMutationSeed(ctx context.Context, session MutationSession, mutant g
 	}
 	if len(seed.reaching) == 0 && len(route.discharged) > 0 {
 		options.Trace.Route(mutationSeedRoute(mutant, route, nil))
-		seed.evaluation.addFinding(mutant, "surviving-mutant", mutationDischargedSummary(route.discharged), options.Accepted)
+		summary := mutationDischargedSummary(route.discharged)
+		seed.evaluation.addFinding(mutant, "surviving-mutant", summary, options.Accepted)
+		// Recorded, like every other verdict this function reaches. It was not,
+		// and the omission stayed invisible for as long as the engine's
+		// discharge list was empty here: a mutant every target is discharged
+		// from is settled on this line, the report counts it a survivor, and
+		// with nothing written down the next run settles it from scratch. The
+		// symptom was a run that reused eight kills and no survivors, which
+		// reads as a broken cache rather than as a verdict that was never
+		// stored.
+		//
+		// It goes through the unreached recorder because that is what this is:
+		// no target reaches the mutant. The branches above say so when the
+		// suite's own coverage or probe says so; this one says it when every
+		// target that executed the block was discharged — the same fact
+		// established by a different instrument, and invalidated by the same
+		// suite key.
+		options.Evidence.recordUnreached(mutant, route.suiteWholeTree, "surviving-mutant", summary)
 		seed.resolved = true
 		return seed
 	}

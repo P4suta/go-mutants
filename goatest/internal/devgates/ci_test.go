@@ -26,7 +26,11 @@ import (
 const (
 	// workflowPath is the workflow that runs the checks, relative to the module
 	// root.
-	workflowPath = ".github/workflows/ci.yml"
+	// One directory above this module. The workflows moved to the repository
+	// root when the two products came together: GitHub reads only the root
+	// .github, so a copy under goatest/ would be a workflow that never runs
+	// and a gate that checked it would be checking nothing.
+	workflowPath = "../.github/workflows/ci.yml"
 
 	// ciDocumentation is the page that describes them.
 	ciDocumentation = "docs/ci.md"
@@ -44,6 +48,19 @@ const (
 // miseTaskInvocation captures the task name of a `mise run` step.
 var miseTaskInvocation = regexp.MustCompile(`mise run ([a-z][a-z0-9-]*)`)
 
+// The workflow this module is checked by is the repository's, one directory up.
+//
+// Two of the gates that lived here are gone rather than repointed:
+// internal/testkit/cidoc_test.go asks the same questions of the same file --
+// every job is documented, every mise task a job runs exists -- and asks them
+// of docs/ci.md, which is where both products' jobs are now described. Two
+// ledgers over one file is two things to keep in step, and the one that reads
+// goatest/docs/ci.md would have reported the engine's jobs as undocumented.
+//
+// What stays is what the engine's does not ask: whether a job that reads
+// history asked for the history, and whether a job that runs a mise task
+// installed mise.
+
 // workflowJob matches a job name: two spaces, a name, a colon, end of line.
 //
 // The same shape appears under `on:`, where `push:` is a trigger rather than a
@@ -57,23 +74,6 @@ const jobsKey = "jobs:"
 
 // backquotedName matches the first `name` of a documentation row.
 var backquotedName = regexp.MustCompile("`([^`]+)`")
-
-func TestEveryWorkflowJobIsDocumented(t *testing.T) {
-	t.Parallel()
-	root := repositoryRoot(t)
-	jobs := workflowJobs(t, filepath.Join(root, filepath.FromSlash(workflowPath)))
-	documented := documentedJobs(t, filepath.Join(root, filepath.FromSlash(ciDocumentation)))
-	for _, job := range jobs {
-		if !slices.Contains(documented, job) {
-			t.Errorf("the workflow runs job %q and %s does not describe it", job, ciDocumentation)
-		}
-	}
-	for _, job := range documented {
-		if !slices.Contains(jobs, job) {
-			t.Errorf("%s describes job %q, which the workflow no longer runs", ciDocumentation, job)
-		}
-	}
-}
 
 // TestEveryJobThatReadsHistoryAsksForIt is the shallow-clone gate.
 //
@@ -96,6 +96,7 @@ func TestEveryJobThatReadsHistoryAsksForIt(t *testing.T) {
 	var shallow []string
 	job := ""
 	depth := false
+	checksOut := false
 	inside := false
 	for _, line := range strings.Split(string(data), "\n") {
 		if line == jobsKey {
@@ -106,17 +107,24 @@ func TestEveryJobThatReadsHistoryAsksForIt(t *testing.T) {
 			continue
 		}
 		if match := workflowJob.FindStringSubmatch(line); match != nil {
-			if job != "" && !depth {
+			if job != "" && checksOut && !depth {
 				shallow = append(shallow, job)
 			}
-			job, depth = match[1], false
+			job, depth, checksOut = match[1], false, false
 			continue
 		}
 		if strings.Contains(line, "fetch-depth:") {
 			depth = true
 		}
+		// A job that never checks out has no clone to be shallow. The
+		// aggregate job is one: it waits on the others and reads their
+		// conclusions, and asking it for history would be asking it to fetch a
+		// repository it does not look at.
+		if strings.Contains(line, "actions/checkout") {
+			checksOut = true
+		}
 	}
-	if job != "" && !depth {
+	if job != "" && checksOut && !depth {
 		shallow = append(shallow, job)
 	}
 	if len(shallow) > 0 {
@@ -247,27 +255,5 @@ func TestEveryJobThatRunsAMiseTaskInstallsMise(t *testing.T) {
 			"The task exists, is correct and is pinned by a ledger; the job still fails\n"+
 			"on `mise: command not found`, and only the workflow can tell you.",
 			len(broken), strings.Join(broken, ", "))
-	}
-}
-
-// TestEveryMiseTaskTheWorkflowRunsExists is the other direction.
-//
-// A job naming a task that is not there fails the same way and reads the same:
-// a step that was never run against the file it names.
-func TestEveryMiseTaskTheWorkflowRunsExists(t *testing.T) {
-	t.Parallel()
-	root := repositoryRoot(t)
-	workflow, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(workflowPath)))
-	if err != nil {
-		t.Fatalf("read %s: %v", workflowPath, err)
-	}
-	tasks, err := os.ReadFile(filepath.Join(root, "mise.toml"))
-	if err != nil {
-		t.Fatalf("read mise.toml: %v", err)
-	}
-	for _, match := range miseTaskInvocation.FindAllStringSubmatch(string(workflow), -1) {
-		if !strings.Contains(string(tasks), "[tasks."+match[1]+"]") {
-			t.Errorf("the workflow runs `mise run %s`, and mise.toml declares no such task", match[1])
-		}
 	}
 }

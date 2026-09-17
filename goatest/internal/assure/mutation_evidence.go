@@ -539,8 +539,23 @@ func (collected *MutationEvidence) exhausts(exhausted []evidence.TargetKey, reac
 	return true
 }
 
+// suiteAnswers reports whether a record made when nothing reached the mutant
+// still answers for this run.
+//
+// A target that reaches it is what invalidates the record: the suite's answer
+// was "nobody runs this", and a target that now runs it makes that answer stale.
+// A *discharged* target is the opposite -- it is the engine saying this target
+// cannot observe the mutant, which is the same conclusion the record holds, and
+// refusing the record for it would throw away evidence because the engine got
+// better at agreeing with it.
+//
+// It used to refuse exactly that. The condition was written when a discharge
+// list was always empty here, so "no reaching targets and no discharged ones"
+// and "no reaching targets" were the same test; the engine now discharges a
+// target for never infecting it, and the two came apart. The symptom was a run
+// that reused eight kills and no survivors.
 func (collected *MutationEvidence) suiteAnswers(mutant gomutants.Mutant, suite *evidence.SuiteKey, route mutationRoute) bool {
-	if suite == nil || len(route.reaching) != 0 || len(route.discharged) != 0 {
+	if suite == nil || len(route.reaching) != 0 {
 		return false
 	}
 	return suite.Package == mutant.Package && collected.suiteMatches(mutant.Package, *suite)
