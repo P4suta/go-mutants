@@ -29,318 +29,318 @@ exclude = ["**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"]
 
 
 [[mutation.expect]]
-id = "955ef7519b8fd9e564bf20a0e8c11f7b899298708405716e59b20b7fd50c680f"
+id = "63a1e906c55ca93c330fe7b05f5bfa23092bf95241be4c7e7f954a2cb6a7e2a3"
 reason = "Equivalent: Len returns 0 through the guard for a reversed span and EndByte - StartByte otherwise, and that difference is 0 exactly when the bounds are equal, so `<` and `<=` report the same length for every span."
 
 [[mutation.expect]]
-id = "a36a082afb5fca17a6bb2cf7c01fe2e8b453981e3b3510ae210a1ea45e7e43b4"
+id = "7dcef76e4f6c796661772109a65a128b66f3834ead660b1d254dd6b075830c1d"
 reason = "Equivalent: the comparison sits inside `case s.StartByte != other.StartByte`, where the two start bytes are already known to differ, so `<` and `<=` are the same test."
 
 [[mutation.expect]]
-id = "b63d62e41a5d70323435d0afca6657cf9944e117196607b3120ddf74dbf399c4"
+id = "23f02e67610ceead08de5fd218a016e31dea7cc57b7750e6e32627657b67aa0a"
 reason = "Equivalent: the comparison sits inside `case s.EndByte != other.EndByte`, where the two end bytes are already known to differ, so `<` and `<=` are the same test."
 
 [[mutation.expect]]
-id = "d5ba43b8ceeec3f48f3b5262604413739e76abeb5feecb5bc7b1a8c5791758a2"
+id = "c5d9892fd86b594f80fb513f5fb23a2b9641db022bc0fa5e6eb21095a5df1af8"
 reason = "Equivalent: `>= 2` and `> 2` differ only for two-byte paths; a letter plus colon is rejected by the identical post-clean volume guard immediately below, and every other two-byte path fails the colon-or-letter predicates."
 
 [[mutation.expect]]
-id = "35ce0eb062fee7958fdaa4bcb7260df0ba8a8d343da3ec1a6950418f8e5ff778"
+id = "8bda417a0eca8af4770505097675d140aecae223c86a85b0f15f9aeaa22dae9f"
 reason = "Equivalent: the comparison sits inside `if x.position != y.position`, where the two registry positions are already known to differ, so `<` and `<=` are the same test."
 
 
 [[mutation.expect]]
-id = "bf3c329fd370fabe17a97258e57d7b44e5f90618221ed4e6e801d328f49b5b63"
+id = "fdd9258e38596caab607adb387e8e3b442aac76be8405a4505818e79201e7fb7"
 reason = "Equivalent for every coherent tally: `p.MinimumScore > 0` and `>= 0` select different runs only when the floor is exactly zero and the score is negative, and a negative percentage needs a negative Detected count, which Score.Validate reports as incoherent."
 
 
 [[mutation.expect]]
-id = "b4dcab268c877bd71d01b2be2d2cc005e6868eec52e27d23a68c87d0ea369739"
+id = "736038ee1234930ef01739c62400e9df1d4121ca8c86946acb47062347206829"
 reason = "Unreachable: Build only ever sees candidates Add accepted, and Add calls Registry.Verify, which refuses exactly the names Registry.Position cannot find -- both read one immutable map -- so nothing a caller can build reaches this return."
 
 
 [[mutation.expect]]
-id = "8f73cb5106525601c9898a33c0a33bd0aaf67690f5e37a3b95a5ca50a46b16ab"
+id = "937a379c59ead6d9ca282c7df556b023e9b0bd1ed7fd90fb4478870fa4b5b72e"
 reason = "Unkillable: `>` and `>=` pick different catalogues only at exactly math.MaxUint32 queued candidates, which is 4,294,967,295 Candidate values in one builder."
 
 [[mutation.expect]]
-id = "51376013649354a5072791c005192247af1cd6964f3459e3c264e7e8f088a3d2"
+id = "8bba1e45a52462a8f8b30600d2d945b3c9cd8a21d6a01ecfdc3c4910273f23b0"
 reason = "Unkillable: this return is reached only past math.MaxUint32 queued candidates, so killing it means holding more than 4,294,967,295 Candidate values in memory."
 
 [[mutation.expect]]
-id = "9ee39a1c98481eec850ea7e78d8de028cf8dbcd09a2d41d46b677502fc34cd15"
+id = "bf29041b7fceaaccc219e0b33d3cf187256b053b7698c9b550a6d3e1c154f964"
 reason = "Unkillable: Build only sees candidates Add validated and Candidate.ID re-runs that same validation, so the only error left for this branch to catch is WriteLengthPrefixed's 4 GiB field guard -- see the id.go rows below."
 
 [[mutation.expect]]
-id = "80e96a4140688f46c6f781c5fec24b7d623e97739683e6d037743c62b739f628"
+id = "ce7a4344bcd0f7307ca93b419987e0b71b65c6e902d4f35fdac93b73edee0f96"
 reason = "Unkillable: the same branch as the row above -- the error this forwards can only come from WriteLengthPrefixed's 4 GiB field guard."
 
 [[mutation.expect]]
-id = "4048137c5cda94871d25333cbbd0fef42c6bf9e6c6b00722076033927bc7cd99"
+id = "c25d16b9ed17f150c6ae5b0aa3aab455c3994bd0024749668a990d6ef6bf0d0d"
 reason = "Unkillable: WriteLengthPrefixed fails only on a field longer than math.MaxUint32 bytes, so entering this branch means hashing an identity whose path is four gigabytes long."
 
 [[mutation.expect]]
-id = "b711b52d46960264ad9591954ac72680f090f69b50c5c7aceb9078ef7041afbf"
+id = "28e810b9251e0abdb5cfba3ef5161458cd940ad6c4155f2999b07bd3c1ada3f5"
 reason = "Unkillable: the same branch as the row above -- the error this forwards exists only for a field longer than math.MaxUint32 bytes."
 
 [[mutation.expect]]
-id = "50409bd12cbfea335c1dd45447c5b4f601c6505f98c27d9fd31493b675d08c04"
+id = "d0e80f82fc7edffddc96d2ade9ad7f5427c3246e442558e3cf99857806b0d17b"
 reason = "Unkillable: `>` and `>=` disagree only on a string of exactly math.MaxUint32 bytes, so telling them apart means allocating four gigabytes in a unit test."
 
 [[mutation.expect]]
-id = "92e9574107376c1afa97d9ff5df887c728bab442f93e44bdfc67d72bea7b4491"
+id = "5702365bce3a40457d569258bb64ee318cfcaa69186d1fb5719586b473af5f61"
 reason = "Unkillable: this return is reached only for a string longer than math.MaxUint32 bytes, so killing it means allocating more than four gigabytes in a unit test."
 
 
 [[mutation.expect]]
-id = "c62feb25adb23b4853bae49beff0089f2c8c22abf5df8efe102b46d24bd431fa"
+id = "bae100d6ea8bb1ef5dceadec8026d2d077aaa21d0a49580d3a248e2843ed25b9"
 reason = "Equivalent: the loop ends at the first unterminated line, and an empty body is that case -- bytes.Cut finds no separator and reports none -- so the extra pass `>=` admits breaks before it reads anything. The condition is kept over `for {}` because dropping it makes two mutants of this package never return."
 
 
 [[mutation.expect]]
-id = "a7e26cc710d6d039d7a07f34372091e88609a3048b28989f1984e562e49132c4"
+id = "1f966be03c40e24842479967bb29897c83776ce47c38ff6d99dadcdc4eb28e85"
 reason = "Equivalent: a pair where exactly one path carries a drive letter differs at the colon, which has no case, so EqualFold and == answer alike on it -- the third disjunct therefore never decides anything the first two did not."
 
 [[mutation.expect]]
-id = "33219d74e940b3e1acb3284a933da1efa0aa3fb4a88bb557ba646d8647006d37"
+id = "fa492c2a6743cff85732bef6967a4f69b80bed30a6e69f1530ced2ae8c852548"
 reason = "Equivalent: blame over an empty pending set answers an empty list, so `> 0` and `>= 0` set the same blame on every build; the guard is there to skip parsing the compiler's whole output on a trial build, which is a cost and not an answer."
 
 [[mutation.expect]]
-id = "de23a2cf021b43d2badd29756cbf1dcfe884a26bdf15b94efdce60203c407939"
+id = "f21d190813faef5b2eaae1c26e59c12240920a506cd3335fbc331cba9a431ea6"
 reason = "Unreachable: the loop is bounded at one pass per catalogued file and every pass decides at least one of them, because blame never answers an empty list while anything is pending -- so the search always returns from inside it."
 
 [[mutation.expect]]
-id = "470a4164cf833f4ac1857da0d7507a33fda8102d2281aa212767a98fda5d1913"
+id = "2788ee073fdb997aa1ce09bc5e9d2693d67e2c14d34d4f260958c68c05572297"
 reason = "Unreachable: the other half of the same backstop, which exists so that a search wrong about its own bound fails closed rather than falling out of the loop."
 
 
 [[mutation.expect]]
-id = "178b97acbd70a6e3d8d66a4203907e5e6c453942fd9724969e9508224bdb9cde"
+id = "87f3943de1449a1bd835a568d55a2b9d30cbc4b7705b47298eebf82e9c844f29"
 reason = "Unkillable: WriteLengthPrefixed fails only on a field longer than math.MaxUint32 bytes, so entering this branch means hashing a cache context with a four-gigabyte field in it."
 
 [[mutation.expect]]
-id = "78e42a1d3dceb4e17822dcfc650bf6b87d4abb615f0eae88c4d01a19aa054892"
+id = "2dc4c66415f81f6cb864ca00bd999e1c422e9d4fd80016765a75e558287aa12d"
 reason = "Unkillable: the same branch as the row above -- the error this forwards exists only for a field longer than math.MaxUint32 bytes."
 
 [[mutation.expect]]
-id = "a3af81438206ae8739b803f35805b20afda8af63df16b7a3d99162c42c4f9642"
+id = "8ba942b76f47b912633ee5289a96460bd158a92f1b72c82703557e50e596d43c"
 reason = "Equivalent: the listing this guards is of the same directory the emptiness check lists a few lines below, with the same call and the same message, and a context whose files could not be listed always reaches it -- so removing the guard reports the identical failure one step later."
 
 [[mutation.expect]]
-id = "95faf75f2c64af748f7536c8c41640c425ba79013e1c45a5ff89291b0633b2cc"
+id = "b6e6c41f69f9919cab15ce9fab23a9a951ae4d985ebcedcd9deee987f2cff50d"
 reason = "Equivalent: an entry with no recorded bound falls through to the default case at the same answer, because `limit <= 0 || limit >= 0` is true for every limit -- so `<=` and `<` choose different branches and the same value."
 
 [[mutation.expect]]
-id = "6b25c77ddaea960c98f7f47a7542d81a090ba36e857b188dba00ce366d56937a"
+id = "308cdd4c44d8b2fbdb10f6d9aceb26953e05dc4d74d2ef23d76605d9c38ba68f"
 reason = "Unreachable: an Entry is strings, integers and booleans, and encoding/json has no failure for any of them."
 
 [[mutation.expect]]
-id = "3d5b658b0f2a748f2dff487866aa7a00c135148e00e1b8af21859a1a06fa10ff"
+id = "d18ef4d5d206178071c8a43676d4d524678d7ece23a5e4c9e458f053051065ae"
 reason = "Unreachable: the other half of the same branch -- the diagnostic returned for an encoding failure an Entry cannot produce."
 
 [[mutation.expect]]
-id = "ae57268dbc443d0849142ad360c336d9ee6e64bf3f5b537f5a161ec486ae2772"
+id = "e34e7bb4d13fcfda70f9f62a03e36828b9bb6d914fec5d17a6a92598f23cbbcb"
 reason = "Unreachable where this gate runs: filepath.Rel refuses a pair only when the two carry different volume names, which no POSIX path does, so both paths here are always relatable."
 
 [[mutation.expect]]
-id = "cc90d65f7ef4b7eade866a06159727d6c18cbcc33b1c03d625611be0865f9e1c"
+id = "2113fc62cde4f5b998ff113870a78ada0471a46cd7e1fd90f416037b7b33dd4b"
 reason = "Unreachable where this gate runs: the same branch as the row above, and the answer it gives -- not inside -- for a pair of paths POSIX cannot produce."
 
 
 [[mutation.expect]]
-id = "2c78e03a0b19dc9c4f3d9eb22bb93db43537fdbfdb131caa5bc0463ba7ec1514"
+id = "a8b8857970b7bcc218c62c335699534b5f163bbd158bc0c0755837eec974daa4"
 reason = "Unreachable: the pattern compiled here is path.Clean's output over a path NormalizePath already refused as empty, absolute or escaping, which is exactly the set glob.Compile refuses, so the error is never non-nil."
 
 [[mutation.expect]]
-id = "6a4676e98aaa8526c1284169f03fb9f2107c75459398ac05554b4a8ad9be9e4d"
+id = "bcb51e8c7a8cf07131f095a6b668303815866c4a2c0363ce5bc86291b8b5a6a8"
 reason = "Unreachable: the other half of the same branch -- the diagnostic returned for a glob.Compile failure that no configured report directory can produce."
 
 
 [[mutation.expect]]
-id = "295ac61dc1070bb46e7ab92c1e86bd2ee36fca2f62fc6c9eb38ed4321f8abdb6"
+id = "66d1e8ba07846d8e6e62a0c346ec758e7fb4130126a8a63fee05d03a92452a15"
 reason = "Unreachable: compileErr is set only when an embedded schema cannot be read, parsed, registered or compiled, and TestEveryRegisteredSchemaCompiles asserts that none of that happens in this build, so this branch is never taken."
 
 [[mutation.expect]]
-id = "336a552a99637e3c828315c82c1aeb4b7799408d2487e8cbbc141a197f37b96f"
+id = "bc6cb579c2249ec905a3f95105a492e0322818badc06cf72b5857943adf82bcd"
 reason = "Unreachable: the return the row above guards, reported `survived (uncovered)` because no suite reaches a line that needs compileErr to be non-nil."
 
 [[mutation.expect]]
-id = "4708535aab7682d2dc1d18e8eaff87bd421320b4f8dc37ec779d2e9396caed68"
+id = "64b8043bb941e0bd53425424d71ab64a2ab6096937106ca59f91dd15cfe0ddac"
 reason = "Unreachable: compileAll compiles every type in the registry and schemaFor looks up that same registry, so the lookup cannot miss; TestEveryRegisteredSchemaCompiles asserts it for every registered type."
 
 [[mutation.expect]]
-id = "22317ee75356784b2d3f6f6020c61fb057c293c9efcadf1661d2334102a46f4f"
+id = "2ca1d6d5543ed090af2ccb808b0a2071ae804de13dacf15896661260ab1b155d"
 reason = "Unreachable: the file is read out of an embed.FS fixed at build time, and TestEverySchemaIsRegistered plus TestEveryRegisteredSchemaCompiles assert that every registered name is a file in it, so ReadFile has no failure left to return."
 
 [[mutation.expect]]
-id = "983e4a7be022f5a81f7a2424e633df8f9dd3342bf39267fe402aea8a652ff946"
+id = "c1972268c628e136e4ccd23c15d3b54c652cb353714c9fbe026585365d8c4d4f"
 reason = "Unreachable: the bytes are an embedded schema this repository's own tests parse and compile, so they are JSON in every build TestEveryRegisteredSchemaCompiles passes on."
 
 [[mutation.expect]]
-id = "7b561b5eb571a361eb8ea3d21349b46a8e990671a626f18c1e4dfd42c56d7efa"
+id = "4eb53988b253b11373222ceb761f2240c3bd64faf924b2f7bab5a104c3db5c45"
 reason = "Unreachable: AddResource fails on a resource identity it cannot parse, and TestSchemaIDsMatchTheirFilenames pins every embedded schema's `$id` to `baseURL + <file>`, which is a URL by construction."
 
 [[mutation.expect]]
-id = "93496397d7258d8d0a08b1cf9aa3052f278d227f69742ad593c9288bf4fb2271"
+id = "ec21b71d83ed1f1c3255af508576641a71ce50054896e139d7a22a8dab39093e"
 reason = "Unreachable: every registered schema compiles, which is exactly what TestEveryRegisteredSchemaCompiles asserts by requiring an invalid document to come back GOM5003 rather than GOM5004."
 
 
 [[mutation.expect]]
-id = "72a676ff09f4a94e5850bc2855a77eed08498a3a9951bf6aafba3d34f8eae199"
+id = "83bab2ecab55e5d8105d9b8267ebba5284e1dbba67b13da72dba48f8cf121986"
 reason = "Equivalent on every platform: `v > int64(maxInt)` and `v >= int64(maxInt)` select different branches only at exactly int64(maxInt), where the guard returns maxInt and falling through returns int(v) -- and int(int64(maxInt)) is maxInt, so both spellings narrow every int64 to the same int."
 
 [[mutation.expect]]
-id = "f1375e0c836da7e46f14c5788834f2f0a7b57483ed7440702b35ff47ce62ae48"
+id = "bb4881aeb76c75dc7a33f524184d516f6002e69606a33dcc0211e4726186e463"
 reason = "Unreachable on a 64-bit build, which is every platform this gate runs on: maxInt is int(^uint(0) >> 1), so int64(maxInt) is math.MaxInt64 and no int64 is greater than it. Killing it means running this package's suite on a 32-bit GOARCH."
 
 [[mutation.expect]]
-id = "b98799291e0028980030250a093df8ccd7d72b035a62413617fc68daf7a23dcc"
+id = "59f68100b6fcbf8d0c15d1f6bc36307e4ff710a070cfdbcd4be1a3f33d347b1a"
 reason = "Equivalent on every platform: the same argument as the `>` row above, at the other end -- `<` and `<=` disagree only at exactly int64(minInt), where the guard returns minInt and falling through returns int(v), which is minInt."
 
 [[mutation.expect]]
-id = "1304b960e5bd3013784f5fe65e01eb37216b0a393b03bdec3e91452239452879"
+id = "548d95eaf64c8c79c720c2c170b65f84b2ce811b50d849ad0b962cc9340bff57"
 reason = "Unreachable on a 64-bit build: minInt is -maxInt - 1, so int64(minInt) is math.MinInt64 and no int64 is less than it -- the mirror of the maxInt row above, and reachable on the same 32-bit GOARCH."
 
 
 [[mutation.expect]]
-id = "46ef76f3f811345c6c702668727f2cedc4c61b27e6fa2bf22bc62a3cf6bcafb3"
+id = "0c862985d074d905f6c8377a8b8bfe213322c20cb8bd38643cb7fdeca2ec23a2"
 reason = "Unreachable: parseVersion has four failure returns and every one of them is a *Error carrying CodeVersionUnparsable, so errors.As above always matches and this forwarding return is reached only by an error kind parseVersion does not produce."
 
 [[mutation.expect]]
-id = "fd35bbae14be8dba2102f162903a0fa5a584eb2053e6912dfe699fe7b932d82a"
+id = "03c9300fb2b8bffe6a9165115e33ac08527c9c1085542f220c070001aa084560"
 reason = "Equivalent: strings.Builder.Grow is a capacity hint and the page is the same bytes for every non-negative size, and the vendored viewer is 232 KiB, so len(bundle) + len(document) - 4096 is positive for any document at all."
 
 [[mutation.expect]]
-id = "bbfcab281ea349926b937be3a29e330e4f9c8bf514578783b28925c909be902f"
+id = "537360e0ca9e43f59ac1b74e160e9df40152c9d1803922c174c1bfb8eaff3cba"
 reason = "Equivalent: the second argument of make is a capacity hint, the runtime clamps a negative one to zero, and a map holds the same entries whatever it was sized for."
 
 [[mutation.expect]]
-id = "b8a044ec89ef836a0c34a8fc4a47627bbd86413532e2f0e4563556a47ca73c36"
+id = "3d10c13b02b7590eaa90c386d6df6bb599dcade5784ac7f161c48803d27b5a58"
 reason = "Equivalent: the guard reports 0 for a negative duration and d.Milliseconds() otherwise, and a zero duration is 0 milliseconds through either branch, so `<` and `<=` render every duration the same."
 
 [[mutation.expect]]
-id = "6c38067b0f768ec5b894b66b4ea2465739b49ef09ffca79748c52b2413d05291"
+id = "0561dd5caa6ea6b62ed57014d125936b62bb32bb529211abf2183968a55ff84b"
 reason = "Equivalent: `<=` and `<` disagree only for an id of exactly DisplayIDLength characters, where returning `id` and returning `id[:DisplayIDLength]` return the same string."
 
 [[mutation.expect]]
-id = "55b4489eeea46a29597c06a15f0ab46ee06988b3755c5fce9b076fb2c91f26e0"
+id = "08b789f806c05e2f1a2b2d633caf030645ea860fd724c9a62e10670aeb49fb82"
 reason = "Equivalent: the walk keeps the lexicographically first instance location, and `at <= best` differs from `at < best` only in assigning best the value it already holds."
 
 [[mutation.expect]]
-id = "bbbb8eb333d7f546978aea2dadaf1a933363f67bb006a25fc671cda4eb741113"
+id = "cd39e4233937817547b07ab4f5b9d8562df8ed18ee6b9f23ae80109bf66121d6"
 reason = "Equivalent: the guard clamps a negative offset to 0, and `<=` also assigns 0 to an offset that is already 0."
 
 [[mutation.expect]]
-id = "64e37450b6a2dee0065f78a72587c80f187a874aadfe8a856ef04297039eb3b0"
+id = "16359325f65504f03b5a3827c9bf1c5edadc323790ddf9f5f651311f2420b3ef"
 reason = "Equivalent: the guard clamps an offset past the end of the file to the end, and `>=` also assigns len(src) to an offset that is already len(src)."
 
 [[mutation.expect]]
-id = "1a926fd09a5fc77db4d9e9b56d16cb92e296ecb00a21ffaa195c2177256c654f"
+id = "6b9212715cf6fa58919b35a1b7c1e1e262757bda7af76a00060eaccc24c2f975"
 reason = "Equivalent: sort.SearchInts is asked for the first line start greater than the offset, lineStarts[0] is 0, and an offset is never negative -- so the search never answers 0 and neither `<= 0` nor `< 0` is ever true."
 
 [[mutation.expect]]
-id = "a6a6ea9f7db60d246a0176b526b6cf74844161502dedcb114b9262b99fda5361"
+id = "30e374c24b09485dfa9e84cc9ecdbc8f24c0c7f9ced991f2cac06afab1e14f65"
 reason = "Equivalent: the guard clamps a line index below the first line to 0, and `<=` also assigns 0 to an index that is already 0."
 
 [[mutation.expect]]
-id = "0a204388d50d6c0cc0a29d3090e47ec2f92586ad32ee54441891f98046e8a9f9"
+id = "193067418c252a5d83ad85cac65d028c295d1fffb86e7c65617240176125ee77"
 reason = "Equivalent: the guard clamps an offset past the end of the file to the end, and `>=` also assigns len(src) to an offset that is already len(src) -- the same argument as the position row above."
 
 [[mutation.expect]]
-id = "ae0161ad8ee89960b3662744c45c54d29be0ca4c1cdabebae32bcb68a5059903"
+id = "bdae57232f4e20a6646b765768f713c1daf80ef03a49543c85fe1ff71bcc4305"
 reason = "Equivalent: a rejected mutant's disposition carries no outcome, and StateOf answers `unfulfilled` through the Rejected case and through the default alike, because the zero Outcome is not OutcomeSurvived. Nothing else reads the field."
 
 [[mutation.expect]]
-id = "002afe29b7c3fb9e845e6f63116ad42c7a504b57af71887cdf80b58a2599b833"
+id = "a0bfcfed8548a3e763634afb0403fef00a9bf4e9c2096d209d93a3624834ac6e"
 reason = "Equivalent: the `existed` flag is read only by the rollback that puts a document back, and a caller handed this error returns before there is a rollback to run."
 
 [[mutation.expect]]
-id = "2eae8639701f83ff91784fa2b1ebdedf86cd7740e63f5e659be7a7a75706f2b5"
+id = "20b2bab24afa3e98c5dd94f465f67e69a21f9d42c8bb7b834eb6e0c310542866"
 reason = "Equivalent: both callers impose a total order of their own on what this returns -- readWorkspace sorts the runs by NewestFirst and the damaged rows by path, and RemoveRuns only counts them and their bytes -- so the order the files come back in is not observable."
 
 
 [[mutation.expect]]
-id = "f7f2f309e71e2e75ca768e62892ff91ec8da0f25d51e3c6c3e87d54a2197a877"
+id = "62aaecaf36390de08849eea95d98e84cb596ef5de4278cfe02f39d7116020f62"
 reason = "Unreachable: partition has already translated every result's outcome through OutcomeOf, which refuses anything outside the six, and mutation.Tally records all six -- so the count this forwards cannot fail."
 
 [[mutation.expect]]
-id = "3e485fa52d4a347e50d37e6f796886037c4de50c93e61d33a87e2a1fa8b047fb"
+id = "fd4d5fffe8432a3f7e5199f397fa1648d9b6c7f79f9e6df7bb1e8c5e2a15aab4"
 reason = "Unreachable: the same failure as the row above, on the line that would forward it."
 
 [[mutation.expect]]
-id = "729594b43b59263117abc577b9e89a7f9e5df929da05ad4b388155941f1cb899"
+id = "f7fbf9906bdf5748aed49004b7d8c4ceaa4428ace02763ca76ce3f0b5fd346ab"
 reason = "Unreachable: the same argument one level in -- tallyOf reads the outcomes partition has already accepted, so mutation.TallyOf cannot refuse one."
 
 [[mutation.expect]]
-id = "843cfbe940c050890bfcd26512ab928636286c69d45c7a5643fb37047cf5f0e7"
+id = "e4bfb4acf577ec3f511dc721f4cde7cee31492f1d53ceda5e923aedb9db112ee"
 reason = "Unreachable: the same failure as the row above, on the line that would report it."
 
 [[mutation.expect]]
-id = "b1b722fecea45bc80b1ea88df100a93153fd6cae7caafe08b02a61e38185c40b"
+id = "66af75bbdd630c07f7cb8b3d1ef90ce132aa7d4e722189a6ddf8fa42d7a708d0"
 reason = "Unreachable: Outcome.Mutation answers with one of the six core outcomes or with an error the line above returns, and mutation.Tally.Record has a case for all six."
 
 [[mutation.expect]]
-id = "ffb56e7c15223a5bb71d3606b2bf7e9b5dae52da8bdb7d57f3e3a4f9502db35a"
+id = "4279395c04cf49390dea30df4bde29505dc9215aebb96c7746056af2c89ea7f6"
 reason = "Unreachable: the same failure as the row above, on the line that would report it."
 
 [[mutation.expect]]
-id = "3f796fb632e674c7310a4d6cc295e5bd577c4e7ee5d1aec5030a526b901432cc"
+id = "405c26a62bfa4c1bace6ce37e920197c5eca156c86d27b21df86541cf4e709e2"
 reason = "Unreachable: the counts disagree only when a row was not consumed by the catalogue walk, and a row is consumed exactly when its id is catalogued -- so the loop above always finds the row this line exists to report the absence of."
 
 
 [[mutation.expect]]
-id = "a4cb8ec614f9f03fbba05e82032b94b78bedba750da641ef8ad546b52bce183b"
+id = "f3cc94e26231d98ddc19672b181add116d54b3ec9ea1b581d853c34e8265dab3"
 reason = "Unreachable: every module's report has been built or merged by the time this runs, and a report that was is one whose every outcome mutation.TallyOf accepted -- so the aggregate over those same outcomes cannot fail. Both constructors return through this one line, which is why it is declared once rather than at each of them."
 
 [[mutation.expect]]
-id = "10a21695dcf7b185c5de1f3d8c5c9acdbbdb8edb74aec727750664822db3ad1b"
+id = "72380a881c7538f1bff6c85fc6215f54dcd24bb222f8fa85d3305b848d6c7d75"
 reason = "Unreachable: the same failure as the row above, on the line that would forward it."
 
 
 [[mutation.expect]]
-id = "93e0d4258830b5b7507f36a5d38b06e1e8d110710014ef8826edef672017c2ea"
+id = "032fcf80ffddb8f876135bcc03fd78691de4a9a0ba918dbfe4639a6eee404e92"
 reason = "Unkillable: encoding/json fails only on a value it cannot represent -- a cycle, a channel or function field, a non-finite float -- and a Projection is strings, ints and a map of them, so no value of the type can make Encode fail."
 
 [[mutation.expect]]
-id = "4ac08a57be3c66c3ecd05963d556699612d85247f1b4325ad7045c4a175edaea"
+id = "90f02992edecc1d22ddb551bfcf7c48b083141520f21650e82398bf76482c862"
 reason = "Unkillable: the same failure as the row above, on the line that would report it."
 
 [[mutation.expect]]
-id = "7e1351f637e0f91ef7d233ac61eea4ba38c787afe4f04775983ce63c69d8c189"
+id = "e16cce66c286994d6e96485f17652b3c742a40a772094b5c3888a8a07d994205"
 reason = "Unkillable: the same encoding, reached through WriteArtifacts -- the document it publishes is the Projection the row above is about."
 
 [[mutation.expect]]
-id = "8a62628e06decefaa8b489e7167f586359387785bbc39bcc776837dbbd59c025"
+id = "15b009ead2253197b7e45c517c4e98986dbceff798f2b97c811e51714680a19e"
 reason = "Unkillable: the same failure as the row above, on the line that would forward it."
 
 
 [[mutation.expect]]
-id = "7d8a53f6e9079d87975e64b2161da7327ea2c74747055dab137bd95c1150d5db"
+id = "3fb39ffdc4043f2724e478fd04bbae647f02ac31d7ba8d808da6e888453bb5fb"
 reason = "Unreachable: jsonschema/v6's AddResource stores the document and defers every check to Compile, so it fails only for a url it cannot parse or one already registered -- and this compiler is used once, for one constant url."
 
 [[mutation.expect]]
-id = "d31d673eaf91673796968ae1a4492d157375e203e27e786a34327ba77831b781"
+id = "b29b5a8acc2d9728368fde1157dad2361e0e902f128b4b9917ec5721a7253a2f"
 reason = "Unreachable: pointerOf answers `the document root` for an empty instance location and a pointer beginning with a slash otherwise, so every leaf the walk reaches sets best to something -- and the walk always reaches at least the error it was given."
 
 
 [[mutation.expect]]
-id = "5614b7ba3e9f4ddddfd7fa4a27ea762743d27e9db32efa0d9f2558ced6413003"
+id = "19ab23139784bde136642d7ec7afcf34bfe78fa04d70ff77c29edaf80fcb53c1"
 reason = "Unkillable: filepath.Abs returns an error only when os.Getwd does, which needs this process's own working directory to have been deleted -- a state a test would be arranging for every other test in the same binary."
 
 [[mutation.expect]]
-id = "68cc73613b4ee13c84c15455c41d3e3c2a03257150376b849c00f7eb7bf07018"
+id = "c4c26dabd3bf10212a37d05972e7b012e65c397cbdecde2ba1de9113527dd581"
 reason = "Unkillable: the same failure as the row above, on the line that would forward it."
 
 [[mutation.expect]]
-id = "d996a9ae543987b8d064d76f98195232bba6ff816d8f9d0226611f7c6809ced1"
+id = "c0d6ebf39b3703cd20a36005fc3d82840edba08fe8bf14c5f80d871fcb3bf301"
 reason = "Unreachable: the answer for a volume root that does not resolve, which needs a path none of whose ancestors exist -- and the root itself always does."
 
 [[mutation.expect]]
-id = "908af008c3e76944b0813c02c7705c85c9554b4e28f9b0e0a96f3da08c0b6d1e"
+id = "e7198f838f3abfe96711c8dbf1d252cc6d7c701d19dbc4f81410586f19a269d1"
 reason = "Unreachable: filepath.EvalSymlinks walks a path from the left and reports the first name it cannot resolve, so a path it calls `not there` and a parent that fails for some other reason cannot both happen -- the parent shares the prefix and answers with the same failure."
 
 [[mutation.expect]]
-id = "03040a2de8a23b4cfb720924dbe074447aa9ce6ee9d7cf07ffbeb81bc05a681b"
+id = "12ca89f9f9dd1e0375da6e769606ca34c3199be67893f279dc3ca3abc30039c9"
 reason = "Unreachable: the same failure as the row above, on the line that would forward it."
 
 [test]

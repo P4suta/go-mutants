@@ -885,7 +885,6 @@ func reusable(o Outcome) bool {
 	case OutcomeKilled, OutcomeSurvived, OutcomeTimedOut:
 		return true
 	case OutcomeErrored, OutcomeInconclusive, OutcomeNotRun:
-		return false
 	}
 	return false
 }
