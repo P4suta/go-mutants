@@ -20,7 +20,10 @@ var hunkHeader = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
 const diffPathPrefix = "+++ b/"
 
 func changedLineRanges(ctx context.Context, root, reference string, changed []string) (map[string][]gomutants.LineRange, bool) {
-	tracked, untracked := splitTrackedChanges(root, changed)
+	tracked, untracked, listed := splitTrackedChanges(ctx, root, changed)
+	if !listed {
+		return nil, false
+	}
 	ranges := make(map[string][]gomutants.LineRange, len(changed))
 	for _, path := range untracked {
 		lines, ok := fileLineCount(filepath.Join(root, filepath.FromSlash(path)))
@@ -97,14 +100,37 @@ func hunkSpan(match []string) (gomutants.LineRange, bool) {
 	return gomutants.LineRange{First: first, Last: first + count - 1}, true
 }
 
-func splitTrackedChanges(root string, changed []string) (tracked, untracked []string) {
+func splitTrackedChanges(ctx context.Context, root string, changed []string) (tracked, untracked []string, listed bool) {
+	present := make([]string, 0, len(changed))
 	for _, path := range changed {
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); err != nil {
 			continue
 		}
-		tracked = append(tracked, path)
+		present = append(present, path)
 	}
-	return tracked, untracked
+	if len(present) == 0 {
+		return nil, nil, true
+	}
+	names, ok := runImpactGitNames(ctx, root, append([]string{"ls-files", "-z", "--"}, present...))
+	if !ok {
+		return nil, nil, false
+	}
+	known := make(map[string]bool, len(names))
+	for _, name := range names {
+		normalized, valid := safeChangedPath(name)
+		if !valid {
+			return nil, nil, false
+		}
+		known[normalized] = true
+	}
+	for _, path := range present {
+		if known[path] {
+			tracked = append(tracked, path)
+			continue
+		}
+		untracked = append(untracked, path)
+	}
+	return tracked, untracked, true
 }
 
 func fileLineCount(path string) (int, bool) {
