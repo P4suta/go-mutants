@@ -413,11 +413,7 @@ func fanOutBucketLabels() []string {
 }
 
 func fanOutBucketIndex(reaching int) int {
-	if reaching <= 0 {
-		return 0
-	}
-	last := len(fanOutBucketLabels()) - 1
-	return min(bits.Len(uint(reaching)), last)
+	return min(bits.Len(uint(reaching)), len(fanOutBucketLabels())-1)
 }
 
 func routingBlock(events []trace.Event) []string {
@@ -480,9 +476,7 @@ func routeTotals(events []trace.Event) routeTotal {
 		mutants[record.MutantID] = struct{}{}
 		reasons[record.Reason]++
 		granularities[record.Granularity]++
-		if record.Fallback != "" {
-			fallbacks[record.Fallback]++
-		}
+		fallbacks[record.Fallback]++
 		total.fanOut[fanOutBucketIndex(len(record.ReachingTargets))]++
 		total.reaching += len(record.ReachingTargets)
 		if len(record.Discharged) > 0 {

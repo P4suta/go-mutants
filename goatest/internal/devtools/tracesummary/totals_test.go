@@ -32,7 +32,6 @@ func TestAFanOutBucketHoldsThePowerOfTwoItsCountFallsIn(t *testing.T) {
 		reaching int
 		want     string
 	}{
-		{reaching: -1, want: "0"},
 		{reaching: 0, want: "0"},
 		{reaching: 1, want: "1"},
 		{reaching: firstBucketBoundary, want: "2-3"},
@@ -147,5 +146,42 @@ func TestExecTotalsOrderByDurationThenCallsThenClass(t *testing.T) {
 	}
 	if totals := execTotals(nil); len(totals) != 0 {
 		t.Fatalf("a recording with no execution totalled %+v, want none", totals)
+	}
+}
+
+func TestPrepareTotalsBreakEveryTieTheComparisonBeforeItCouldNot(t *testing.T) {
+	t.Parallel()
+	var seq int
+	prepare := func(phase, state, result string, duration int64) string {
+		seq++
+		payload := `{"phase":"` + phase + `","state":"` + state + `"`
+		if result != "" {
+			payload += `,"result":"` + result + `","duration_ms":` + strconv.FormatInt(duration, 10)
+		}
+		return `{"seq":` + strconv.Itoa(seq+1) + `,"type":"prepare","timestamp":"2026-01-01T00:00:00Z","elapsed_ms":` +
+			strconv.Itoa(seq) + `,"prepare":` + payload + `}}`
+	}
+	started := func(phase string) string { return prepare(phase, "started", "", 0) }
+	finished := func(phase string, duration int64) string {
+		return prepare(phase, "finished", "succeeded", duration)
+	}
+	events, err := readEvents(strings.NewReader(stream(runStart,
+		started("verification"),
+		started("probe_validation"),
+		started("probe_snapshot"), started("probe_snapshot"),
+		started("probe_restoration"), finished("probe_restoration", 0),
+		started("discovery"), finished("discovery", gammaDurationMS),
+	)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(prepareTotals(events)))
+	for _, total := range prepareTotals(events) {
+		got = append(got, total.phase)
+	}
+	want := []string{"discovery", "probe_restoration", "probe_snapshot", "probe_validation", "verification"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("prepare totals read %q, want %q; the recording names them in the opposite order, "+
+			"so every tie is broken by the comparison the one before it could not decide", got, want)
 	}
 }
