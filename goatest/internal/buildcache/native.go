@@ -431,7 +431,10 @@ func nativeIdentifier(value string) ([]byte, bool) {
 		return nil, false
 	}
 	decoded, err := hex.DecodeString(value)
-	return decoded, err == nil && len(decoded) == nativeCacheIdentifierBytes
+	if err != nil || len(decoded) != nativeCacheIdentifierBytes {
+		return nil, false
+	}
+	return decoded, true
 }
 
 func nativeCachePath(root, identifier, kind string) string {

@@ -27,6 +27,7 @@
 github.com/P4suta/go-mutants/goatest/cmd/goatest TestTheCLIServiceNamesWhatBelongsToTheMachine
 github.com/P4suta/go-mutants/goatest/internal/app TestATraceDirectoryIsJudgedByWhereItLands
 github.com/P4suta/go-mutants/goatest/internal/app TestAnEntryThatCannotBeStatedKeepsItsPlaceInTheLedger
+github.com/P4suta/go-mutants/goatest/internal/buildcache TestResolvingANativeSourceFollowsALinkToWhatItNames
 github.com/P4suta/go-mutants/goatest/internal/cache TestFlushDoesNotFollowAnEntryReplacedAfterValidation
 github.com/P4suta/go-mutants/goatest/internal/cache TestInspectRefusesASymbolicLinkForTheVersionRoot
 github.com/P4suta/go-mutants/goatest/internal/devtools/proofaudit TestReadEvidenceReportsAProfileItCannotOpen
