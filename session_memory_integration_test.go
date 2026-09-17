@@ -90,8 +90,8 @@ func TestEveryCallReportsWhatItCostAndACallOverItsBoundSaysSo(t *testing.T) {
 		t.Errorf("the original program was stopped by a %d byte bound; output: %s",
 			runawayRequestBound, control.Output)
 	}
-	if runner.MemoryBoundSupported() && control.PeakMemory <= 0 {
-		t.Error("Control reports no peak, and it started a process")
+	if runner.PeakMemoryReachesEveryRun() && control.PeakMemory <= 0 {
+		t.Errorf("Control reports no peak on a platform whose accounting reaches every run: %+v", control)
 	}
 
 	// A probe pass, which runs the same tests against a tree with no mutant
@@ -105,8 +105,8 @@ func TestEveryCallReportsWhatItCostAndACallOverItsBoundSaysSo(t *testing.T) {
 	if probe.MemoryExceeded {
 		t.Errorf("a probe pass over the original program was stopped by a %d byte bound", runawayRequestBound)
 	}
-	if runner.MemoryBoundSupported() && probe.PeakMemory <= 0 {
-		t.Error("Probe reports no peak, and it started a process")
+	if runner.PeakMemoryReachesEveryRun() && probe.PeakMemory <= 0 {
+		t.Errorf("Probe reports no peak on a platform whose accounting reaches every run: %+v", probe)
 	}
 
 	// And the mutant the fixture exists for.

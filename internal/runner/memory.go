@@ -35,6 +35,24 @@ const (
 	MemoryUnenforced MemoryEnforcement = "none"
 )
 
+// PeakMemoryReachesEveryRun reports whether every run that started a process is
+// guaranteed to come back with a peak, or whether an unsampled one legitimately
+// reports none.
+//
+// It is the platform's accounting that decides, and [peakOf] is where it is
+// decided: everywhere but Linux the kernel's own number belongs to the child
+// and is combined with the samples, so a tree that grew and exited between two
+// ticks is still measured. On Linux fork gives the child its parent's
+// high-water mark, ru_maxrss is unusable, and the sampler is the only witness —
+// so a peak of zero there is "nothing was sampled" rather than "nothing was
+// used", and a caller that demanded one would be demanding more than the
+// platform can promise.
+//
+// It is exported because the two readings are indistinguishable in
+// [Result.PeakMemory], which is one number for both, and a test that asserts a
+// peak has to know which platform it is on to know whether it may.
+func PeakMemoryReachesEveryRun() bool { return accountedPeakBelongsToTheChild }
+
 // MemoryBound reports how this build enforces a memory bound.
 func MemoryBound() MemoryEnforcement {
 	switch {
