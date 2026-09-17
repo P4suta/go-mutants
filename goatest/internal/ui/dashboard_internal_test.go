@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -95,12 +96,32 @@ func TestDashboardNoOpRenderingAndDefaultTickerLifecycle(t *testing.T) {
 	}
 	output.Reset()
 
-	notes := NewDashboard(&output, DashboardOptions{})
-	if notes.(*dashboard).ticker == nil {
-		t.Fatal("default dashboard did not own a ticker")
+	synchronised := &syncBuffer{}
+	notes := NewDashboard(synchronised, DashboardOptions{})
+	owned := notes.(*dashboard)
+	stopped := make(chan struct{})
+	previous := owned.stopTicker
+	owned.stopTicker = func() {
+		previous()
+		close(stopped)
 	}
 	notes.Note("snapshot", "default options")
+	drawn := synchronised.len()
+	deadline := time.After(defaultTickerDeadline)
+	for synchronised.len() == drawn {
+		select {
+		case <-deadline:
+			t.Fatal("a dashboard given no tick stream of its own never redrew; it owns no ticker")
+		case <-time.After(time.Millisecond):
+		}
+	}
 	notes.Close()
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("closing a dashboard that owns its ticker did not stop it")
+	}
+	output.WriteString(synchronised.String())
 	if !strings.Contains(output.String(), "default options") || strings.Contains(output.String(), "0/0") {
 		t.Fatalf("default dashboard output = %q", output.String())
 	}
@@ -165,7 +186,14 @@ func TestDashboardWatchDoesNotRenderAClosedDashboard(t *testing.T) {
 		started: now, phase: "snapshot", closed: true,
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
-	renderer.watch(tick)
+	returned := make(chan struct{})
+	go func() { renderer.watch(tick); close(returned) }()
+	defer close(renderer.stop)
+	select {
+	case <-returned:
+	case <-time.After(dashboardStopDeadline):
+		t.Fatal("watch did not return when its tick stream closed")
+	}
 	if output.Len() != 0 || renderer.rendered {
 		t.Fatalf("closed dashboard rendered on tick: %q", output.String())
 	}
@@ -250,4 +278,47 @@ func TestDashboardOmitsADetailItDoesNotHave(t *testing.T) {
 	if !strings.HasSuffix(line, "1/3") {
 		t.Errorf("the status line = %q, want it to end at the count when there is no detail", output.String())
 	}
+}
+
+func TestDashboardShowsAnEstimateOnlyOnceItHasOne(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	notes := NewDashboard(&output, DashboardOptions{Now: func() time.Time { return now }, Tick: make(chan time.Time)})
+
+	notes.Note("mutation-progress", "0/1000")
+	if strings.Contains(output.String(), "eta") {
+		t.Errorf("the first mutation progress carried an estimate: %q", output.String())
+	}
+	output.Reset()
+	now = now.Add(time.Minute)
+	notes.Note("mutation-progress", "100/1000")
+	if !strings.Contains(output.String(), "eta") {
+		t.Errorf("a second progress with time behind it carried none: %q", output.String())
+	}
+}
+
+const defaultTickerDeadline = 3 * time.Second
+
+type syncBuffer struct {
+	mutex  sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (writer *syncBuffer) Write(p []byte) (int, error) {
+	writer.mutex.Lock()
+	defer writer.mutex.Unlock()
+	return writer.buffer.Write(p)
+}
+
+func (writer *syncBuffer) len() int {
+	writer.mutex.Lock()
+	defer writer.mutex.Unlock()
+	return writer.buffer.Len()
+}
+
+func (writer *syncBuffer) String() string {
+	writer.mutex.Lock()
+	defer writer.mutex.Unlock()
+	return writer.buffer.String()
 }

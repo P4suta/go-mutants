@@ -45,9 +45,9 @@ type dashboard struct {
 	rendered        bool
 	closed          bool
 
-	ticker *time.Ticker
-	stop   chan struct{}
-	done   chan struct{}
+	stopTicker func()
+	stop       chan struct{}
+	done       chan struct{}
 }
 
 func NewDashboard(writer io.Writer, options DashboardOptions) Notes {
@@ -62,11 +62,13 @@ func NewDashboard(writer io.Writer, options DashboardOptions) Notes {
 	renderer := &dashboard{
 		writer: writer, now: now, width: width, started: now(),
 		stop: make(chan struct{}), done: make(chan struct{}),
+		stopTicker: func() {},
 	}
 	tick := options.Tick
 	if tick == nil {
-		renderer.ticker = time.NewTicker(time.Second)
-		tick = renderer.ticker.C
+		owned := time.NewTicker(time.Second)
+		renderer.stopTicker = owned.Stop
+		tick = owned.C
 	}
 	go renderer.watch(tick)
 	return renderer
@@ -143,9 +145,7 @@ func (renderer *dashboard) Close() {
 	renderer.mutex.Unlock()
 	close(renderer.stop)
 	<-renderer.done
-	if renderer.ticker != nil {
-		renderer.ticker.Stop()
-	}
+	renderer.stopTicker()
 	renderer.mutex.Lock()
 	renderer.eraseLocked()
 	renderer.mutex.Unlock()

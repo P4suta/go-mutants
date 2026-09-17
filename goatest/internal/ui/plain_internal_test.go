@@ -87,3 +87,20 @@ func TestPlainAnnotateForgetsThePhaseClockOnAMutationTarget(t *testing.T) {
 		t.Error("a new mutation target left the previous phase's clock running")
 	}
 }
+
+func TestPlainDoesNotStartThePhaseClockOnProgressItCannotRead(t *testing.T) {
+	t.Parallel()
+	moment := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	renderer := &plain{writer: &bytes.Buffer{}, now: func() time.Time { return moment }}
+
+	if got := renderer.annotate("mutation-progress", "starting"); got != "starting" {
+		t.Fatalf("annotate = %q", got)
+	}
+	if !renderer.mutationStarted.IsZero() {
+		t.Fatal("a progress line that is not a fraction started the phase clock")
+	}
+	moment = moment.Add(time.Minute)
+	if got := renderer.annotate("mutation-progress", "100/1000"); got != "100/1000" {
+		t.Errorf("annotate = %q, want no estimate from the first fraction of the phase", got)
+	}
+}
