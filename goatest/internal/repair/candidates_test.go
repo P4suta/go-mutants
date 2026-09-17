@@ -283,8 +283,12 @@ func TestCurrentContentRefusesAPathNoRepairMayTouch(t *testing.T) {
 	for _, path := range []string{"", "main.go", "../outside_test.go", "/absolute_test.go"} {
 		t.Run("path "+path, func(t *testing.T) {
 			t.Parallel()
-			if _, _, err := repair.CurrentContent(t.TempDir(), path); err == nil {
+			content, exists, err := repair.CurrentContent(t.TempDir(), path)
+			if err == nil {
 				t.Fatalf("CurrentContent read %q, which no repair may touch", path)
+			}
+			if exists || content != nil {
+				t.Fatalf("a path no repair may touch answered (%q, %t), want nothing and no file", content, exists)
 			}
 		})
 	}

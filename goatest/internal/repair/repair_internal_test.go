@@ -628,53 +628,69 @@ func TestApplyCandidatesWritesAnArtifactForEveryPreimageThatDoesNotMatch(t *test
 }
 
 func TestApplyCandidatesWritesNothingWhenOneOfABatchDoesNotMatch(t *testing.T) {
-	preserveRepairHooks(t)
-	root := resolvedTempDir(t)
-	matching := filepath.Join(root, "matching_test.go")
-	written := 0
-	originalRename := renameRepairFile
-	renameRepairFile = func(source, target string) error {
-		if target == matching {
-			written++
-		}
-		return originalRename(source, target)
-	}
 	original := []byte("package fixture\n")
-	if err := os.WriteFile(matching, original, filemode.PrivateFile); err != nil {
-		t.Fatal(err)
-	}
-	results, err := ApplyCandidates(root, []Application{
-		{
-			Finding: report.Finding{ID: "finding-a"},
-			Candidate: provider.Candidate{
-				Kind: "patch", Path: "matching_test.go",
-				PreimageSHA256: sha256Hex(original), Content: []byte("package repaired\n"),
-			},
-		},
-		{
-			Finding: report.Finding{ID: "finding-b"},
-			Candidate: provider.Candidate{
-				Kind: "patch", Path: "mismatching_test.go",
-				PreimageSHA256: strings.Repeat("0", hex.EncodedLen(sha256.Size)),
-				Content:        []byte("package repaired\n"),
-			},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(results) != applicationsInABatch ||
-		results[0].Status != StatusCandidate || results[1].Status != StatusArtifact {
-		t.Fatalf("ApplyCandidates answered %+v, want a candidate then an artifact", results)
-	}
-	if current, readErr := os.ReadFile(matching); readErr != nil || string(current) != string(original) {
-		t.Fatalf("the matching file of a refused batch reads %q (%v), want %q", current, readErr, original)
-	}
-	if written != 0 {
-		t.Fatalf("a batch nobody could apply wrote the matching file %d times, want none", written)
+	for _, test := range []struct {
+		name    string
+		present []byte
+	}{
+		{name: "a file the batch expected to be there"},
+		{name: "a file somebody else has edited since", present: []byte("package edited\n")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			preserveRepairHooks(t)
+			root := resolvedTempDir(t)
+			matching := filepath.Join(root, "matching_test.go")
+			if err := os.WriteFile(matching, original, filemode.PrivateFile); err != nil {
+				t.Fatal(err)
+			}
+			if test.present != nil {
+				if err := os.WriteFile(filepath.Join(root, "mismatching_test.go"),
+					test.present, filemode.PrivateFile); err != nil {
+					t.Fatal(err)
+				}
+			}
+			written := 0
+			originalRename := renameRepairFile
+			renameRepairFile = func(source, target string) error {
+				if target == matching {
+					written++
+				}
+				return originalRename(source, target)
+			}
+
+			results, err := ApplyCandidates(root, []Application{
+				{
+					Finding: report.Finding{ID: "finding-a"},
+					Candidate: provider.Candidate{
+						Kind: "patch", Path: "matching_test.go",
+						PreimageSHA256: sha256Hex(original), Content: []byte("package repaired\n"),
+					},
+				},
+				{
+					Finding: report.Finding{ID: "finding-b"},
+					Candidate: provider.Candidate{
+						Kind: "patch", Path: "mismatching_test.go",
+						PreimageSHA256: strings.Repeat("0", hex.EncodedLen(sha256.Size)),
+						Content:        []byte("package repaired\n"),
+					},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(results) != applicationsInABatch ||
+				results[0].Status != StatusCandidate || results[1].Status != StatusArtifact {
+				t.Fatalf("ApplyCandidates answered %+v, want a candidate then an artifact", results)
+			}
+			if current, readErr := os.ReadFile(matching); readErr != nil || string(current) != string(original) {
+				t.Fatalf("the matching file of a refused batch reads %q (%v), want %q", current, readErr, original)
+			}
+			if written != 0 {
+				t.Fatalf("a batch nobody could apply wrote the matching file %d times, want none", written)
+			}
+		})
 	}
 }
-
 func applyOneMatching(t *testing.T, root string, original []byte) ([]Result, error) {
 	t.Helper()
 	return ApplyCandidates(root, []Application{{
@@ -933,27 +949,28 @@ func TestListCandidatesReportsAStoreItCannotRead(t *testing.T) {
 }
 
 func TestCurrentContentSaysNothingExistsForEveryFailureItReports(t *testing.T) {
-	preserveRepairHooks(t)
 	root := resolvedTempDir(t)
 	if err := os.WriteFile(filepath.Join(root, "present_test.go"),
 		[]byte("package fixture\n"), filemode.PrivateFile); err != nil {
 		t.Fatal(err)
 	}
-	sentinel := errors.New("the read failed")
-	readRepairFile = func(string) ([]byte, error) { return nil, sentinel }
-
-	content, exists, err := CurrentContent(root, "present_test.go")
-	if !errors.Is(err, sentinel) {
-		t.Fatalf("CurrentContent reported %v, want the read failure", err)
-	}
-	if exists || content != nil {
-		t.Fatalf("a failed read answered (%q, %t), want nothing and no file", content, exists)
-	}
-
-	statRepairPath = func(string) (os.FileInfo, error) { return nil, sentinel }
-	if content, exists, err = CurrentContent(root, "present_test.go"); !errors.Is(err, sentinel) ||
-		exists || content != nil {
-		t.Fatalf("a path it cannot confine answered (%q, %t, %v), want nothing and no file", content, exists, err)
+	for _, stage := range []string{"read", "confine"} {
+		t.Run(stage, func(t *testing.T) {
+			preserveRepairHooks(t)
+			sentinel := errors.New("the " + stage + " failed")
+			if stage == "read" {
+				readRepairFile = func(string) ([]byte, error) { return nil, sentinel }
+			} else {
+				statRepairPath = func(string) (os.FileInfo, error) { return nil, sentinel }
+			}
+			content, exists, err := CurrentContent(root, "present_test.go")
+			if !errors.Is(err, sentinel) {
+				t.Fatalf("CurrentContent reported %v, want the %s failure", err, stage)
+			}
+			if exists || content != nil {
+				t.Fatalf("a failed %s answered (%q, %t), want nothing and no file", stage, content, exists)
+			}
+		})
 	}
 }
 
@@ -970,5 +987,99 @@ func TestConfinedPathRefusesASymbolicLinkInsideTheRepository(t *testing.T) {
 		t.Fatal("a path through a symbolic link inside the repository was confined")
 	} else if !strings.Contains(err.Error(), "crosses symbolic link") {
 		t.Errorf("the error is %q, want it to name the link it refused", err)
+	}
+}
+
+func failLstatFor(name string, sentinel error) {
+	original := lstatRepairPath
+	lstatRepairPath = func(path string) (os.FileInfo, error) {
+		if filepath.Base(path) == name {
+			return nil, sentinel
+		}
+		return original(path)
+	}
+}
+
+func TestApplyCandidatesReportsAPathItCannotInspect(t *testing.T) {
+	preserveRepairHooks(t)
+	root := resolvedTempDir(t)
+	sentinel := errors.New("the candidate path could not be inspected")
+	failLstatFor("moving_test.go", sentinel)
+
+	results, err := applyOneMatching(t, root, []byte("package fixture\n"))
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("ApplyCandidates reported %v, want the failure of the path it could not inspect", err)
+	}
+	if results != nil {
+		t.Fatalf("a batch that never started answered with %+v, want no results", results)
+	}
+}
+
+func TestApplyCandidatesReportsAFileItCannotDescribe(t *testing.T) {
+	preserveRepairHooks(t)
+	root := resolvedTempDir(t)
+	target := filepath.Join(root, "moving_test.go")
+	if err := os.WriteFile(target, []byte("package fixture\n"), filemode.PrivateFile); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := errors.New("the file could not be described")
+	originalStat := statRepairPath
+	statRepairPath = func(path string) (os.FileInfo, error) {
+		if path == target {
+			return nil, sentinel
+		}
+		return originalStat(path)
+	}
+
+	results, err := applyOneMatching(t, root, []byte("package fixture\n"))
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("ApplyCandidates reported %v, want the failure of the file it could not describe", err)
+	}
+	if results != nil {
+		t.Fatalf("a batch that never started answered with %+v, want no results", results)
+	}
+}
+
+func TestApplyCandidatesReportsAnArtifactItCannotWrite(t *testing.T) {
+	preserveRepairHooks(t)
+	root := resolvedTempDir(t)
+	original := []byte("package fixture\n")
+	if err := os.WriteFile(filepath.Join(root, "moving_test.go"), original, filemode.PrivateFile); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	readRepairFile = func(string) ([]byte, error) {
+		reads++
+		if reads == 1 {
+			return slices.Clone(original), nil
+		}
+		return []byte("package edited\n"), nil
+	}
+	sentinel := errors.New("the artifact could not be written")
+	marshalRepairArtifact = func(any, string, string) ([]byte, error) { return nil, sentinel }
+
+	results, err := applyOneMatching(t, root, original)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("ApplyCandidates reported %v, want the failure of the artifact it could not write", err)
+	}
+	if results == nil {
+		t.Fatal("a failed batch answered with no results at all, want the candidate it did not apply")
+	}
+}
+
+func TestRollbackReportsAFileItCannotRemove(t *testing.T) {
+	preserveRepairHooks(t)
+	root := resolvedTempDir(t)
+	applied := []byte("package repaired\n")
+	if err := os.WriteFile(filepath.Join(root, "bystander_test.go"), applied, filemode.ReadableFile); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := errors.New("the file could not be removed")
+	removeRepairFile = func(string) error { return sentinel }
+
+	err := rollbackApplications(root,
+		[]applicationState{rollbackState(root, "bystander_test.go", nil, false, applied)})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("rollback reported %v, want the removal failure", err)
 	}
 }

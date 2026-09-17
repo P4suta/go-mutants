@@ -196,7 +196,7 @@ func ApplyCandidates(root string, applications []Application) ([]Result, error) 
 	applied := 0
 	for index, state := range states {
 		match, _, err := matchesPreimage(state.target, state.application.Candidate.PreimageSHA256)
-		if err != nil || !match {
+		if !match {
 			rollbackErr := rollbackApplications(root, states[:applied])
 			for prior := range applied {
 				results[prior].Status = StatusCandidate
