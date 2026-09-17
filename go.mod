@@ -1,6 +1,6 @@
 module github.com/P4suta/go-mutants
 
-go 1.26
+go 1.26.0
 
 // v0.1.0, v0.1.1 and v0.1.2 were tagged on feat/dogfood-deep, which never
 // reached main. The proxy caches a version immutably and goes on answering
@@ -26,10 +26,10 @@ require (
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/mod v0.40.0
-	golang.org/x/sync v0.22.0
-	golang.org/x/sys v0.47.0
-	golang.org/x/tools v0.49.0
+	golang.org/x/mod v0.41.0
+	golang.org/x/sync v0.23.0
+	golang.org/x/sys v0.48.0
+	golang.org/x/tools v0.50.0
 	pgregory.net/rapid v1.3.0
 )
 
