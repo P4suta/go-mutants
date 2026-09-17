@@ -4,6 +4,7 @@
 package buildcache
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -126,5 +127,26 @@ func TestABuildCachePolicyRefusesEveryNegativeSettingAndAcceptsZero(t *testing.T
 	}
 	if _, err := (Layer{Dir: t.TempDir()}).collectWithHooks(Policy{MaxBytes: -1}, time.Time{}, layerHooks{}); err == nil {
 		t.Fatal("a collection under a policy that names a negative ceiling was run")
+	}
+}
+
+func TestALayerWithNoDirectoryHoldsNothingAndWritesNowhere(t *testing.T) {
+	t.Chdir(t.TempDir())
+	release, held, err := (Layer{}).HoldCollection()
+	if err != nil {
+		t.Fatalf("holding a layer with no directory reported %v, want none", err)
+	}
+	if held {
+		t.Fatal("a layer with no directory said it held the collection")
+	}
+	if releaseErr := release(); releaseErr != nil {
+		t.Fatalf("releasing what was never held reported %v, want none", releaseErr)
+	}
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("a layer with no directory wrote %d entries into the working directory", len(entries))
 	}
 }

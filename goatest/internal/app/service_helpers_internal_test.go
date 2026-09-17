@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ import (
 const (
 	limitedBufferRoom    = 8
 	limitedBufferOverrun = 12
+	hexDigitRuns         = 4
 )
 
 func TestASafeTraceNameIsATimestampAndAProcessAndNothingElse(t *testing.T) {
@@ -365,5 +367,99 @@ func TestAScopedVerdictSaysWhatTheRunActuallyAssured(t *testing.T) {
 				t.Fatalf("scopedVerdict = %q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestACheckpointDigestIsSixtyFourLowercaseHexDigits(t *testing.T) {
+	t.Parallel()
+	full := strings.Repeat("0123456789abcdef", hexDigitRuns)
+	for _, test := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "every digit and letter it admits", value: full, want: true},
+		{name: "the lowest digest", value: strings.Repeat("0", len(full)), want: true},
+		{name: "the highest digest", value: strings.Repeat("f", len(full)), want: true},
+		{name: "nothing at all"},
+		{name: "one character short", value: full[:len(full)-1]},
+		{name: "one character long", value: full + "0"},
+		{name: "the same digits in capitals", value: strings.ToUpper(full)},
+		{name: "a letter past f", value: full[:len(full)-1] + "g"},
+		{name: "the character below zero", value: full[:len(full)-1] + "/"},
+		{name: "the character above nine", value: full[:len(full)-1] + ":"},
+		{name: "the character below a", value: full[:len(full)-1] + "`"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := checkpointDigest(test.value); got != test.want {
+				t.Fatalf("checkpointDigest(%q) = %t, want %t", test.value, got, test.want)
+			}
+		})
+	}
+}
+
+func TestAConfigurationDigestMovesWithEverythingTheRunIsIdentifiedBy(t *testing.T) {
+	t.Parallel()
+	hooks := reportHooks{readConfiguration: func(string) ([]byte, error) { return []byte("version = 1\n"), nil }}
+	base, err := configurationDigest(".", cli.Request{}, hooks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !checkpointDigest(base) {
+		t.Fatalf("configurationDigest = %q, want a lowercase SHA-256", base)
+	}
+	for _, test := range []struct {
+		name    string
+		request cli.Request
+		hooks   reportHooks
+	}{
+		{name: "another contract", request: cli.Request{Contract: "deep-v1"}},
+		{name: "another package", request: cli.Request{Packages: []string{"./pkg"}}},
+		{name: "another test argument", request: cli.Request{TestArgs: []string{"-short"}}},
+		{name: "narrowing to a changeset", request: cli.Request{Changed: true}},
+		{name: "another reference", request: cli.Request{ChangedRef: "main"}},
+		{name: "another replayed finding", request: cli.Request{ReplayFindingID: "f-1"}},
+		{name: "another replayed mutant", request: cli.Request{ReplayMutantID: "m-1"}},
+		{
+			name:  "another configuration",
+			hooks: reportHooks{readConfiguration: func(string) ([]byte, error) { return []byte("version = 1\ncontract = \"deep-v1\"\n"), nil }},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			changed := hooks
+			if test.hooks.readConfiguration != nil {
+				changed = test.hooks
+			}
+			digest, digestErr := configurationDigest(".", test.request, changed)
+			if digestErr != nil {
+				t.Fatal(digestErr)
+			}
+			if digest == base {
+				t.Fatalf("changing %s left the digest at %q", test.name, base)
+			}
+		})
+	}
+}
+
+func TestAConfigurationDigestSaysWhetherItCouldReadTheConfiguration(t *testing.T) {
+	t.Parallel()
+	absent := reportHooks{readConfiguration: func(string) ([]byte, error) { return nil, os.ErrNotExist }}
+	defaults, err := configurationDigest(".", cli.Request{}, absent)
+	if err != nil {
+		t.Fatalf("a configuration nobody wrote reported %v, want the defaults", err)
+	}
+
+	broken := reportHooks{readConfiguration: func(string) ([]byte, error) { return nil, errors.New("no permission") }}
+	unreadable, err := configurationDigest(".", cli.Request{}, broken)
+	if err == nil || !strings.Contains(err.Error(), "read effective configuration") {
+		t.Fatalf("a configuration nobody can read reported %v, want it said so", err)
+	}
+	if !checkpointDigest(unreadable) {
+		t.Fatalf("an unreadable configuration answered %q, want a digest all the same", unreadable)
+	}
+	if defaults == unreadable {
+		t.Fatal("a configuration nobody wrote and one nobody can read share a digest")
 	}
 }
