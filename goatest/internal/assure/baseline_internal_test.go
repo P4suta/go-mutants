@@ -474,7 +474,7 @@ func TestCheckpointBaselineSuiteDistinguishesUnmeasuredAndEmptyCoverage(t *testi
 		t.Fatalf("unmeasured suite = %+v", unmeasured)
 	}
 	measured := checkpointBaselineSuite(packageSuiteCoverageRun{
-		importPath: "fixture.example/module", measured: true,
+		importPath: "fixture.example/module", outcome: gomutants.ProbeMeasured,
 		suite: PackageSuiteCoverage{Duration: time.Second, WholeTree: true},
 	})
 	if !measured.Measured || measured.Covered == nil || measured.Instrumented == nil ||
@@ -646,7 +646,7 @@ func TestPackageSuiteCoverageMeasuresTheExactFallbackAndFailsClosed(t *testing.T
 			}
 			return gomutants.CommandResult{Duration: 275 * time.Millisecond}, nil
 		}}
-		got, measured, err := collectPackageSuiteCoverage(
+		got, outcome, err := collectPackageSuiteCoverage(
 			t.Context(), workspace, "fixture.example/module", "fixture.example/module",
 			"internal/example", "/tmp/example.test", 5*time.Second, targets,
 			BaselineOptions{
@@ -655,8 +655,8 @@ func TestPackageSuiteCoverageMeasuresTheExactFallbackAndFailsClosed(t *testing.T
 			},
 		)
 		want := []goanalysis.FileCoverage{{Path: "value.go", Blocks: []goanalysis.CoverageBlock{infectionBlock()}}}
-		if err != nil || !measured || got.Duration != 275*time.Millisecond || !reflect.DeepEqual(got.Covered, want) || !reflect.DeepEqual(got.Instrumented, want) {
-			t.Fatalf("package suite = (%+v, %t, %v), want measured coverage %+v", got, measured, err, want)
+		if err != nil || outcome != gomutants.ProbeMeasured || got.Duration != 275*time.Millisecond || !reflect.DeepEqual(got.Covered, want) || !reflect.DeepEqual(got.Instrumented, want) {
+			t.Fatalf("package suite = (%+v, %q, %v), want measured coverage %+v", got, outcome, err, want)
 		}
 	})
 	t.Run("failed suite supplies no fact", func(t *testing.T) {
@@ -664,13 +664,13 @@ func TestPackageSuiteCoverageMeasuresTheExactFallbackAndFailsClosed(t *testing.T
 		workspace := &baselineFakeWorkspace{exec: func(gomutants.Command) (gomutants.CommandResult, error) {
 			return gomutants.CommandResult{ExitCode: 1}, nil
 		}}
-		got, measured, err := collectPackageSuiteCoverage(
+		got, outcome, err := collectPackageSuiteCoverage(
 			t.Context(), workspace, "fixture.example/module", "fixture.example/module",
 			".", "/tmp/example.test", 5*time.Second, targets,
 			BaselineOptions{ArtifactDirectory: t.TempDir(), Contract: "standard-v1"},
 		)
-		if err != nil || measured || !reflect.DeepEqual(got, PackageSuiteCoverage{}) {
-			t.Fatalf("failed package suite = (%+v, %t, %v), want no fact", got, measured, err)
+		if err != nil || outcome != gomutants.ProbeTestFailed || !reflect.DeepEqual(got, PackageSuiteCoverage{}) {
+			t.Fatalf("failed package suite = (%+v, %q, %v), want the failure named", got, outcome, err)
 		}
 	})
 }
@@ -749,7 +749,7 @@ func TestPackageSuiteCoverageRunsAcrossPackagesAndPublishesInInputOrder(t *testi
 		t.Fatalf("maximum concurrent controls = %d, runs = %+v", maximum, runs)
 	}
 	if runs[0].importPath != controls[0].importPath || !errors.Is(runs[0].err, firstErr) ||
-		runs[1].importPath != controls[1].importPath || runs[1].err != nil || !runs[1].measured {
+		runs[1].importPath != controls[1].importPath || runs[1].err != nil || !runs[1].measured() {
 		t.Fatalf("ordered suite results = %+v", runs)
 	}
 }
@@ -763,7 +763,7 @@ func TestPackageSuiteCoverageKeepsANonemptyControl(t *testing.T) {
 		t.Context(), workspace, "fixture.example/module", controls, time.Second, nil,
 		BaselineOptions{ArtifactDirectory: t.TempDir(), Contract: "standard-v1", Jobs: 1}, nil,
 	)
-	if len(runs) != 1 || runs[0].importPath != controls[0].importPath || !runs[0].measured || runs[0].err != nil {
+	if len(runs) != 1 || runs[0].importPath != controls[0].importPath || !runs[0].measured() || runs[0].err != nil {
 		t.Fatalf("package suite runs = %+v", runs)
 	}
 }
@@ -1230,3 +1230,37 @@ func testBinarySuffixInternal() string {
 }
 
 var _ CommandWorkspace = (*baselineFakeWorkspace)(nil)
+
+func TestCollectBaselineRecordsAPackageSuiteThatProducedNoFacts(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		outcome gomutants.ProbeOutcome
+	}{
+		{name: "its tests failed", outcome: gomutants.ProbeTestFailed},
+		{name: "it did not finish", outcome: gomutants.ProbeTimedOut},
+		{name: "no facts were produced", outcome: gomutants.ProbeUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workspace := &baselineFakeWorkspace{exec: func(gomutants.Command) (gomutants.CommandResult, error) {
+				return gomutants.CommandResult{}, nil
+			}}
+			session := &mutationUnitSession{catalog: gomutants.Catalog{Mutants: []gomutants.Mutant{{
+				Index: preparedProbeIndex, ID: "mutant", Accepted: true, Probed: true,
+				Package: "fixture.example/module", Path: "value.go", Line: 1, Column: 1,
+			}}}}
+			session.probe = func(gomutants.ProbeRequest) (gomutants.ProbeResult, error) {
+				return gomutants.ProbeResult{Outcome: test.outcome}, nil
+			}
+			result, err := CollectBaseline(t.Context(), workspace, baselineModel(), nil, BaselineOptions{
+				ArtifactDirectory: t.TempDir(), Contract: "standard-v1", PackageSuites: true, ProbeSession: session,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := result.UnmeasuredSuites["fixture.example/module"]; got != test.outcome {
+				t.Fatalf("unmeasured suites = %+v, want fixture.example/module recorded as %q",
+					result.UnmeasuredSuites, test.outcome)
+			}
+		})
+	}
+}

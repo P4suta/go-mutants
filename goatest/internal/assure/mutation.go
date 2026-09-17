@@ -687,7 +687,7 @@ func prepareMutationRequest(
 	unavailable := controlFinding{
 		kind: "mutation-control-unavailable", summary: mutationControlUnavailable,
 	}
-	if options.OriginalControl == nil || request.Timeout <= 0 {
+	if options.OriginalControl == nil {
 		return request, unavailable, nil
 	}
 	controlRequest := request

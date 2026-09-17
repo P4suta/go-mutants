@@ -35,6 +35,7 @@ directions.
 | `go-toolchain-metadata-unavailable` | the Go toolchain identity could not be resolved before execution stopped |
 | `later-phases-not-run` | a phase did not pass, so the phases after it were not run |
 | `module-metadata-unavailable` | the Go module identity could not be resolved before execution stopped |
+| `package-suite-unmeasured` | a package suite produced no coverage facts, so mutants it alone could have routed were answered without them |
 | `plan-cost-estimate` | a plan's cost excludes target-specific runtime, resource startup and the race pass |
 | `project-exclude` | the configured boundary put some paths outside what was assured |
 | `race-scope-static-estimate` | the race scope was counted statically rather than from what the pass executed |

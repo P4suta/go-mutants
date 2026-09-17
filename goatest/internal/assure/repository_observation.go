@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	gomutants "github.com/P4suta/go-mutants"
 	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
 	"github.com/P4suta/go-mutants/goatest/internal/report"
 	"github.com/P4suta/go-mutants/goatest/internal/trace"
@@ -312,4 +313,43 @@ func repositoryTestLogPath(arguments []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func unmeasuredSuiteLimitation(unmeasured map[string]gomutants.ProbeOutcome) (report.Limitation, bool) {
+	if len(unmeasured) == 0 {
+		return report.Limitation{}, false
+	}
+	byOutcome := make(map[gomutants.ProbeOutcome][]string)
+	for pkg, outcome := range unmeasured {
+		byOutcome[outcome] = append(byOutcome[outcome], pkg)
+	}
+	var clauses []string
+	for _, outcome := range gomutants.KnownProbeOutcomes() {
+		packages := byOutcome[outcome]
+		if len(packages) == 0 {
+			continue
+		}
+		slices.Sort(packages)
+		clauses = append(clauses, fmt.Sprintf("%s: %s", suiteUnmeasuredReason(outcome), strings.Join(packages, ", ")))
+	}
+	return report.Limitation{
+		Code: report.LimitationPackageSuiteUnmeasured,
+		Summary: fmt.Sprintf(
+			"%d package suites produced no coverage facts, so every mutant in them that no target reaches was bounded by its own exact original control alone (%s)",
+			len(unmeasured), strings.Join(clauses, "; ")),
+	}, true
+}
+
+func suiteUnmeasuredReason(outcome gomutants.ProbeOutcome) string {
+	reason := ""
+	switch outcome {
+	case gomutants.ProbeMeasured:
+	case gomutants.ProbeTestFailed:
+		reason = "their tests did not pass"
+	case gomutants.ProbeTimedOut:
+		reason = "they did not finish inside their budget"
+	case gomutants.ProbeUnavailable:
+		reason = "no coverage facts were produced"
+	}
+	return reason
 }

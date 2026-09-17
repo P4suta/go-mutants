@@ -370,8 +370,10 @@ package, arguments, environment, and deadline. A passing positive duration
 joins the other distinct observations; a failure or expiration makes that
 group inconclusive without starting its mutant.
 
-With no positive prior observation, a mutant request does not start its control
-or mutant subprocess and the result is `mutation-control-unavailable`.
+A request with no prior observation runs that same control anyway and derives
+its budget from the one duration the control returns. The result is
+`mutation-control-unavailable` only when the run has no control facility at all,
+or when the control passes without a positive duration.
 
 For a mutation reached by several targets, goatest partitions them by exact
 package and environment. Every compatible group runs once under one exact
