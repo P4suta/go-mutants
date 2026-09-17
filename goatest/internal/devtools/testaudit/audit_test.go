@@ -158,9 +158,10 @@ func TestReadLedgerReadsTheRecordFormat(t *testing.T) {
 
 func TestReadLedgerRejectsAMalformedEntry(t *testing.T) {
 	t.Parallel()
-	path := writeLedger(t, "example.test/a\n")
-	if _, err := readLedger(path); err == nil {
-		t.Fatal("a line with no test name was accepted")
+	path := writeLedger(t, "# a comment\n\nexample.test/a\n")
+	_, err := readLedger(path)
+	if err == nil || !strings.Contains(err.Error(), path+":3:") {
+		t.Fatalf("readLedger = %v, want the third line named", err)
 	}
 }
 
@@ -229,5 +230,142 @@ func TestTheNarrowedFilterMarkerIsSpeltTheSameInBothPlaces(t *testing.T) {
 		t.Fatalf("%s does not declare the marker as %s.\n\n"+
 			"The two spellings have drifted, so a narrowed run would announce itself\n"+
 			"in words this tool no longer recognises.", printer, quoted)
+	}
+}
+
+func TestAuditNamesTheLineItRefused(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		stream  string
+		message string
+	}{
+		{name: "the first line", stream: "not json\n", message: "line 1 is not JSON"},
+		{name: "a later line", stream: "\n{\"Action\":\"pass\",\"Package\":\"p\"}\nnot json\n", message: "line 3 is not JSON"},
+		{name: "a line that is not an event", stream: "{\"Action\":1}\n", message: "decode test event line 1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			summary, err := audit(strings.NewReader(test.stream))
+			if err == nil || !strings.Contains(err.Error(), test.message) {
+				t.Fatalf("audit = (%+v, %v), want %q", summary, err, test.message)
+			}
+		})
+	}
+}
+
+func TestAuditIgnoresAnEventThatNamesNoPackage(t *testing.T) {
+	t.Parallel()
+	summary, err := audit(strings.NewReader("{\"Action\":\"pass\",\"Test\":\"TestOne\"}\n"))
+	if err != nil || len(summary.packages) != 0 || summary.passed != 0 {
+		t.Fatalf("audit of an event with no package = (%+v, %v)", summary, err)
+	}
+}
+
+func TestPackagesAreSummarisedInTheOrderOfTheirNames(t *testing.T) {
+	t.Parallel()
+	summary, err := audit(strings.NewReader(events(t,
+		"pass example/z TestOne",
+		"pass example/a TestOne",
+		"pass example/m TestOne",
+	)))
+	if err != nil || len(summary.packages) != 3 {
+		t.Fatalf("audit = (%+v, %v)", summary, err)
+	}
+	names := []string{summary.packages[0].pkg, summary.packages[1].pkg, summary.packages[2].pkg}
+	if !slices.Equal(names, []string{"example/a", "example/m", "example/z"}) {
+		t.Fatalf("package order = %v", names)
+	}
+}
+
+func TestSilentPackagesAreExactlyThoseThatOnlySkipped(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		stream     func(t *testing.T) string
+		wantSilent bool
+	}{
+		{
+			name:       "every test stepped aside",
+			stream:     func(t *testing.T) string { return events(t, "skip example/a TestOne") },
+			wantSilent: true,
+		},
+		{
+			name:   "one passed beside the skip",
+			stream: func(t *testing.T) string { return events(t, "skip example/a TestOne", "pass example/a TestTwo") },
+		},
+		{
+			name:   "one failed beside the skip",
+			stream: func(t *testing.T) string { return events(t, "skip example/a TestOne", "fail example/a TestTwo") },
+		},
+		{
+			name:   "the package holds no test files",
+			stream: func(t *testing.T) string { return events(t, "skip example/a") },
+		},
+		{
+			name:   "nothing was skipped at all",
+			stream: func(t *testing.T) string { return events(t, "pass example/a TestOne") },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			summary, err := audit(strings.NewReader(test.stream(t)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if silent := len(summary.silentPackages()) != 0; silent != test.wantSilent {
+				t.Fatalf("silent = %t, want %t (%+v)", silent, test.wantSilent, summary.packages)
+			}
+		})
+	}
+}
+
+func TestRenderNamesTheSkipsOfEveryPackageThatHasThem(t *testing.T) {
+	t.Parallel()
+	summary, err := audit(strings.NewReader(events(t,
+		"skip example/a TestOne",
+		"pass example/b TestTwo",
+	)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	render(&out, summary)
+	if !strings.Contains(out.String(), "example/a: 1 skipped (TestOne)") {
+		t.Fatalf("render wrote %q", out.String())
+	}
+	if strings.Contains(out.String(), "example/b: ") {
+		t.Fatalf("render named a package that skipped nothing: %q", out.String())
+	}
+}
+
+func TestAPackageWithNoTestFilesIsNotSilentHoweverManyTestsSteppedAside(t *testing.T) {
+	t.Parallel()
+	summary, err := audit(strings.NewReader(events(t, "skip example/a", "skip example/a TestOne")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if silent := summary.silentPackages(); len(silent) != 0 {
+		t.Fatalf("silent packages = %v, want a package with no test files left alone", silent)
+	}
+}
+
+func TestAPackageThatReachedNoVerdictAtAllIsNotCalledSilent(t *testing.T) {
+	t.Parallel()
+	summary, err := audit(strings.NewReader(`{"Action":"output","Package":"example/a","Output":"building\n"}` + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if silent := summary.silentPackages(); len(silent) != 0 {
+		t.Fatalf("silent packages = %v, want a package that skipped nothing left alone", silent)
+	}
+}
+
+func TestAuditRefusesALineLongerThanItWillHold(t *testing.T) {
+	t.Parallel()
+	long := `{"Action":"output","Package":"example/a","Output":"` + strings.Repeat("x", maximumLineBuffer+1) + `"}` + "\n"
+	summary, err := audit(strings.NewReader(long))
+	if err == nil || !strings.Contains(err.Error(), "read the test event stream") {
+		t.Fatalf("audit of a line it cannot hold = (%+v, %v)", summary, err)
 	}
 }

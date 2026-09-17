@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,8 +142,8 @@ func TestClaimFailsOnADirectoryThatIsNotThere(t *testing.T) {
 
 	missing := filepath.Join(t.TempDir(), "absent")
 	owner, err := tempowner.Claim(missing, tempowner.Marker{RunID: "run"}, time.Now())
-	if err == nil || owner != nil {
-		t.Fatalf("claim of a missing directory = (%v, %v), want a failure", owner, err)
+	if err == nil || owner != nil || !strings.Contains(err.Error(), "locking ") {
+		t.Fatalf("claim of a missing directory = (%v, %v), want the lock named as the failure", owner, err)
 	}
 }
 

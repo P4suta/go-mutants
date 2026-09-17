@@ -105,10 +105,10 @@ func Update(path string, mutate func(*Ledger) error) error {
 }
 
 func lock(path string) (func(), error) {
-	return lockWithWait(path, time.Sleep)
+	return lockWithWait(path, time.Sleep, advisorylock.Try)
 }
 
-func lockWithWait(path string, wait func(time.Duration)) (func(), error) {
+func lockWithWait(path string, wait func(time.Duration), try func(*os.File) (bool, error)) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), filemode.ReadableDirectory); err != nil {
 		return nil, err
 	}
@@ -117,7 +117,7 @@ func lockWithWait(path string, wait func(time.Duration)) (func(), error) {
 		return nil, err
 	}
 	for waited := time.Duration(0); ; waited += lockPoll {
-		held, lockErr := advisorylock.Try(file)
+		held, lockErr := try(file)
 		if lockErr != nil {
 			return nil, errors.Join(fmt.Errorf("goatest: lock %s: %w", path, lockErr), file.Close())
 		}
@@ -164,7 +164,13 @@ func Save(path string, ledger Ledger) error {
 	return os.Rename(name, path)
 }
 
-func writeAndSync(file *os.File, data []byte) error {
+type syncingFile interface {
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+}
+
+func writeAndSync(file syncingFile, data []byte) error {
 	if _, err := file.Write(data); err != nil {
 		return errors.Join(err, file.Close())
 	}

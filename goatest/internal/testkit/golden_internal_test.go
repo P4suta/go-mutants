@@ -42,3 +42,14 @@ func TestUpdateReadsTheFlagSetRatherThanAPointer(t *testing.T) {
 		}
 	}
 }
+
+func TestTheUpdateFlagIsOffUntilSomebodyAsksForIt(t *testing.T) {
+	t.Parallel()
+	registered := flag.Lookup(UpdateFlagName)
+	if registered == nil {
+		t.Fatalf("%s is not registered", UpdateFlagName)
+	}
+	if registered.DefValue != "false" {
+		t.Fatalf("%s defaults to %q, want the golden files left alone", UpdateFlagName, registered.DefValue)
+	}
+}

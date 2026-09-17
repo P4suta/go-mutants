@@ -36,7 +36,7 @@ func TestLockRetriesAfterContentionWithoutWaitingForWallTime(t *testing.T) {
 		if err := advisorylock.Release(holder); err != nil {
 			t.Error(err)
 		}
-	})
+	}, advisorylock.Try)
 	if err != nil {
 		t.Fatal(err)
 	}

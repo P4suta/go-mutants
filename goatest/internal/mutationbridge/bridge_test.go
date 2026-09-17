@@ -20,3 +20,11 @@ func TestProfileMatchesAssuranceContract(t *testing.T) {
 		t.Fatal("unknown contract was accepted")
 	}
 }
+
+func TestNoWorkspaceCarriesNoRecording(t *testing.T) {
+	t.Parallel()
+	var absent *mutationbridge.Workspace
+	if got := absent.Recording(); got != nil {
+		t.Fatalf("Recording of no workspace = %v, want nothing at all", got)
+	}
+}

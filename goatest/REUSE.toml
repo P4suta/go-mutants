@@ -25,7 +25,6 @@ path = [
   "internal/devtools/proofaudit/testdata/**",
   "internal/devtools/reportdiff/testdata/**",
   "internal/devtools/tracesummary/testdata/**",
-  "internal/testkit/testdata/**",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 goatest contributors"
