@@ -985,3 +985,9 @@ id = '1cd0672eadfdd77e'
 reason = 'the recorder reads this count only through a sink that does not keep its own, and every sink in the module keeps one; the branch is what a sink without a Dropper would be counted by'
 expires = '2027-09-17T00:00:00Z'
 owner = 'goatest'
+
+[[acceptance]]
+id = '3da28d44093c4f16'
+reason = 'validateReadEvent runs on every event before this line and admits exactly one payload, the one its type names, so an event of type prepare has a prepare payload and an event with a prepare payload is of type prepare; the two halves of this conjunction are the same fact by the time the reader reaches them, and or and and agree wherever both halves agree'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'

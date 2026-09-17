@@ -61,7 +61,12 @@ the source:
   boolean underneath. A named boolean type qualifies: `!` applies to any
   boolean type.
 - `boolean-connective` needs no gate. Both operands of `&&` and `||` are
-  boolean by construction.
+  boolean by construction. The operator is replaced inside the expression that
+  owns it, so `a && b || c` stays `(a && b) || c` and never re-associates:
+  `&&` binds tighter than `||`, so replacing the token in the source by hand is
+  a different program from the one the run measured. A report names the
+  position and the two spellings; the expression it changed is the one the
+  position sits in.
 - `integer-arithmetic` requires both operands to be integers. String
   concatenation with `+` is excluded by the operand type, not by a spelling
   heuristic.
