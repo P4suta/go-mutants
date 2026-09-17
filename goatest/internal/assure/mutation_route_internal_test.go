@@ -1,0 +1,199 @@
+// SPDX-FileCopyrightText: 2026 goatest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+package assure
+
+import (
+	"fmt"
+	"reflect"
+	"slices"
+	"testing"
+	"time"
+
+	gomutants "github.com/P4suta/go-mutants"
+	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
+)
+
+func recordedRoutes(sink *trace.MemorySink) []trace.RouteRecord {
+	var records []trace.RouteRecord
+	for _, event := range sink.Events() {
+		if event.Type == trace.TypeRoute && event.Route != nil {
+			records = append(records, *event.Route)
+		}
+	}
+	return records
+}
+
+func reachedMutationTargets() []TargetEvidence {
+	const ordinaryTargetCount = 9
+	targets := make([]TargetEvidence, 0, ordinaryTargetCount+1)
+	for index := range ordinaryTargetCount {
+		name := fmt.Sprintf("TestValue%d", index)
+		targets = append(targets, TargetEvidence{
+			Target: goanalysis.Target{
+				ID: "target-" + name, Name: name, Kind: goanalysis.KindTest, Package: "fixture.example/module",
+			},
+			CoveredFiles: []string{"value.go"}, Duration: time.Duration(index+1) * time.Millisecond,
+		})
+	}
+	return append(targets, TargetEvidence{
+		Target: goanalysis.Target{
+			ID: "target-FuzzValue", Name: "FuzzValue", Kind: goanalysis.KindFuzz, Package: "fixture.example/module",
+		},
+		CoveredFiles: []string{"value.go"}, Duration: 10 * time.Millisecond,
+	})
+}
+
+func TestEvaluateMutationsRecordsHowCoverageRoutedAMutant(t *testing.T) {
+	t.Parallel()
+	mutant := gomutants.Mutant{
+		ID: "mutant-a", DisplayID: "arithmetic#1", Accepted: true, Rule: "arithmetic",
+		Path: "value.go", Line: 42, Package: "fixture.example/module",
+	}
+	sink, recorder := newTraceRecording()
+	session := &mutationUnitSession{
+		catalog: gomutants.Catalog{Mutants: []gomutants.Mutant{mutant}},
+	}
+	if _, err := evaluateMutationsForTest(t.Context(), session, reachedMutationTargets(), MutationOptions{
+		Trace: recorder,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	routes := recordedRoutes(sink)
+	if len(routes) != 1 {
+		t.Fatalf("routes = %+v", routes)
+	}
+	route := routes[0]
+	if route.MutantID != "mutant-a" || route.Rule != "arithmetic" || route.Path != "value.go" ||
+		route.Line != 42 || route.Reason != trace.ReasonCoverageReaching {
+		t.Fatalf("recorded route = %+v", route)
+	}
+
+	if route.Column != 0 || route.Granularity != trace.GranularityFile ||
+		route.Fallback != trace.FallbackPositionUnknown || route.FileCandidates != 10 {
+		t.Fatalf("recorded route narrowing = %+v", route)
+	}
+	wantTargets := []string{
+		"target-TestValue0", "target-TestValue1", "target-TestValue2", "target-TestValue3", "target-TestValue4",
+		"target-TestValue5", "target-TestValue6", "target-TestValue7", "target-TestValue8", "target-FuzzValue",
+	}
+	if !slices.Equal(route.ReachingTargets, wantTargets) {
+		t.Fatalf("reaching targets = %v, want %v", route.ReachingTargets, wantTargets)
+	}
+	wantPlan := []string{"batch:fixture.example/module(10)"}
+	if !slices.Equal(route.Plan, wantPlan) {
+		t.Fatalf("plan = %v, want %v", route.Plan, wantPlan)
+	}
+	if !recordedBefore(t, sink, trace.TypeRoute, trace.TypeMutantExec) {
+		t.Fatalf("the plan was recorded after it was carried out: %+v", sink.Events())
+	}
+}
+
+func TestOrderReachingTargetsUsesProbeDurationWhenAvailable(t *testing.T) {
+	coverage := []goanalysis.FileCoverage{{Path: "value.go"}}
+	baselineFast := TargetEvidence{Target: goanalysis.Target{ID: "baseline-fast"}, Covered: coverage, Duration: time.Millisecond, ProbeDuration: 3 * time.Millisecond}
+	probeFast := TargetEvidence{Target: goanalysis.Target{ID: "probe-fast"}, Covered: coverage, Duration: 2 * time.Millisecond, ProbeDuration: time.Millisecond}
+	baselineOnly := TargetEvidence{Target: goanalysis.Target{ID: "baseline-only"}, Covered: coverage, Duration: 2 * time.Millisecond}
+	unmeasured := TargetEvidence{Target: goanalysis.Target{ID: "unmeasured"}}
+	got := orderReachingTargets(gomutants.Mutant{}, []TargetEvidence{baselineFast, unmeasured, probeFast, baselineOnly})
+	want := []string{"probe-fast", "baseline-only", "baseline-fast", "unmeasured"}
+	for index := range want {
+		if got[index].Target.ID != want[index] {
+			t.Fatalf("ordered target %d = %q, want %q: %+v", index, got[index].Target.ID, want[index], got)
+		}
+	}
+}
+
+func TestOrderReachingTargetsPrefersTheNarrowestInfectionWitness(t *testing.T) {
+	mutant := gomutants.Mutant{Index: probedMutantIndex, Probed: true}
+	local := TargetEvidence{
+		Target: goanalysis.Target{ID: "local"}, Covered: []goanalysis.FileCoverage{{Path: "value.go"}},
+		Duration: time.Second, ProbeDuration: time.Second, Probed: true, Infected: []uint32{probedMutantIndex},
+	}
+	broad := TargetEvidence{
+		Target: goanalysis.Target{ID: "broad"}, Covered: []goanalysis.FileCoverage{{Path: "value.go"}, {Path: "other.go"}},
+		Duration: time.Millisecond, ProbeDuration: time.Millisecond, Probed: true, Infected: []uint32{probedMutantIndex, probedMutantIndex + 1},
+	}
+	unprobed := TargetEvidence{
+		Target: goanalysis.Target{ID: "unprobed"}, Covered: []goanalysis.FileCoverage{{Path: "value.go"}},
+		Duration: time.Millisecond, ProbeDuration: time.Millisecond,
+	}
+	got := orderReachingTargets(mutant, []TargetEvidence{unprobed, broad, local})
+	want := []string{"local", "broad", "unprobed"}
+	for index := range want {
+		if got[index].Target.ID != want[index] {
+			t.Fatalf("ordered target %d = %q, want %q: %+v", index, got[index].Target.ID, want[index], got)
+		}
+	}
+}
+
+func recordedBefore(t *testing.T, sink *trace.MemorySink, first, second string) bool {
+	t.Helper()
+	firstSeen, secondSeen := -1, -1
+	for index, event := range sink.Events() {
+		if event.Type == first && firstSeen < 0 {
+			firstSeen = index
+		}
+		if event.Type == second && secondSeen < 0 {
+			secondSeen = index
+		}
+	}
+	if firstSeen < 0 || secondSeen < 0 {
+		t.Fatalf("recording holds no %q or no %q event", first, second)
+	}
+	return firstSeen < secondSeen
+}
+
+func TestEvaluateMutationsRecordsTheRouteOfAnUnreachedMutant(t *testing.T) {
+	t.Parallel()
+	mutant := gomutants.Mutant{
+		ID: "mutant-b", DisplayID: "conditional#2", Accepted: true, Rule: "conditional",
+		Path: "other/value.go", Line: 7, Package: "fixture.example/module/other",
+	}
+	sink, recorder := newTraceRecording()
+	session := &mutationUnitSession{catalog: gomutants.Catalog{Mutants: []gomutants.Mutant{mutant}}}
+	if _, err := evaluateMutationsForTest(t.Context(), session, nil, MutationOptions{
+		Trace: recorder,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := trace.RouteRecord{
+		MutantID: "mutant-b", Rule: "conditional", Path: "other/value.go", Line: 7,
+		Plan: []string{"package-suite"}, Reason: trace.ReasonUnreached,
+		Granularity: trace.GranularityFile, Fallback: trace.FallbackPositionUnknown,
+	}
+	if routes := recordedRoutes(sink); len(routes) != 1 || !reflect.DeepEqual(routes[0], want) {
+		t.Fatalf("routes = %+v, want [%+v]", routes, want)
+	}
+}
+
+func TestMutationRoutingRecordsOneRoutePerSelectedMutantAndChangesNoEvaluation(t *testing.T) {
+	t.Parallel()
+	catalog := gomutants.Catalog{Mutants: []gomutants.Mutant{
+		{ID: "mutant-a", DisplayID: "a#1", Accepted: true, Path: "value.go", Line: 1},
+		{ID: "mutant-b", DisplayID: "b#1", Accepted: true, Path: "other/value.go", Line: 2},
+		{ID: "mutant-c", DisplayID: "c#1", Accepted: false, Path: "value.go", Line: 3},
+	}}
+	catalog.Rejections = []gomutants.Rejection{{ID: "mutant-c", Diagnostic: "does not compile"}}
+	targets := reachedMutationTargets()
+	options := MutationOptions{Jobs: 2}
+	untraced, err := evaluateMutationsForTest(t.Context(), &mutationUnitSession{catalog: catalog}, targets, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink, recorder := newTraceRecording()
+	options.Trace = recorder
+	traced, err := evaluateMutationsForTest(t.Context(), &mutationUnitSession{catalog: catalog}, targets, options)
+	if err != nil || !reflect.DeepEqual(traced, untraced) {
+		t.Fatalf("traced evaluation = (%+v, %v), want %+v", traced, err, untraced)
+	}
+	routed := make(map[string]string)
+	for _, route := range recordedRoutes(sink) {
+		routed[route.MutantID] = route.Reason
+	}
+	want := map[string]string{"mutant-a": trace.ReasonCoverageReaching, "mutant-b": trace.ReasonUnreached}
+	if !reflect.DeepEqual(routed, want) {
+		t.Fatalf("routed mutants = %v, want %v", routed, want)
+	}
+}

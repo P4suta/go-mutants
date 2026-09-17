@@ -1,0 +1,542 @@
+// SPDX-FileCopyrightText: 2026 goatest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+package app_test
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/P4suta/go-mutants/goatest/internal/app"
+	"github.com/P4suta/go-mutants/goatest/internal/assure"
+	"github.com/P4suta/go-mutants/goatest/internal/cli"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
+)
+
+const (
+	traceScannerInitialBufferBytes = 64 << 10
+	traceScannerMaximumTokenBytes  = 8 << 20
+	minimumCompleteTraceEvents     = 3
+	minimumTraceLifecycleEvents    = 2
+	traceFixtureRuns               = 2
+)
+
+func readTrace(t *testing.T, directory string) []trace.Event {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(directory, trace.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []trace.Event
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 0, traceScannerInitialBufferBytes), traceScannerMaximumTokenBytes)
+	for scanner.Scan() {
+		var event trace.Event
+		decoder := json.NewDecoder(bytes.NewReader(scanner.Bytes()))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&event); err != nil {
+			t.Fatalf("trace line %q: %v", scanner.Text(), err)
+		}
+		events = append(events, event)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return events
+}
+
+func traceRun(t *testing.T, root string) string {
+	t.Helper()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var runs []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			runs = append(runs, filepath.Join(root, entry.Name()))
+		}
+	}
+	if len(runs) != 1 {
+		t.Fatalf("trace root %s holds %d recordings, want one", root, len(runs))
+	}
+	return runs[0]
+}
+
+func traceOfType(events []trace.Event, kind string) []trace.Event {
+	var selected []trace.Event
+	for _, event := range events {
+		if event.Type == kind {
+			selected = append(selected, event)
+		}
+	}
+	return selected
+}
+
+func TestTraceRequestRecordsTheRunAndClosesItWithItsVerdict(t *testing.T) {
+	t.Parallel()
+	directory := filepath.Join(t.TempDir(), "trace")
+	var recorded *trace.Recorder
+	service := app.Service{
+		Root: t.TempDir(),
+		Run: func(_ context.Context, options assure.Options) (report.Report, error) {
+			recorded = options.Trace
+
+			options.Progress(assure.Event{Kind: "snapshot", Detail: "captured"})
+			options.Trace.Progress("snapshot", "captured")
+			return report.Report{Schema: report.SchemaV1, Verdict: report.VerdictAssured, Contract: "standard-v1", Snapshot: "snapshot-a"}, nil
+		},
+	}
+	result, err := service.Execute(t.Context(), cli.CommandVerify, cli.Request{Trace: true, TraceDirectory: directory}, "")
+	if err != nil || result.Verdict != report.VerdictAssured {
+		t.Fatalf("verify = %+v, %v", result, err)
+	}
+	if recorded == nil {
+		t.Fatal("the run was handed no recorder")
+	}
+
+	events := readTrace(t, traceRun(t, directory))
+	if len(events) < minimumCompleteTraceEvents {
+		t.Fatalf("recorded events = %+v", events)
+	}
+	first, last := events[0], events[len(events)-1]
+	if first.Type != trace.TypeRunStart || first.Schema != trace.SchemaV1 {
+		t.Fatalf("first event = %+v", first)
+	}
+	if last.Type != trace.TypeRunEnd || last.Run == nil {
+		t.Fatalf("last event = %+v", last)
+	}
+	if last.Run.Verdict != string(report.VerdictAssured) || last.Run.Error != "" {
+		t.Fatalf("run-end = %+v", last.Run)
+	}
+	if last.Run.EventsDropped != 0 || last.Run.EventsEmitted != int64(len(events))-1 {
+		t.Fatalf("accounting = %+v of %d events", last.Run, len(events))
+	}
+	progress := traceOfType(events, trace.TypeProgress)
+	if len(progress) != 1 || progress[0].Progress.Kind != "snapshot" || progress[0].Progress.Detail != "captured" {
+		t.Fatalf("progress events = %+v", progress)
+	}
+	for index, event := range events {
+		if event.Seq != int64(index)+1 {
+			t.Fatalf("event %d has sequence %d", index, event.Seq)
+		}
+	}
+}
+
+func TestTraceRecordsTheErrorThatEndedTheRun(t *testing.T) {
+	t.Parallel()
+	directory := filepath.Join(t.TempDir(), "trace")
+	sentinel := errors.New("mutation workspace failed")
+	service := app.Service{
+		Root: t.TempDir(),
+		Run: func(context.Context, assure.Options) (report.Report, error) {
+			return report.Report{}, sentinel
+		},
+	}
+	if _, err := service.Execute(t.Context(), cli.CommandVerify, cli.Request{Trace: true, TraceDirectory: directory}, ""); !errors.Is(err, sentinel) {
+		t.Fatalf("verify error = %v", err)
+	}
+	events := readTrace(t, traceRun(t, directory))
+	last := events[len(events)-1]
+	if last.Type != trace.TypeRunEnd || last.Run == nil || last.Run.Error != sentinel.Error() {
+		t.Fatalf("run-end = %+v", last)
+	}
+}
+
+func TestARunThatReachedNoVerdictIsTracedWithHowItEnded(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name    string
+		runErr  error
+		verdict string
+	}{
+		{name: "canceled", runErr: context.Canceled, verdict: "INTERRUPTED"},
+		{name: "deadline", runErr: context.DeadlineExceeded, verdict: "INTERRUPTED"},
+		{name: "failed", runErr: errors.New("mutation workspace failed"), verdict: string(report.VerdictError)},
+		{name: "silent", verdict: "UNKNOWN"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			directory := filepath.Join(t.TempDir(), "trace")
+			service := app.Service{
+				Root: t.TempDir(),
+				Run: func(context.Context, assure.Options) (report.Report, error) {
+					return report.Report{}, testCase.runErr
+				},
+			}
+			_, err := service.Execute(t.Context(), cli.CommandVerify, cli.Request{Trace: true, TraceDirectory: directory}, "")
+			if testCase.runErr != nil && !errors.Is(err, testCase.runErr) {
+				t.Fatalf("verify error = %v, want %v", err, testCase.runErr)
+			}
+
+			events := readTrace(t, traceRun(t, directory))
+			last := events[len(events)-1]
+			if last.Type != trace.TypeRunEnd || last.Run == nil {
+				t.Fatalf("last event = %+v, want a run-end", last)
+			}
+
+			if last.Run.Verdict != testCase.verdict {
+				t.Fatalf("run-end verdict = %q, want %q", last.Run.Verdict, testCase.verdict)
+			}
+			if testCase.runErr != nil && last.Run.Error != testCase.runErr.Error() {
+				t.Fatalf("run-end error = %q, want %q", last.Run.Error, testCase.runErr)
+			}
+		})
+	}
+}
+
+func TestAnUnrequestedTraceIsRecordedInMemoryAndWritesNothing(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	traced := false
+	service := app.Service{
+		Root: root,
+		Run: func(_ context.Context, options assure.Options) (report.Report, error) {
+			traced = options.Trace != nil
+			options.Trace.Progress("snapshot", "captured")
+			return report.Report{Schema: report.SchemaV1, Verdict: report.VerdictAssured}, nil
+		},
+	}
+	if _, err := service.Execute(t.Context(), cli.CommandVerify, cli.Request{}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if !traced {
+		t.Fatal("a run nobody asked to trace was handed no recorder")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".goatest", "trace")); !os.IsNotExist(err) {
+		t.Fatalf("an unrequested trace created a directory: %v", err)
+	}
+}
+
+func TestDefaultTraceDirectoryIsNamedForTheMomentAndTheProcess(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	service := app.Service{
+		Root:      root,
+		Now:       func() time.Time { return time.Date(2026, 9, 1, 10, 11, 12, 0, time.UTC) },
+		ProcessID: func() int { return appFixtureProcessID },
+		Run: func(context.Context, assure.Options) (report.Report, error) {
+			return report.Report{Schema: report.SchemaV1, Verdict: report.VerdictAssured}, nil
+		},
+	}
+	if _, err := service.Execute(t.Context(), cli.CommandVerify, cli.Request{Trace: true}, ""); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(root, ".goatest", "trace", "20260901T101112Z-4242")
+	if events := readTrace(t, directory); len(events) < minimumTraceLifecycleEvents || events[0].Type != trace.TypeRunStart {
+		t.Fatalf("default trace directory %s recorded %+v", directory, events)
+	}
+}
+
+func TestATraceThatCannotBeWrittenWarnsAndLeavesTheRunAlone(t *testing.T) {
+	t.Parallel()
+	blocked := filepath.Join(t.TempDir(), "occupied")
+	if err := os.WriteFile(blocked, []byte("not a directory"), filemode.ReadableFile); err != nil {
+		t.Fatal(err)
+	}
+	for _, testCase := range []struct {
+		name      string
+		directory func(root string) string
+		want      string
+	}{
+		{name: "unopenable", directory: func(string) string { return filepath.Join(blocked, "trace") }, want: "trace directory"},
+		{name: "inside-repository", directory: func(root string) string { return filepath.Join(root, "trace") }, want: "inside the repository"},
+		{name: "repository-root", directory: func(root string) string { return root }, want: "inside the repository"},
+		{name: "relative-inside-repository", directory: func(string) string { return "trace" }, want: "inside the repository"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			var progress bytes.Buffer
+			traced := false
+			service := app.Service{
+				Root: root, Progress: &progress,
+				Run: func(_ context.Context, options assure.Options) (report.Report, error) {
+					traced = options.Trace != nil
+					return report.Report{Schema: report.SchemaV1, Verdict: report.VerdictAssured, Contract: "standard-v1"}, nil
+				},
+			}
+			result, err := service.Execute(t.Context(), cli.CommandVerify, cli.Request{Trace: true, TraceDirectory: testCase.directory(root)}, "")
+			if err != nil || result.Verdict != report.VerdictAssured {
+				t.Fatalf("verify = %+v, %v", result, err)
+			}
+
+			if !traced {
+				t.Fatal("a trace directory that cannot be written left the run with no recording at all")
+			}
+			warning := progress.String()
+			if !strings.Contains(warning, "trace-unavailable") || !strings.Contains(warning, testCase.want) {
+				t.Fatalf("warning = %q", warning)
+			}
+			if strings.Count(warning, "\n") != 1 {
+				t.Fatalf("warning is not one line: %q", warning)
+			}
+		})
+	}
+}
+
+type unclosableStream struct{ err error }
+
+func (stream unclosableStream) Write(data []byte) (int, error) { return len(data), nil }
+func (stream unclosableStream) Sync() error                    { return nil }
+func (stream unclosableStream) Close() error                   { return stream.err }
+
+func TestARecordingThatCannotBeClosedWarnsAndLeavesTheRunAlone(t *testing.T) {
+	t.Parallel()
+	directory := filepath.Join(t.TempDir(), "trace")
+	var progress bytes.Buffer
+	traced := false
+	service := app.Service{
+		Root: t.TempDir(), Progress: &progress,
+		TraceFilesystem: trace.Filesystem{
+			OpenAppend: func(string, fs.FileMode) (trace.File, error) {
+				return unclosableStream{err: errors.New("no space left on device")}, nil
+			},
+		},
+		Run: func(_ context.Context, options assure.Options) (report.Report, error) {
+			traced = options.Trace != nil
+			return report.Report{Schema: report.SchemaV1, Verdict: report.VerdictAssured, Contract: "standard-v1"}, nil
+		},
+	}
+	result, err := service.Execute(t.Context(), cli.CommandVerify, cli.Request{Trace: true, TraceDirectory: directory}, "")
+
+	if err != nil || result.Verdict != report.VerdictAssured {
+		t.Fatalf("verify = %+v, %v", result, err)
+	}
+	if !traced {
+		t.Fatal("a recording that would fail to close was never handed to the run")
+	}
+	warning := progress.String()
+	if !strings.Contains(warning, "trace-unavailable") {
+		t.Fatalf("warning = %q, want the note a recording that cannot be closed leaves", warning)
+	}
+	if !strings.Contains(warning, "no space left on device") {
+		t.Fatalf("warning = %q, want the reason the recording could not be closed", warning)
+	}
+	if strings.Count(warning, "\n") != 1 {
+		t.Fatalf("warning is not one line: %q", warning)
+	}
+}
+
+func symlinkTo(t *testing.T, target, name string) string {
+	t.Helper()
+	if err := os.Symlink(target, name); err != nil {
+		t.Skipf("symbolic links are unavailable here: %v", err)
+	}
+	return name
+}
+
+func TestATraceDirectoryIsJudgedByWhereItLands(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name      string
+		directory func(t *testing.T, root string) string
+		refused   bool
+	}{
+		{
+			name: "symlink-to-the-repository",
+			directory: func(t *testing.T, root string) string {
+				t.Helper()
+				return filepath.Join(symlinkTo(t, root, filepath.Join(t.TempDir(), "alias")), "trace")
+			},
+			refused: true,
+		},
+		{
+			name: "symlink-to-a-directory-of-the-repository",
+			directory: func(t *testing.T, root string) string {
+				t.Helper()
+				inside := filepath.Join(root, "internal")
+				if err := os.MkdirAll(inside, filemode.ReadableDirectory); err != nil {
+					t.Fatal(err)
+				}
+
+				return filepath.Join(symlinkTo(t, inside, filepath.Join(t.TempDir(), "alias")), "traces", "run")
+			},
+			refused: true,
+		},
+		{
+			name: "symlink-outside-the-repository",
+			directory: func(t *testing.T, root string) string {
+				t.Helper()
+				return filepath.Join(symlinkTo(t, t.TempDir(), filepath.Join(t.TempDir(), "alias")), "trace")
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			directory := testCase.directory(t, root)
+			var progress bytes.Buffer
+			traced := false
+			service := app.Service{
+				Root: root, Progress: &progress,
+				Run: func(_ context.Context, options assure.Options) (report.Report, error) {
+					traced = options.Trace != nil
+					return report.Report{Schema: report.SchemaV1, Verdict: report.VerdictAssured, Contract: "standard-v1"}, nil
+				},
+			}
+			result, err := service.Execute(t.Context(), cli.CommandVerify, cli.Request{Trace: true, TraceDirectory: directory}, "")
+			if err != nil || result.Verdict != report.VerdictAssured {
+				t.Fatalf("verify = %+v, %v", result, err)
+			}
+
+			if !testCase.refused {
+				if !traced {
+					t.Fatalf("a directory outside the repository was refused: %q", progress.String())
+				}
+				if events := readTrace(t, traceRun(t, directory)); len(events) < minimumTraceLifecycleEvents {
+					t.Fatalf("recorded events = %+v", events)
+				}
+				if progress.Len() != 0 {
+					t.Fatalf("progress = %q", progress.String())
+				}
+				return
+			}
+
+			if !traced {
+				t.Fatal("a refused trace directory left the run with no recording at all")
+			}
+			warning := progress.String()
+			if !strings.Contains(warning, "trace-unavailable") || !strings.Contains(warning, "inside the repository") {
+				t.Fatalf("warning = %q", warning)
+			}
+			entries, err := os.ReadDir(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range entries {
+				if entry.Name() == ".goatest" {
+					continue
+				}
+				if _, err := os.Stat(filepath.Join(root, entry.Name(), "trace")); err == nil {
+					t.Fatalf("a refused trace was written into the repository at %s", entry.Name())
+				}
+			}
+		})
+	}
+}
+
+func TestATraceDirectoryBesideTheRepositoryIsRecordedInto(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name      string
+		directory func(parent string) string
+	}{
+
+		{name: "the-directory-holding-the-repository", directory: func(parent string) string { return parent }},
+		{name: "a-sibling-of-the-repository", directory: func(parent string) string { return filepath.Join(parent, "traces") }},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			parent := t.TempDir()
+			root := filepath.Join(parent, "repository")
+			if err := os.MkdirAll(root, filemode.ReadableDirectory); err != nil {
+				t.Fatal(err)
+			}
+			directory := testCase.directory(parent)
+			var progress bytes.Buffer
+			traced := false
+			service := app.Service{
+				Root: root, Progress: &progress,
+				Now:       func() time.Time { return time.Date(2026, 9, 1, 10, 11, 12, 0, time.UTC) },
+				ProcessID: func() int { return appFixtureProcessID },
+				Run: func(_ context.Context, options assure.Options) (report.Report, error) {
+					traced = options.Trace != nil
+					return report.Report{Schema: report.SchemaV1, Verdict: report.VerdictAssured, Contract: "standard-v1"}, nil
+				},
+			}
+			result, err := service.Execute(t.Context(), cli.CommandVerify, cli.Request{Trace: true, TraceDirectory: directory}, "")
+			if err != nil || result.Verdict != report.VerdictAssured {
+				t.Fatalf("verify = %+v, %v", result, err)
+			}
+			if !traced {
+				t.Fatalf("a trace directory outside the repository was refused: %q", progress.String())
+			}
+			if events := readTrace(t, filepath.Join(directory, "20260901T101112Z-4242")); len(events) < minimumTraceLifecycleEvents {
+				t.Fatalf("recorded events = %+v", events)
+			}
+			if progress.Len() != 0 {
+				t.Fatalf("progress = %q", progress.String())
+			}
+		})
+	}
+}
+
+func TestATraceMayBeWrittenUnderTheRepositoryReportDirectory(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	var progress bytes.Buffer
+	service := app.Service{
+		Root: root, Progress: &progress,
+		Run: func(context.Context, assure.Options) (report.Report, error) {
+			return report.Report{Schema: report.SchemaV1, Verdict: report.VerdictAssured}, nil
+		},
+	}
+	if _, err := service.Execute(t.Context(), cli.CommandVerify, cli.Request{
+		Trace: true, TraceDirectory: filepath.Join(".goatest", "chosen"),
+	}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if events := readTrace(t, traceRun(t, filepath.Join(root, ".goatest", "chosen"))); len(events) < minimumTraceLifecycleEvents {
+		t.Fatalf("recorded events = %+v", events)
+	}
+	if progress.Len() != 0 {
+		t.Fatalf("progress = %q", progress.String())
+	}
+}
+
+func TestASecondRunTracedToOneDirectoryKeepsTheRecordingOfTheFirst(t *testing.T) {
+	t.Parallel()
+	directory := filepath.Join(t.TempDir(), "traces")
+	var progress bytes.Buffer
+	moment := time.Date(2026, 9, 1, 10, 11, 12, 0, time.UTC)
+	service := app.Service{
+		Root: t.TempDir(), Progress: &progress,
+		Now:       func() time.Time { return moment },
+		ProcessID: func() int { return appFixtureProcessID },
+		Run: func(_ context.Context, options assure.Options) (report.Report, error) {
+			options.Trace.Progress("snapshot", moment.Format(time.RFC3339))
+			return report.Report{Schema: report.SchemaV1, Verdict: report.VerdictAssured}, nil
+		},
+	}
+
+	for range traceFixtureRuns {
+		if _, err := service.Execute(t.Context(), cli.CommandVerify, cli.Request{Trace: true, TraceDirectory: directory}, ""); err != nil {
+			t.Fatal(err)
+		}
+		moment = moment.Add(time.Minute)
+	}
+
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != traceFixtureRuns {
+		t.Fatalf("%s holds %d recordings, want one for each run", directory, len(entries))
+	}
+	for _, entry := range entries {
+		events := readTrace(t, filepath.Join(directory, entry.Name()))
+		if len(events) < minimumCompleteTraceEvents || events[0].Type != trace.TypeRunStart || events[0].Seq != 1 {
+			t.Fatalf("recording %s = %+v", entry.Name(), events)
+		}
+		last := events[len(events)-1]
+		if last.Type != trace.TypeRunEnd || last.Run == nil || last.Run.EventsDropped != 0 {
+			t.Fatalf("recording %s ended with %+v", entry.Name(), last)
+		}
+	}
+	if progress.Len() != 0 {
+		t.Fatalf("progress = %q", progress.String())
+	}
+}

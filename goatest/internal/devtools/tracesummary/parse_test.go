@@ -1,0 +1,904 @@
+// SPDX-FileCopyrightText: 2026 goatest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+package main
+
+import (
+	"bufio"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
+)
+
+const runStart = `{"seq":1,"type":"run-start","schema":"goatest-trace-v1","timestamp":"2026-01-01T00:00:00Z","elapsed_ms":0}`
+
+func stream(lines ...string) string {
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func readFixture(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("read the fixture: %v", err)
+	}
+	return string(data)
+}
+
+func TestReadEventsKeepsTheStreamInOrderWithItsPayloads(t *testing.T) {
+	t.Parallel()
+	events, err := readEvents(strings.NewReader(readFixture(t, "sample-trace.jsonl")))
+	if err != nil {
+		t.Fatalf("read the sample trace: %v", err)
+	}
+	if len(events) != sampleTraceEventCount {
+		t.Fatalf("read %d events, want 30", len(events))
+	}
+	if events[0].Type != trace.TypeRunStart || events[0].Schema != trace.SchemaV1 {
+		t.Errorf("first event is %+v, want the run-start of %s", events[0], trace.SchemaV1)
+	}
+	last := events[len(events)-1]
+	if last.Type != trace.TypeRunEnd || last.Run == nil || last.Run.Verdict != "INSUFFICIENT" {
+		t.Errorf("last event is %+v, want the run-end carrying INSUFFICIENT", last)
+	}
+	if last.Run != nil && last.Run.EventsDropped != 1 {
+		t.Errorf("run-end reports %d dropped events, want 1", last.Run.EventsDropped)
+	}
+
+	if events[17].Seq != 18 || events[18].Seq != 20 {
+		t.Errorf("sequence numbers %d and %d around the drop, want 18 and 20", events[17].Seq, events[18].Seq)
+	}
+	execs, probes := 0, 0
+	for _, event := range events {
+		switch event.Type {
+		case trace.TypeExec:
+			execs++
+			if event.Exec == nil {
+				t.Fatalf("exec event %d carries no payload", event.Seq)
+			}
+		case trace.TypeProbeExec:
+			probes++
+			if event.Probe == nil || len(event.Probe.Infected) != sampleProbeInfectionCount {
+				t.Fatalf("probe event %d = %+v, want the two mutants the probe pass infected", event.Seq, event.Probe)
+			}
+		}
+	}
+	if execs != sampleTraceExecCount {
+		t.Errorf("read %d exec events, want 6", execs)
+	}
+	if probes != 1 {
+		t.Errorf("read %d probe-exec events, want 1", probes)
+	}
+}
+
+func TestReadEventsAcceptsATruncatedRecording(t *testing.T) {
+	t.Parallel()
+	events, err := readEvents(strings.NewReader(readFixture(t, "incomplete-trace.jsonl")))
+	if err != nil {
+		t.Fatalf("read the incomplete trace: %v", err)
+	}
+	if len(events) != incompleteTraceEventCount {
+		t.Fatalf("read %d events, want 5", len(events))
+	}
+	if events[len(events)-1].Type == trace.TypeRunEnd {
+		t.Error("the incomplete trace ends with a run-end event; the fixture is meant to be truncated")
+	}
+}
+
+func TestReadEventsKeepsStartedAndFinishedPrepareEvents(t *testing.T) {
+	t.Parallel()
+	events, err := readEvents(strings.NewReader(readFixture(t, "prepare-trace.jsonl")))
+	if err != nil {
+		t.Fatalf("read the prepare trace: %v", err)
+	}
+	if len(events) != prepareTraceEventCount {
+		t.Fatalf("read %d events, want %d", len(events), prepareTraceEventCount)
+	}
+	states := make(map[string]int)
+	results := make(map[string]int)
+	for _, event := range events {
+		if event.Type != trace.TypePrepare || event.Prepare == nil {
+			continue
+		}
+		states[event.Prepare.State]++
+		if event.Prepare.Result != "" {
+			results[event.Prepare.Result]++
+		}
+	}
+	if states[trace.PrepareStateStarted] != states[trace.PrepareStateFinished] {
+		t.Fatalf("prepare states = %+v, want every start finished", states)
+	}
+	for _, result := range []string{
+		trace.PrepareResultSucceeded,
+		trace.PrepareResultFailed,
+		trace.PrepareResultSkipped,
+	} {
+		if results[result] != 1 {
+			t.Errorf("prepare result %q occurred %d times, want once", result, results[result])
+		}
+	}
+}
+
+func TestReadEventsAcceptsEveryPreparePhase(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []string{
+		trace.PreparePhaseDiscovery,
+		trace.PreparePhaseProbeSnapshot,
+		trace.PreparePhaseMainValidation,
+		trace.PreparePhaseMainRestoration,
+		trace.PreparePhaseVerification,
+		trace.PreparePhaseBinaryBuild,
+		trace.PreparePhaseProbeValidation,
+		trace.PreparePhaseProbeCoverageBuild,
+		trace.PreparePhaseProbeRestoration,
+	} {
+		line := `{"seq":2,"type":"prepare","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"prepare":{"phase":"` + phase + `","state":"started"}}`
+		if _, err := readEvents(strings.NewReader(stream(runStart, line))); err != nil {
+			t.Errorf("prepare phase %q was rejected: %v", phase, err)
+		}
+	}
+}
+
+func TestReadEventsRejectsMalformedPrepareEvents(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		line string
+		want string
+	}{
+		{"missing payload", `{"seq":2,"type":"prepare","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1}`, "prepare"},
+		{"null payload", `{"seq":2,"type":"prepare","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"prepare":null}`, "null"},
+		{"missing phase", `{"seq":2,"type":"prepare","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"prepare":{"state":"started"}}`, "prepare.phase"},
+		{"unknown phase", `{"seq":2,"type":"prepare","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"prepare":{"phase":"guessed","state":"started"}}`, "prepare phase"},
+		{"missing state", `{"seq":2,"type":"prepare","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"prepare":{"phase":"discovery"}}`, "prepare.state"},
+		{"unknown state", `{"seq":2,"type":"prepare","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"prepare":{"phase":"discovery","state":"waiting"}}`, "prepare state"},
+		{"started with result", `{"seq":2,"type":"prepare","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"prepare":{"phase":"discovery","state":"started","result":"succeeded"}}`, "result"},
+		{"started with duration", `{"seq":2,"type":"prepare","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"prepare":{"phase":"discovery","state":"started","duration_ms":0}}`, "duration_ms"},
+		{"finished without result", `{"seq":2,"type":"prepare","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"prepare":{"phase":"discovery","state":"finished","duration_ms":0}}`, "prepare.result"},
+		{"finished without duration", `{"seq":2,"type":"prepare","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"prepare":{"phase":"discovery","state":"finished","result":"succeeded"}}`, "prepare.duration_ms"},
+		{"unknown result", `{"seq":2,"type":"prepare","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"prepare":{"phase":"discovery","state":"finished","result":"guessed","duration_ms":0}}`, "prepare result"},
+		{"null duration", `{"seq":2,"type":"prepare","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"prepare":{"phase":"discovery","state":"finished","result":"succeeded","duration_ms":null}}`, "duration_ms"},
+		{"negative duration", `{"seq":2,"type":"prepare","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"prepare":{"phase":"discovery","state":"finished","result":"succeeded","duration_ms":-1}}`, "duration_ms"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := readEvents(strings.NewReader(stream(runStart, testCase.line)))
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("error = %v, want one containing %q", err, testCase.want)
+			}
+		})
+	}
+}
+
+func TestReadEventsRejectsDeviationsNamingTheLine(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		stream string
+		want   []string
+	}{
+		{
+			name:   "not json",
+			stream: stream(runStart, `{"seq":2`),
+			want:   []string{"line 2"},
+		},
+		{
+			name:   "not an object",
+			stream: stream(runStart, `[1,2,3]`),
+			want:   []string{"line 2"},
+		},
+		{
+			name:   "two values on one line",
+			stream: stream(runStart, `{"seq":2,"type":"progress","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"progress":{"kind":"note"}} {}`),
+			want:   []string{"line 2"},
+		},
+		{
+			name:   "blank line",
+			stream: stream(runStart, ``, runStart),
+			want:   []string{"line 2", "blank"},
+		},
+		{
+			name:   "unknown field",
+			stream: stream(runStart, `{"seq":2,"type":"progress","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"progress":{"kind":"note"},"extra":1}`),
+			want:   []string{"line 2", `unknown field "extra"`},
+		},
+		{
+			name:   "unknown field inside a payload",
+			stream: stream(runStart, `{"seq":2,"type":"progress","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"progress":{"kind":"note","extra":1}}`),
+			want:   []string{"line 2", `unknown field "extra"`},
+		},
+		{
+			name:   "unknown event type",
+			stream: stream(runStart, `{"seq":2,"type":"guess","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1}`),
+			want:   []string{"line 2", `unknown event type "guess"`},
+		},
+		{
+			name:   "missing timestamp",
+			stream: stream(runStart, `{"seq":2,"type":"progress","elapsed_ms":1,"progress":{"kind":"note"}}`),
+			want:   []string{"line 2", `"timestamp"`},
+		},
+		{
+			name:   "missing elapsed_ms",
+			stream: stream(runStart, `{"seq":2,"type":"progress","timestamp":"2026-01-01T00:00:01Z","progress":{"kind":"note"}}`),
+			want:   []string{"line 2", `"elapsed_ms"`},
+		},
+		{
+			name:   "timestamp that is not rfc 3339",
+			stream: stream(runStart, `{"seq":2,"type":"progress","timestamp":"yesterday","elapsed_ms":1,"progress":{"kind":"note"}}`),
+			want:   []string{"line 2", "timestamp"},
+		},
+		{
+			name:   "missing payload",
+			stream: stream(runStart, `{"seq":2,"type":"exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1}`),
+			want:   []string{"line 2", "exec"},
+		},
+		{
+			name:   "payload of another event type",
+			stream: stream(runStart, `{"seq":2,"type":"exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"exec":{"argv":["go"],"exit_code":0},"phase":{"name":"mutation"}}`),
+			want:   []string{"line 2", "phase"},
+		},
+		{
+			name:   "payload on the run-start event",
+			stream: stream(`{"seq":1,"type":"run-start","schema":"goatest-trace-v1","timestamp":"2026-01-01T00:00:00Z","elapsed_ms":0,"progress":{"kind":"note"}}`),
+			want:   []string{"line 1", "progress"},
+		},
+		{
+			name:   "missing exec field",
+			stream: stream(runStart, `{"seq":2,"type":"exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"exec":{"argv":["go","version"]}}`),
+			want:   []string{"line 2", `"exec.exit_code"`},
+		},
+		{
+			name:   "missing run field",
+			stream: stream(runStart, `{"seq":2,"type":"run-end","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"run":{"verdict":"ASSURED","events_emitted":1}}`),
+			want:   []string{"line 2", `"run.events_dropped"`},
+		},
+		{
+			name:   "empty mutant identity",
+			stream: stream(runStart, `{"seq":2,"type":"mutant-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"mutant":{"id":""}}`),
+			want:   []string{"line 2", "mutant.id"},
+		},
+		{
+			name:   "negative duration",
+			stream: stream(runStart, `{"seq":2,"type":"phase-end","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"phase":{"name":"mutation","duration_ms":-1}}`),
+			want:   []string{"line 2", "phase.duration_ms"},
+		},
+		{
+			name:   "unknown route reason",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"guess","granularity":"block"}}`),
+			want:   []string{"line 2", `route reason "guess"`},
+		},
+		{
+			name:   "environment value in an environment name",
+			stream: stream(runStart, `{"seq":2,"type":"exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"exec":{"argv":["go"],"exit_code":0,"env_names":["PATH=/usr/bin"]}}`),
+			want:   []string{"line 2", "env_names"},
+		},
+		{
+			name:   "repeated environment name",
+			stream: stream(runStart, `{"seq":2,"type":"exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"exec":{"argv":["go"],"exit_code":0,"env_names":["PATH","PATH"]}}`),
+			want:   []string{"line 2", "env_names"},
+		},
+		{
+			name:   "output digest that is not sha-256",
+			stream: stream(runStart, `{"seq":2,"type":"exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"exec":{"argv":["go"],"exit_code":0,"output_sha256":"abc"}}`),
+			want:   []string{"line 2", "output_sha256"},
+		},
+		{
+			name:   "schema on another event type",
+			stream: stream(runStart, `{"seq":2,"type":"progress","schema":"goatest-trace-v1","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"progress":{"kind":"note"}}`),
+			want:   []string{"line 2", "schema"},
+		},
+		{
+			name:   "unknown schema",
+			stream: stream(`{"seq":1,"type":"run-start","schema":"goatest-trace-v2","timestamp":"2026-01-01T00:00:00Z","elapsed_ms":0}`),
+			want:   []string{"line 1", "goatest-trace-v2", trace.SchemaV1},
+		},
+		{
+			name:   "run-start without its schema",
+			stream: stream(`{"seq":1,"type":"run-start","timestamp":"2026-01-01T00:00:00Z","elapsed_ms":0}`),
+			want:   []string{"line 1", `"schema"`},
+		},
+		{
+			name:   "stream that does not open with a run-start",
+			stream: stream(`{"seq":1,"type":"progress","timestamp":"2026-01-01T00:00:00Z","elapsed_ms":1,"progress":{"kind":"note"}}`),
+			want:   []string{"line 1", "run-start"},
+		},
+		{
+			name:   "second run-start",
+			stream: stream(runStart, `{"seq":2,"type":"run-start","schema":"goatest-trace-v1","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1}`),
+			want:   []string{"line 2", "run-start"},
+		},
+		{
+			name: "event after the run-end",
+			stream: stream(runStart,
+				`{"seq":2,"type":"run-end","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"run":{"verdict":"ASSURED","events_emitted":1,"events_dropped":0}}`,
+				`{"seq":3,"type":"progress","timestamp":"2026-01-01T00:00:02Z","elapsed_ms":2,"progress":{"kind":"note"}}`),
+			want: []string{"line 3", "run-end"},
+		},
+		{
+			name:   "sequence number that does not advance",
+			stream: stream(runStart, `{"seq":1,"type":"progress","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"progress":{"kind":"note"}}`),
+			want:   []string{"line 2", "seq"},
+		},
+		{
+			name:   "sequence number below the first",
+			stream: stream(`{"seq":0,"type":"run-start","schema":"goatest-trace-v1","timestamp":"2026-01-01T00:00:00Z","elapsed_ms":0}`),
+			want:   []string{"line 1", "seq"},
+		},
+		{
+			name:   "recording that opens above the first sequence",
+			stream: stream(`{"seq":2,"type":"run-start","schema":"goatest-trace-v1","timestamp":"2026-01-01T00:00:00Z","elapsed_ms":0}`),
+			want:   []string{"line 1", "seq 2", "opens"},
+		},
+		{
+			name:   "null payload on the event that requires it",
+			stream: stream(runStart, `{"seq":2,"type":"phase-start","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"phase":null}`),
+			want:   []string{"line 2", "null", "phase"},
+		},
+		{
+			name: "null run payload on the run-end",
+			stream: stream(runStart,
+				`{"seq":2,"type":"run-end","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"run":null}`),
+			want: []string{"line 2", "null", "run"},
+		},
+		{
+			name:   "null line",
+			stream: stream(runStart, `null`),
+			want:   []string{"line 2", "seq"},
+		},
+		{
+			name:   "null phase payload on a phase-end",
+			stream: stream(runStart, `{"seq":2,"type":"phase-end","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"phase":null}`),
+			want:   []string{"line 2", "null", "phase"},
+		},
+		{
+			name:   "null exec payload",
+			stream: stream(runStart, `{"seq":2,"type":"exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"exec":null}`),
+			want:   []string{"line 2", "null", "exec"},
+		},
+		{
+			name:   "null mutant payload",
+			stream: stream(runStart, `{"seq":2,"type":"mutant-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"mutant":null}`),
+			want:   []string{"line 2", "null", "mutant"},
+		},
+		{
+			name:   "null route payload",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":null}`),
+			want:   []string{"line 2", "null", "route"},
+		},
+		{
+			name:   "null progress payload",
+			stream: stream(runStart, `{"seq":2,"type":"progress","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"progress":null}`),
+			want:   []string{"line 2", "null", "progress"},
+		},
+		{
+			name:   "null artifact payload",
+			stream: stream(runStart, `{"seq":2,"type":"artifact","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"artifact":null}`),
+			want:   []string{"line 2", "null", "artifact"},
+		},
+		{
+			name:   "missing seq",
+			stream: stream(runStart, `{"type":"progress","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"progress":{"kind":"note"}}`),
+			want:   []string{"line 2", "seq"},
+		},
+		{
+			name:   "second value after a valid one",
+			stream: stream(runStart, `{"seq":2,"type":"progress","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"progress":{"kind":"note"}} {"seq":3}`),
+			want:   []string{"line 2", "more than one value"},
+		},
+		{
+			name:   "negative elapsed_ms",
+			stream: stream(runStart, `{"seq":2,"type":"progress","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":-1,"progress":{"kind":"note"}}`),
+			want:   []string{"line 2", "elapsed_ms"},
+		},
+		{
+			name:   "empty timestamp",
+			stream: stream(runStart, `{"seq":2,"type":"progress","timestamp":"","elapsed_ms":1,"progress":{"kind":"note"}}`),
+			want:   []string{"line 2", "timestamp"},
+		},
+		{
+			name:   "phase without its name field",
+			stream: stream(runStart, `{"seq":2,"type":"phase-end","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"phase":{"duration_ms":1}}`),
+			want:   []string{"line 2", "name"},
+		},
+		{
+			name:   "phase with an empty name",
+			stream: stream(runStart, `{"seq":2,"type":"phase-start","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"phase":{"name":""}}`),
+			want:   []string{"line 2", "phase.name"},
+		},
+		{
+			name:   "phase with a negative duration",
+			stream: stream(runStart, `{"seq":2,"type":"phase-end","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"phase":{"name":"baseline","duration_ms":-1}}`),
+			want:   []string{"line 2", "phase.duration_ms"},
+		},
+		{
+			name:   "exec with a negative timeout",
+			stream: stream(runStart, `{"seq":2,"type":"exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"exec":{"argv":["go"],"exit_code":0,"timeout_ms":-1}}`),
+			want:   []string{"line 2", "exec.timeout_ms"},
+		},
+		{
+			name:   "exec with a negative duration",
+			stream: stream(runStart, `{"seq":2,"type":"exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"exec":{"argv":["go"],"exit_code":0,"duration_ms":-1}}`),
+			want:   []string{"line 2", "exec.duration_ms"},
+		},
+		{
+			name:   "exec with negative output bytes",
+			stream: stream(runStart, `{"seq":2,"type":"exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"exec":{"argv":["go"],"exit_code":0,"output_bytes":-1}}`),
+			want:   []string{"line 2", "exec.output_bytes"},
+		},
+		{
+			name:   "output digest of the right length with the wrong alphabet",
+			stream: stream(runStart, `{"seq":2,"type":"exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"exec":{"argv":["go"],"exit_code":0,"output_sha256":"`+traceTestDigest("Z")+`"}}`),
+			want:   []string{"line 2", "output_sha256"},
+		},
+		{
+			name:   "mutant without its id field",
+			stream: stream(runStart, `{"seq":2,"type":"mutant-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"mutant":{"outcome":"killed"}}`),
+			want:   []string{"line 2", "id"},
+		},
+		{
+			name:   "mutant with a negative timeout",
+			stream: stream(runStart, `{"seq":2,"type":"mutant-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"mutant":{"id":"m","timeout_ms":-1}}`),
+			want:   []string{"line 2", "mutant.timeout_ms"},
+		},
+		{
+			name:   "mutant with a negative duration",
+			stream: stream(runStart, `{"seq":2,"type":"mutant-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"mutant":{"id":"m","duration_ms":-1}}`),
+			want:   []string{"line 2", "mutant.duration_ms"},
+		},
+		{
+			name:   "route without its path field",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"reason":"unreached"}}`),
+			want:   []string{"line 2", "path"},
+		},
+		{
+			name:   "route with a negative line",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","granularity":"block","line":-1}}`),
+			want:   []string{"line 2", "route.line"},
+		},
+		{
+			name:   "route with an unknown granularity",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","granularity":"line"}}`),
+			want:   []string{"line 2", `route granularity "line"`},
+		},
+		{
+			name:   "route with an unknown fallback",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","granularity":"file","fallback":"guess"}}`),
+			want:   []string{"line 2", `route fallback "guess"`},
+		},
+		{
+			name:   "route with a fallback on a decision the blocks carried",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","granularity":"block","fallback":"outside-blocks"}}`),
+			want:   []string{"line 2", `route fallback "outside-blocks"`, `granularity "block"`},
+		},
+		{
+			name:   "route with a fallback and no granularity",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","fallback":"position-unknown"}}`),
+			want:   []string{"line 2", "route.granularity"},
+		},
+		{
+			name:   "route with a column and no granularity",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","column":9}}`),
+			want:   []string{"line 2", "route.granularity"},
+		},
+		{
+			name:   "route with a file candidate count and no granularity",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","file_candidates":0}}`),
+			want:   []string{"line 2", "route.granularity"},
+		},
+		{
+			name:   "route with an unknown discharge reason",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","granularity":"block","discharged":[{"target":"TestSkipped","reason":"a-hunch"}]}}`),
+			want: []string{"line 2", `route discharge reason "a-hunch"`,
+				`"` + trace.DischargeBranchNeverTaken + `"`, `"` + trace.DischargeNeverInfected + `"`},
+		},
+		{
+			name:   "route with a discharge that names no target",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","granularity":"block","discharged":[{"target":"","reason":"branch-never-taken"}]}}`),
+			want:   []string{"line 2", "route.discharged.target"},
+		},
+		{
+			name:   "route with a discharge and no granularity",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","discharged":[{"target":"TestSkipped","reason":"branch-never-taken"}]}}`),
+			want:   []string{"line 2", "route.granularity"},
+		},
+		{
+			name:   "route with a discharge on a decision the file carried",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","granularity":"file","discharged":[{"target":"TestSkipped","reason":"branch-never-taken"}]}}`),
+			want:   []string{"line 2", `route discharged "TestSkipped"`, `granularity "file"`, `granularity "block"`},
+		},
+		{
+			name:   "route with an infection discharge and no probe marker",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","granularity":"block","discharged":[{"target":"TestNeverInfects","reason":"never-infected"}]}}`),
+			want:   []string{"line 2", `discharged "TestNeverInfects" as never-infected`, "probe marker"},
+		},
+		{
+
+			name:   "route with an infection discharge on a mutant it recorded no probe of",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","granularity":"block","discharged":[{"target":"TestNeverInfects","reason":"never-infected"}],"probed":false}}`),
+			want:   []string{"line 2", `discharged "TestNeverInfects" as never-infected`, "probe marker"},
+		},
+		{
+			name:   "route that discharged a target it also reaches",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"coverage-reaching","granularity":"block","reaching_targets":["TestRun"],"discharged":[{"target":"TestRun","reason":"branch-never-taken"}]}}`),
+			want:   []string{"line 2", `discharged "TestRun"`, "reaches"},
+		},
+		{
+			name:   "route that discharged the same target twice",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","granularity":"block","discharged":[{"target":"TestSkipped","reason":"branch-never-taken"},{"target":"TestSkipped","reason":"branch-never-taken"}]}}`),
+			want:   []string{"line 2", `discharged "TestSkipped" twice`},
+		},
+		{
+			name:   "route with a negative column",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","granularity":"block","column":-1}}`),
+			want:   []string{"line 2", "route.column"},
+		},
+		{
+			name:   "route with a negative file candidate count",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","granularity":"block","file_candidates":-1}}`),
+			want:   []string{"line 2", "route.file_candidates"},
+		},
+		{
+			name:   "route probed without a granularity",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","probed":true}}`),
+			want:   []string{"line 2", "route.granularity"},
+		},
+		{
+			name:   "probe-reaching route without recovered targets",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"probe-reaching","granularity":"block","probed":true}}`),
+			want:   []string{"line 2", "probe-reaching", "without naming probe_reaching"},
+		},
+		{
+			name:   "probe-reaching target absent from the reaching set",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"probe-reaching","granularity":"block","reaching_targets":["TestRun"],"probe_reaching":["TestHidden"],"probed":true}}`),
+			want:   []string{"line 2", `probe_reaching target "TestHidden"`, "absent"},
+		},
+		{
+			name:   "suite probe route without a probe form",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","granularity":"block","suite_probe":"package-suite:example.com/app"}}`),
+			want:   []string{"line 2", "suite_probe", "probed=false"},
+		},
+		{
+			name:   "suite controls name different packages",
+			stream: stream(runStart, `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","granularity":"block","suite_coverage":"package-suite-coverage:example.com/app","suite_probe":"package-suite:example.com/lib","probed":true}}`),
+			want:   []string{"line 2", "suite controls name different packages", "example.com/app", "example.com/lib"},
+		},
+		{
+			name:   "probe without the target it ran",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"exit_code":0}}`),
+			want:   []string{"line 2", `"probe.target"`},
+		},
+		{
+			name:   "probe without the status it returned with",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"TestRun"}}`),
+			want:   []string{"line 2", `"probe.exit_code"`},
+		},
+		{
+			name:   "probe with an empty target",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"","exit_code":0}}`),
+			want:   []string{"line 2", "probe.target"},
+		},
+		{
+			name:   "package-suite identity without a suite marker",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"package-suite:example.com/app","package":"example.com/app","exit_code":0,"outcome":"measured"}}`),
+			want:   []string{"line 2", "without suite=true"},
+		},
+		{
+			name:   "suite marker without a suite identity",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"TestRun","package":"example.com/app","suite":true,"exit_code":0,"outcome":"measured"}}`),
+			want:   []string{"line 2", "suite probe target", "package-suite"},
+		},
+		{
+			name:   "suite identity names another package",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"package-suite:example.com/other","package":"example.com/app","suite":true,"exit_code":0,"outcome":"measured"}}`),
+			want:   []string{"line 2", "suite probe target", "exact package"},
+		},
+		{
+			name:   "mutation control identity without its marker",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"mutation-control:example.com/app","package":"example.com/app","exit_code":0,"outcome":"measured"}}`),
+			want:   []string{"line 2", "mutation-control identity", "control=true"},
+		},
+		{
+			name:   "exact original preflight names another package",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"mutation-control:example.com/other","package":"example.com/app","control":true,"exit_code":0,"outcome":"measured"}}`),
+			want:   []string{"line 2", "exact original preflight target", "exact package"},
+		},
+		{
+			name:   "exact original preflight carries infection facts",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"mutation-control:example.com/app","package":"example.com/app","control":true,"exit_code":0,"outcome":"measured","infected":[]}}`),
+			want:   []string{"line 2", "exact original preflight carries suite or infected"},
+		},
+		{
+			name:   "exact original preflight carries a false suite marker",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"mutation-control:example.com/app","package":"example.com/app","control":true,"suite":false,"exit_code":0,"outcome":"measured"}}`),
+			want:   []string{"line 2", "exact original preflight carries suite or infected"},
+		},
+		{
+			name:   "probe with a negative timeout",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"TestRun","exit_code":0,"timeout_ms":-1}}`),
+			want:   []string{"line 2", "probe.timeout_ms"},
+		},
+		{
+			name:   "probe with a negative duration",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"TestRun","exit_code":0,"duration_ms":-1}}`),
+			want:   []string{"line 2", "probe.duration_ms"},
+		},
+		{
+			name:   "probe with an outcome the contract does not name",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"TestRun","exit_code":0,"outcome":"guessed"}}`),
+			want:   []string{"line 2", `probe outcome "guessed"`},
+		},
+		{
+			name:   "probe that infected a mutant with no identity",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"TestRun","exit_code":0,"outcome":"measured","infected":[""]}}`),
+			want:   []string{"line 2", "probe.infected"},
+		},
+		{
+			name:   "probe that infected the same mutant twice",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"TestRun","exit_code":0,"outcome":"measured","infected":["m-0001","m-0001"]}}`),
+			want:   []string{"line 2", `infected "m-0001" twice`},
+		},
+		{
+			name:   "probe infections beside an execution that measured none",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"TestRun","exit_code":1,"outcome":"test-failed","infected":["m-0001"]}}`),
+			want:   []string{"line 2", `outcome "test-failed"`, "measured"},
+		},
+		{
+
+			name:   "probe with an empty infection list beside an execution that measured none",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"TestRun","exit_code":1,"outcome":"test-failed","infected":[]}}`),
+			want:   []string{"line 2", `outcome "test-failed"`, "measured"},
+		},
+		{
+			name:   "probe with neither an outcome nor an error",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"TestRun","exit_code":0}}`),
+			want:   []string{"line 2", "neither an outcome nor an error"},
+		},
+		{
+			name:   "probe with both an outcome and an error",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"TestRun","exit_code":0,"outcome":"measured","error":"goatest: probe tree unavailable"}}`),
+			want:   []string{"line 2", "both an outcome and an error"},
+		},
+		{
+			name:   "probe with an empty error",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":{"target":"TestRun","exit_code":-1,"error":""}}`),
+			want:   []string{"line 2", "probe.error"},
+		},
+		{
+			name:   "probe payload on a mutant execution",
+			stream: stream(runStart, `{"seq":2,"type":"mutant-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"mutant":{"id":"m-0001"},"probe":{"target":"TestRun","exit_code":0}}`),
+			want:   []string{"line 2", "probe"},
+		},
+		{
+			name:   "probe-exec without its payload",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1}`),
+			want:   []string{"line 2", "probe"},
+		},
+		{
+			name:   "null probe payload",
+			stream: stream(runStart, `{"seq":2,"type":"probe-exec","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"probe":null}`),
+			want:   []string{"line 2", "null", "probe"},
+		},
+		{
+			name:   "progress without its kind field",
+			stream: stream(runStart, `{"seq":2,"type":"progress","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"progress":{}}`),
+			want:   []string{"line 2", "kind"},
+		},
+		{
+			name:   "progress with an empty kind",
+			stream: stream(runStart, `{"seq":2,"type":"progress","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"progress":{"kind":""}}`),
+			want:   []string{"line 2", "progress.kind"},
+		},
+		{
+			name:   "artifact without its kind field",
+			stream: stream(runStart, `{"seq":2,"type":"artifact","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"artifact":{"path":"kept"}}`),
+			want:   []string{"line 2", "kind"},
+		},
+		{
+			name:   "artifact with an empty kind",
+			stream: stream(runStart, `{"seq":2,"type":"artifact","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"artifact":{"kind":"","path":"kept"}}`),
+			want:   []string{"line 2", "artifact.kind"},
+		},
+		{
+			name:   "artifact with an empty path",
+			stream: stream(runStart, `{"seq":2,"type":"artifact","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"artifact":{"kind":"baseline-scratch","path":""}}`),
+			want:   []string{"line 2", "artifact.path"},
+		},
+		{
+			name:   "run-end without its accounting",
+			stream: stream(runStart, `{"seq":2,"type":"run-end","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"run":{"events_dropped":0}}`),
+			want:   []string{"line 2", "events_emitted"},
+		},
+		{
+			name:   "run-end with a negative drop count",
+			stream: stream(runStart, `{"seq":2,"type":"run-end","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"run":{"events_emitted":1,"events_dropped":-1}}`),
+			want:   []string{"line 2", "events_dropped"},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			events, err := readEvents(strings.NewReader(testCase.stream))
+			if err == nil {
+				t.Fatalf("read %d events, want an error naming the deviating line", len(events))
+			}
+			for _, want := range testCase.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not mention %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestReadEventsAcceptsAFallbackOnTheRouteItDroppedToTheFile(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		route string
+	}{
+		{
+			name:  "a file route that fell back",
+			route: `{"path":"a.go","reason":"coverage-reaching","granularity":"file","fallback":"outside-blocks"}`,
+		},
+		{
+			name:  "a file route that recorded no fallback",
+			route: `{"path":"a.go","reason":"coverage-reaching","granularity":"file"}`,
+		},
+		{
+			name:  "a block route",
+			route: `{"path":"a.go","reason":"coverage-reaching","granularity":"block"}`,
+		},
+		{
+			name:  "a block route carrying its column and candidate count",
+			route: `{"path":"a.go","reason":"coverage-reaching","granularity":"block","column":9,"file_candidates":3}`,
+		},
+		{
+			name:  "a file route that found no candidate",
+			route: `{"path":"a.go","reason":"coverage-reaching","granularity":"file","fallback":"outside-blocks","column":9}`,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			line := `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":` + testCase.route + `}`
+			events, err := readEvents(strings.NewReader(stream(runStart, line)))
+			if err != nil || len(events) != 2 {
+				t.Fatalf("read (%d events, %v), want the run-start and the route", len(events), err)
+			}
+		})
+	}
+}
+
+func TestReadEventsAcceptsProbeRecoveredAndSuiteControlledRoutes(t *testing.T) {
+	t.Parallel()
+	lines := []string{
+		`{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"probe-reaching","granularity":"block","reaching_targets":["TestHidden"],"probe_reaching":["TestHidden"],"probed":true}}`,
+		`{"seq":3,"type":"route","timestamp":"2026-01-01T00:00:02Z","elapsed_ms":2,"route":{"path":"b.go","reason":"unreached","granularity":"block","suite_probe":"package-suite:example.com/app","probed":true}}`,
+		`{"seq":4,"type":"probe-exec","timestamp":"2026-01-01T00:00:03Z","elapsed_ms":3,"probe":{"target":"package-suite:example.com/app","package":"example.com/app","suite":true,"exit_code":0,"outcome":"measured"}}`,
+	}
+	events, err := readEvents(strings.NewReader(stream(append([]string{runStart}, lines...)...)))
+	if err != nil || len(events) != 4 {
+		t.Fatalf("read (%d events, %v), want the run-start and three probe records", len(events), err)
+	}
+}
+
+func TestReadEventsAcceptsARouteDischargedByEitherProof(t *testing.T) {
+	t.Parallel()
+
+	line := `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":` +
+		`{"path":"a.go","reason":"coverage-reaching","granularity":"block","reaching_targets":["TestRun"],` +
+		`"discharged":[{"target":"TestSkipped","reason":"branch-never-taken"},` +
+		`{"target":"TestNeverInfects","reason":"never-infected"}],"probed":true}}`
+	events, err := readEvents(strings.NewReader(stream(runStart, line)))
+	if err != nil || len(events) != 2 {
+		t.Fatalf("read (%d events, %v), want the run-start and the route", len(events), err)
+	}
+	if route := events[1].Route; route == nil || len(route.Discharged) != 2 ||
+		route.Discharged[0].Reason != trace.DischargeBranchNeverTaken ||
+		route.Discharged[1].Reason != trace.DischargeNeverInfected {
+		t.Fatalf("route = %+v, want both proofs preserved in the order they were recorded", events[1].Route)
+	}
+}
+
+type failingReader struct {
+	content string
+	served  bool
+}
+
+func (reader *failingReader) Read(buffer []byte) (int, error) {
+	if reader.served {
+		return 0, errors.New("the disk fell over")
+	}
+	reader.served = true
+	return copy(buffer, reader.content), nil
+}
+
+func TestReadEventsReportsAReaderThatFailedMidStream(t *testing.T) {
+	t.Parallel()
+	events, err := readEvents(&failingReader{content: stream(runStart)})
+	if err == nil || !strings.Contains(err.Error(), "the disk fell over") {
+		t.Fatalf("read %d events with error %v, want the reader's failure", len(events), err)
+	}
+}
+
+func TestReadEventsAcceptsAStreamWithoutAFinalNewline(t *testing.T) {
+	t.Parallel()
+	events, err := readEvents(strings.NewReader(runStart))
+	if err != nil || len(events) != 1 {
+		t.Fatalf("read (%d events, %v), want the one event the unfinished line carries", len(events), err)
+	}
+}
+
+func TestReadEventsRejectsAStreamWithoutEvents(t *testing.T) {
+	t.Parallel()
+	if _, err := readEvents(strings.NewReader("")); err == nil {
+		t.Fatal("read an empty stream without an error")
+	}
+}
+
+func TestReadEventsAcceptsALineLongerThanAScannerBuffer(t *testing.T) {
+	t.Parallel()
+	targets := make([]string, 0, longTraceTargetCount)
+	for index := range longTraceTargetCount {
+		targets = append(targets, `"github.com/P4suta/go-mutants/goatest/internal/package`+strings.Repeat("x", index%longTraceNameVariantCount)+`"`)
+	}
+	long := `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","granularity":"block","reaching_targets":[` +
+		strings.Join(targets, ",") + `]}}`
+	if len(long) < bufio.MaxScanTokenSize {
+		t.Fatalf("the fixture line is %d bytes, which does not exceed a default scanner buffer", len(long))
+	}
+	events, err := readEvents(strings.NewReader(stream(runStart, long)))
+	if err != nil {
+		t.Fatalf("read a long line: %v", err)
+	}
+	if len(events) != 2 || events[1].Route == nil || len(events[1].Route.ReachingTargets) != 4096 {
+		t.Fatalf("read %d events, want the run-start and a route carrying 4096 targets", len(events))
+	}
+}
+
+func TestCheckRouteHoldsTheReuseAndItsPlanToEachOther(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name string
+		line string
+		want string
+	}{
+		{
+			name: "a reused route whose plan is the reuse",
+			line: `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:00Z","elapsed_ms":0,` +
+				`"route":{"path":"value.go","reason":"coverage-reaching","granularity":"block","plan":["reused"],"reused":true}}`,
+		},
+		{
+			name: "a reused route that also planned an execution",
+			line: `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:00Z","elapsed_ms":0,` +
+				`"route":{"path":"value.go","reason":"coverage-reaching","granularity":"block","plan":["individual:TestValue"],"reused":true}}`,
+			want: "reused",
+		},
+		{
+			name: "a route planning the reuse without saying it was reused",
+			line: `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:00Z","elapsed_ms":0,` +
+				`"route":{"path":"value.go","reason":"coverage-reaching","granularity":"block","plan":["reused"]}}`,
+			want: "reused",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := readEvents(strings.NewReader(stream(runStart, test.line)))
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("a consistent reused route = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("an inconsistent reused route = %v, want an error naming %q", err, test.want)
+			}
+		})
+	}
+}
