@@ -170,13 +170,14 @@ func TestBaselineResumeSkipsTerminalPackageSuite(t *testing.T) {
 	)
 	for _, test := range []struct {
 		name     string
+		outcome  gomutants.ProbeOutcome
 		measured bool
 	}{
-		{name: "measured", measured: true},
-		{name: "unmeasured terminal control"},
+		{name: "measured", outcome: gomutants.ProbeMeasured, measured: true},
+		{name: "unmeasured terminal control", outcome: gomutants.ProbeTestFailed},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			run := packageSuiteCoverageRun{importPath: target.Package, measured: test.measured}
+			run := packageSuiteCoverageRun{importPath: target.Package, outcome: test.outcome}
 			if test.measured {
 				run.suite = PackageSuiteCoverage{Covered: block, Instrumented: block, Duration: 40 * time.Millisecond}
 			}

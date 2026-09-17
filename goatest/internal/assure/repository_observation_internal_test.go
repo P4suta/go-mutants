@@ -17,6 +17,7 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/evidence"
 	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
 func TestCollectBaselineRecordsTheObservedRepositoryBoundary(t *testing.T) {
@@ -414,5 +415,26 @@ func TestWholeTreeKeyLimitationCountsWhatTheRunWidened(t *testing.T) {
 				t.Fatalf("limitation = %+v, want %q", limitation, test.want)
 			}
 		})
+	}
+}
+
+func TestUnmeasuredSuiteLimitationNamesEveryPackageUnderTheReasonItCarries(t *testing.T) {
+	t.Parallel()
+	if limitation, unmeasured := unmeasuredSuiteLimitation(nil); unmeasured || limitation != (report.Limitation{}) {
+		t.Fatalf("limitation for a run that measured every suite = (%+v, %t)", limitation, unmeasured)
+	}
+	limitation, unmeasured := unmeasuredSuiteLimitation(map[string]gomutants.ProbeOutcome{
+		"example.test/b": gomutants.ProbeUnavailable,
+		"example.test/a": gomutants.ProbeTestFailed,
+		"example.test/c": gomutants.ProbeTestFailed,
+		"example.test/d": gomutants.ProbeTimedOut,
+	})
+	want := "4 package suites produced no coverage facts, so every mutant in them that no target reaches " +
+		"was bounded by its own exact original control alone (" +
+		"their tests did not pass: example.test/a, example.test/c; " +
+		"they did not finish inside their budget: example.test/d; " +
+		"no coverage facts were produced: example.test/b)"
+	if !unmeasured || limitation.Code != report.LimitationPackageSuiteUnmeasured || limitation.Summary != want {
+		t.Fatalf("limitation = %+v, want %q", limitation, want)
 	}
 }

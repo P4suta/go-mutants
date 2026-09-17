@@ -581,6 +581,9 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 		if limitation, widened := wholeTreeKeyLimitation(baseline.Targets, baseline.Suites); widened {
 			baseReport.Limitations = append(baseReport.Limitations, limitation)
 		}
+		if limitation, unmeasured := unmeasuredSuiteLimitation(baseline.UnmeasuredSuites); unmeasured {
+			baseReport.Limitations = append(baseReport.Limitations, limitation)
+		}
 		if len(loaded.Resources) != 0 {
 			baseReport.Limitations = append(baseReport.Limitations, report.Limitation{
 				Code: report.LimitationResourceCacheDisabled, Summary: "exact cache reuse is disabled because configured resources have runtime state",
