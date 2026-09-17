@@ -108,9 +108,6 @@ const (
 
 func (service Service) Execute(ctx context.Context, command cli.Command, request cli.Request, id string) (report.Report, error) {
 	root := service.Root
-	if root == "" {
-		root = "."
-	}
 	resolveAbsolute := service.absolute
 	if resolveAbsolute == nil {
 		resolveAbsolute = filepath.Abs
