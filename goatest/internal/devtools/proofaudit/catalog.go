@@ -4,6 +4,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -67,24 +68,24 @@ func (catalog *mutantCatalog) lookup(mutant string) (catalogMutant, bool) {
 	return listed, known
 }
 
-func (listed catalogMutant) proves() (branchProof, bool) {
+func (listed catalogMutant) proves() *branchProof {
 	body := listed.Branch
 	if body == nil {
-		return branchProof{}, false
+		return nil
 	}
 	if body.BodyStartLine < 1 || body.BodyStartColumn < 1 || body.BodyEndLine < 1 || body.BodyEndColumn < 1 {
-		return branchProof{}, false
+		return nil
 	}
 	if listed.Line < 1 || listed.Column < 1 {
-		return branchProof{}, false
+		return nil
 	}
 	if positionBefore(body.BodyEndLine, body.BodyEndColumn, body.BodyStartLine, body.BodyStartColumn) {
-		return branchProof{}, false
+		return nil
 	}
 	if !positionBefore(listed.Line, listed.Column, body.BodyStartLine, body.BodyStartColumn) {
-		return branchProof{}, false
+		return nil
 	}
-	return *body, true
+	return body
 }
 
 func (body branchProof) holds(line, column int) bool {
@@ -93,8 +94,5 @@ func (body branchProof) holds(line, column int) bool {
 }
 
 func positionBefore(line, column, otherLine, otherColumn int) bool {
-	if line != otherLine {
-		return line < otherLine
-	}
-	return column < otherColumn
+	return cmp.Or(cmp.Compare(line, otherLine), cmp.Compare(column, otherColumn)) < 0
 }

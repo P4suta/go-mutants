@@ -4,6 +4,10 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,17 +118,24 @@ func TestReadCatalogRefusesADocumentItCannotBeSureOf(t *testing.T) {
 func TestReadCatalogReportsADocumentItCannotRead(t *testing.T) {
 	t.Parallel()
 	missing := filepath.Join(t.TempDir(), "absent.json")
-	if _, err := readCatalog(missing); err == nil {
-		t.Fatal("a missing catalog was accepted")
-	} else if !strings.Contains(err.Error(), missing) {
+	switch _, err := readCatalog(missing); {
+	case err == nil:
+		t.Error("a missing catalog was accepted")
+	case !strings.Contains(err.Error(), missing):
 		t.Errorf("the error is %q, want it to name the file it could not read", err)
+	case !errors.Is(err, fs.ErrNotExist):
+		t.Errorf("the error is %q, want it to say the file is not there", err)
 	}
 
 	broken := writeCatalog(t, `{"document_type": "go-mutants/catalog",`)
-	if _, err := readCatalog(broken); err == nil {
-		t.Fatal("a truncated catalog was accepted")
-	} else if !strings.Contains(err.Error(), broken) {
+	var syntax *json.SyntaxError
+	switch _, err := readCatalog(broken); {
+	case err == nil:
+		t.Error("a truncated catalog was accepted")
+	case !strings.Contains(err.Error(), broken):
 		t.Errorf("the error is %q, want it to name the file it could not read", err)
+	case !errors.As(err, &syntax) && !errors.Is(err, io.ErrUnexpectedEOF):
+		t.Errorf("the error is %q, want it to say the document is not JSON", err)
 	}
 }
 
@@ -134,5 +145,153 @@ func TestALookupWithoutACatalogListsNothing(t *testing.T) {
 	var absent *mutantCatalog
 	if _, listed := absent.lookup(firstMutant); listed {
 		t.Error("a run audited without a catalog listed a mutant")
+	}
+}
+
+const (
+	proofMutantLine   = 4
+	proofMutantColumn = 2
+	proofBodyStart    = 5
+	proofBodyColumn   = 3
+	proofBodyEnd      = 9
+	proofBodyEndCol   = 1
+	insideBodyLine    = 6
+
+	firstBodyStartColumn = 2
+	firstBodyEndColumn   = 3
+)
+
+func provingMutant(change func(*catalogMutant)) catalogMutant {
+	listed := catalogMutant{
+		ID: "m-1", Line: proofMutantLine, Column: proofMutantColumn,
+		Branch: &branchProof{
+			BodyStartLine: proofBodyStart, BodyStartColumn: proofBodyColumn,
+			BodyEndLine: proofBodyEnd, BodyEndColumn: proofBodyEndCol,
+		},
+	}
+	if change != nil {
+		change(&listed)
+	}
+	return listed
+}
+
+func TestAListedMutantProvesABranchOnlyWhenItsPositionsMakeSense(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		change func(*catalogMutant)
+		proves bool
+	}{
+		{name: "a branch the mutant opens", proves: true},
+		{
+			name: "a branch that opens at the very first position",
+			change: func(m *catalogMutant) {
+				m.Line, m.Column = 1, 1
+				m.Branch.BodyStartLine, m.Branch.BodyStartColumn = 1, firstBodyStartColumn
+				m.Branch.BodyEndLine, m.Branch.BodyEndColumn = 1, firstBodyEndColumn
+			},
+			proves: true,
+		},
+		{
+			name: "a body that opens in the first column of its line",
+			change: func(m *catalogMutant) {
+				m.Line, m.Column = proofBodyStart-1, proofMutantColumn
+				m.Branch.BodyStartColumn = 1
+			},
+			proves: true,
+		},
+		{name: "no branch at all", change: func(m *catalogMutant) { m.Branch = nil }},
+		{name: "a body that starts on line zero", change: func(m *catalogMutant) { m.Branch.BodyStartLine = 0 }},
+		{name: "a body that starts at column zero", change: func(m *catalogMutant) { m.Branch.BodyStartColumn = 0 }},
+		{name: "a body that ends on line zero", change: func(m *catalogMutant) { m.Branch.BodyEndLine = 0 }},
+		{name: "a body that ends at column zero", change: func(m *catalogMutant) { m.Branch.BodyEndColumn = 0 }},
+		{name: "a mutant on line zero", change: func(m *catalogMutant) { m.Line = 0 }},
+		{name: "a mutant at column zero", change: func(m *catalogMutant) { m.Column = 0 }},
+		{
+			name:   "a body that ends before it starts",
+			change: func(m *catalogMutant) { m.Branch.BodyEndLine = m.Branch.BodyStartLine - 1 },
+		},
+		{
+			name: "a body that ends before it starts by a column",
+			change: func(m *catalogMutant) {
+				m.Branch.BodyEndLine, m.Branch.BodyEndColumn = proofBodyStart, proofMutantColumn
+			},
+		},
+		{
+			name:   "a mutant inside the body it is said to open",
+			change: func(m *catalogMutant) { m.Line, m.Column = insideBodyLine, proofBodyEndCol },
+		},
+		{
+			name:   "a mutant exactly where the body starts",
+			change: func(m *catalogMutant) { m.Line, m.Column = proofBodyStart, proofBodyColumn },
+		},
+		{
+			name:   "a mutant a column before the body starts",
+			change: func(m *catalogMutant) { m.Line, m.Column = proofBodyStart, proofMutantColumn },
+			proves: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			listed := provingMutant(test.change)
+			proof := listed.proves()
+			if (proof != nil) != test.proves {
+				t.Fatalf("proves() = %+v, want a proof: %t", proof, test.proves)
+			}
+			if proof != nil && *proof != *listed.Branch {
+				t.Fatalf("proof = %+v, want the branch it listed %+v", *proof, *listed.Branch)
+			}
+		})
+	}
+}
+
+func TestABranchHoldsExactlyThePositionsBetweenItsEnds(t *testing.T) {
+	t.Parallel()
+	body := branchProof{BodyStartLine: 5, BodyStartColumn: 3, BodyEndLine: 9, BodyEndColumn: 4}
+	for _, test := range []struct {
+		name   string
+		line   int
+		column int
+		holds  bool
+	}{
+		{name: "the first position", line: 5, column: 3, holds: true},
+		{name: "the last position", line: 9, column: 4, holds: true},
+		{name: "inside", line: 7, column: 1, holds: true},
+		{name: "a column before the start", line: 5, column: 2},
+		{name: "a line before the start", line: 4, column: 99},
+		{name: "a column after the end", line: 9, column: 5},
+		{name: "a line after the end", line: 10, column: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := body.holds(test.line, test.column); got != test.holds {
+				t.Fatalf("holds(%d, %d) = %t, want %t", test.line, test.column, got, test.holds)
+			}
+		})
+	}
+}
+
+func TestPositionBeforeComparesTheLineFirstAndThenTheColumn(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name                   string
+		line, column           int
+		otherLine, otherColumn int
+		before                 bool
+	}{
+		{name: "an earlier line", line: 4, column: 99, otherLine: 5, otherColumn: 1, before: true},
+		{name: "a later line", line: 6, column: 1, otherLine: 5, otherColumn: 99},
+		{name: "the same line, an earlier column", line: 5, column: 1, otherLine: 5, otherColumn: 2, before: true},
+		{name: "the same line, a later column", line: 5, column: 3, otherLine: 5, otherColumn: 2},
+		{name: "the same position", line: 5, column: 2, otherLine: 5, otherColumn: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := positionBefore(test.line, test.column, test.otherLine, test.otherColumn)
+			if got != test.before {
+				t.Fatalf("positionBefore(%d, %d, %d, %d) = %t, want %t",
+					test.line, test.column, test.otherLine, test.otherColumn, got, test.before)
+			}
+		})
 	}
 }

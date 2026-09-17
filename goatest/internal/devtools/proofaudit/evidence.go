@@ -65,11 +65,7 @@ func readEvidence(directory, modulePath string) (evidence, error) {
 }
 
 func (recorded evidence) coveredBy(target, path string) (goanalysis.FileCoverage, bool) {
-	measured, known := recorded.targets[target]
-	if !known {
-		return goanalysis.FileCoverage{}, false
-	}
-	return goanalysis.FindFileCoverage(measured.covered, path)
+	return goanalysis.FindFileCoverage(recorded.targets[target].covered, path)
 }
 
 func (recorded evidence) measured(target string) bool {
@@ -78,11 +74,7 @@ func (recorded evidence) measured(target string) bool {
 }
 
 func (recorded evidence) instrumentedBy(target, path string) goanalysis.FileCoverage {
-	measured, known := recorded.targets[target]
-	if !known {
-		return goanalysis.FileCoverage{}
-	}
-	blocks, _ := goanalysis.FindFileCoverage(measured.instrumented, path)
+	blocks, _ := goanalysis.FindFileCoverage(recorded.targets[target].instrumented, path)
 	return blocks
 }
 

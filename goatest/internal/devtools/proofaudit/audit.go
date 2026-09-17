@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -87,6 +86,8 @@ type pairKey struct {
 
 func (pair killPair) key() pairKey { return pairKey{mutant: pair.mutant, target: pair.target} }
 
+func (pair killPair) positioned() bool { return pair.line > 0 && pair.column > 0 }
+
 func (pair killPair) coverageTarget() string {
 	if pair.evidenceTarget != "" {
 		return pair.evidenceTarget
@@ -135,7 +136,7 @@ func decideReach(pair killPair, recorded evidence) finding {
 	if !candidate {
 		return finding{conclusion: discharged, why: whyCoversNoneOfTheFile}
 	}
-	if pair.line <= 0 || pair.column <= 0 {
+	if !pair.positioned() {
 		return finding{conclusion: kept}
 	}
 	if covered.Contains(pair.line, pair.column) {
@@ -152,7 +153,7 @@ func decideSuiteReach(pair killPair, recorded evidence) finding {
 	if !recorded.measured(target) {
 		return finding{conclusion: unverifiable, why: whyNoProfile}
 	}
-	if pair.line <= 0 || pair.column <= 0 {
+	if !pair.positioned() {
 		return finding{conclusion: kept}
 	}
 	if !recorded.instrumentedBy(target, pair.path).Contains(pair.line, pair.column) {
@@ -180,18 +181,18 @@ func decideBranch(catalog *mutantCatalog, pair killPair, recorded evidence) find
 	if listed.Branch == nil {
 		return finding{conclusion: inapplicable}
 	}
-	body, proved := listed.proves()
-	if !proved {
+	body := listed.proves()
+	if body == nil {
 		return finding{conclusion: kept}
 	}
-	if !startsInBody(recorded.instrumentedIn(listed.Path), body) {
+	if !startsInBody(recorded.instrumentedIn(listed.Path), *body) {
 		return finding{conclusion: kept}
 	}
 	if !recorded.measured(pair.target) {
 		return finding{conclusion: unverifiable, why: whyNoProfile}
 	}
 	covered, _ := recorded.coveredBy(pair.target, listed.Path)
-	if startsInBody(covered, body) {
+	if startsInBody(covered, *body) {
 		return finding{conclusion: kept}
 	}
 	return finding{conclusion: discharged, why: whyBodyNeverTaken}
@@ -294,17 +295,14 @@ type targetIdentity struct {
 func auditTrace(source io.Reader, recorded evidence, catalog *mutantCatalog, layers []layer) (auditResult, error) {
 	audit := newAuditor(recorded, catalog, layers)
 	buffered := bufio.NewReaderSize(source, readBufferSize)
-	for number := 1; ; number++ {
+	for number, ended := 1, false; !ended; number++ {
 		line, readErr := buffered.ReadBytes('\n')
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
 			return auditResult{}, fmt.Errorf("line %d: %w", number, readErr)
 		}
-		ended := readErr != nil
+		ended = readErr != nil
 		line = bytes.TrimRight(line, "\r\n")
 		if len(line) == 0 {
-			if ended {
-				break
-			}
 			continue
 		}
 		var event trace.Event
@@ -313,7 +311,7 @@ func auditTrace(source io.Reader, recorded evidence, catalog *mutantCatalog, lay
 		if err := decoder.Decode(&event); err != nil {
 			if ended && errors.Is(err, io.ErrUnexpectedEOF) {
 				audit.result.truncatedLines++
-				break
+				continue
 			}
 			return auditResult{}, fmt.Errorf("line %d: %w", number, err)
 		}
@@ -321,9 +319,6 @@ func auditTrace(source io.Reader, recorded evidence, catalog *mutantCatalog, lay
 			return auditResult{}, fmt.Errorf("line %d has trailing data", number)
 		}
 		audit.read(event)
-		if ended {
-			break
-		}
 	}
 	return audit.finish(), nil
 }
@@ -338,7 +333,6 @@ type auditor struct {
 	probes                map[string]*probeFacts
 	executions            map[string][]targetIdentity
 	testBinaries          map[string]string
-	testBinaryConflicts   map[string]bool
 	suiteProfiles         map[string]string
 	suiteProfileConflicts map[string]bool
 	measuredSuiteProbes   map[string]struct{}
@@ -363,7 +357,7 @@ func newAuditor(recorded evidence, catalog *mutantCatalog, layers []layer) *audi
 		routes: make(map[string]trace.RouteRecord), targets: make(map[string]targetIdentity),
 		measuredBy: make(map[targetIdentity]string), probes: make(map[string]*probeFacts),
 		executions: make(map[string][]targetIdentity), testBinaries: make(map[string]string),
-		testBinaryConflicts: make(map[string]bool), suiteProfiles: make(map[string]string),
+		suiteProfiles:         make(map[string]string),
 		suiteProfileConflicts: make(map[string]bool),
 		measuredSuiteProbes:   make(map[string]struct{}),
 		decided:               make(map[pairKey]struct{}), suiteDecided: make(map[pairKey]struct{}), result: result,
@@ -420,8 +414,7 @@ func (audit *auditor) measurement(argv []string) {
 	if binary, packagePath, compiled := compiledTestBinary(argv); compiled {
 		if previous, exists := audit.testBinaries[binary]; exists && previous != packagePath {
 			audit.testBinaries[binary] = ""
-			audit.testBinaryConflicts[binary] = true
-		} else if !audit.testBinaryConflicts[binary] {
+		} else {
 			audit.testBinaries[binary] = packagePath
 		}
 		return
@@ -433,7 +426,7 @@ func (audit *auditor) measurement(argv []string) {
 			target = profileTarget(strings.TrimPrefix(argument, coverageArgument))
 		}
 	}
-	if identity.packagePath == "" && len(argv) != 0 && !audit.testBinaryConflicts[argv[0]] {
+	if len(argv) != 0 {
 		identity.packagePath = audit.testBinaries[argv[0]]
 	}
 	if selected, selective := killerTests(argv); selective && len(selected) == 1 {
@@ -448,7 +441,7 @@ func (audit *auditor) measurement(argv []string) {
 			if previous, exists := audit.suiteProfiles[identity.packagePath]; exists && previous != target {
 				audit.suiteProfiles[identity.packagePath] = ""
 				audit.suiteProfileConflicts[identity.packagePath] = true
-			} else if !audit.suiteProfileConflicts[identity.packagePath] {
+			} else {
 				audit.suiteProfiles[identity.packagePath] = target
 			}
 		}
@@ -489,13 +482,11 @@ func compiledTestBinary(argv []string) (string, string, bool) {
 	return output, packagePath, true
 }
 
+func afterLastSeparator(path string) string { return path[strings.LastIndexAny(path, `/\`)+1:] }
+
 func goCommandName(name string) bool {
-	if cut := strings.LastIndexAny(name, `/\\`); cut >= 0 {
-		name = name[cut+1:]
-	} else {
-		name = filepath.Base(name)
-	}
-	return name == "go" || name == "go.exe"
+	base := afterLastSeparator(name)
+	return base == "go" || base == "go.exe"
 }
 
 func (audit *auditor) measuredTarget(packagePath, test string) (string, bool) {
@@ -516,10 +507,7 @@ func (audit *auditor) execution(record trace.MutantRecord) {
 }
 
 func profileTarget(path string) string {
-	if cut := strings.LastIndexAny(path, `/\`); cut >= 0 {
-		path = path[cut+1:]
-	}
-	target, named := strings.CutSuffix(path, profileSuffix)
+	target, named := strings.CutSuffix(afterLastSeparator(path), profileSuffix)
 	if !named {
 		return ""
 	}
@@ -587,17 +575,21 @@ func (audit *auditor) suiteKill(record trace.MutantRecord) {
 		pair.rule, pair.path, pair.line, pair.column = route.Rule, route.Path, route.Line, route.Column
 		concluded = decideSuiteReach(pair, audit.recorded)
 	}
-	row := auditRow{pair: pair, layer: suiteReachLayerName, why: concluded.why}
+	audit.tally(&audit.result.suiteReach, concluded,
+		auditRow{pair: pair, layer: suiteReachLayerName, why: concluded.why})
+}
+
+func (audit *auditor) tally(counted *layerResult, concluded finding, row auditRow) {
 	switch concluded.conclusion {
 	case kept:
-		audit.result.suiteReach.kept++
+		counted.kept++
 	case inapplicable:
-		audit.result.suiteReach.inapplicable++
+		counted.inapplicable++
 	case unverifiable:
-		audit.result.suiteReach.unverifiable++
+		counted.unverifiable++
 		audit.result.unverifiable = append(audit.result.unverifiable, row)
 	case discharged:
-		audit.result.suiteReach.violations++
+		counted.violations++
 		audit.result.violations = append(audit.result.violations, row)
 	}
 }
@@ -611,19 +603,8 @@ func (audit *auditor) decide(pair killPair) {
 	for index, applied := range audit.layers {
 		audit.result.layers[index].audited++
 		concluded := applied.decide(pair, audit.recorded)
-		row := auditRow{pair: pair, layer: applied.name, why: concluded.why}
-		switch concluded.conclusion {
-		case kept:
-			audit.result.layers[index].kept++
-		case inapplicable:
-			audit.result.layers[index].inapplicable++
-		case unverifiable:
-			audit.result.layers[index].unverifiable++
-			audit.result.unverifiable = append(audit.result.unverifiable, row)
-		case discharged:
-			audit.result.layers[index].violations++
-			audit.result.violations = append(audit.result.violations, row)
-		}
+		audit.tally(&audit.result.layers[index], concluded,
+			auditRow{pair: pair, layer: applied.name, why: concluded.why})
 	}
 }
 
@@ -650,9 +631,6 @@ func (audit *auditor) finish() auditResult {
 }
 
 func (audit *auditor) measureBranchSavings() dischargeSavings {
-	if audit.catalog == nil {
-		return dischargeSavings{}
-	}
 	var measured dischargeSavings
 	for _, mutant := range slices.Sorted(maps.Keys(audit.routes)) {
 		route := audit.routes[mutant]
@@ -660,8 +638,8 @@ func (audit *auditor) measureBranchSavings() dischargeSavings {
 		if !known || route.Granularity != trace.GranularityBlock || route.Fallback != "" {
 			continue
 		}
-		body, proved := listed.proves()
-		if !proved || !startsInBody(audit.recorded.instrumentedIn(listed.Path), body) {
+		body := listed.proves()
+		if body == nil || !startsInBody(audit.recorded.instrumentedIn(listed.Path), *body) {
 			continue
 		}
 		measured.routes++
@@ -669,7 +647,7 @@ func (audit *auditor) measureBranchSavings() dischargeSavings {
 		discharged := 0
 		dropped := make(map[targetIdentity]struct{}, len(route.ReachingTargets))
 		for _, target := range route.ReachingTargets {
-			if !audit.discharges(listed.Path, body, target) {
+			if !audit.discharges(listed.Path, *body, target) {
 				continue
 			}
 			discharged++

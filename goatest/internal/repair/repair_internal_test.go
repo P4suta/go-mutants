@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -20,8 +21,9 @@ import (
 )
 
 const (
-	secondCommitRename  = 2
-	rollbackRenameCount = 3
+	secondCommitRename   = 2
+	rollbackRenameCount  = 3
+	applicationsInABatch = 2
 )
 
 func TestNormalizeCanonicalizesLocalPathsAndRejectsEveryEscapeForm(t *testing.T) {
@@ -457,4 +459,205 @@ func resolvedTempDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+func TestASafeCandidateIDIsSixteenLowercaseHexDigits(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name string
+		id   string
+		want bool
+	}{
+		{name: "every digit and letter it admits", id: "0123456789abcdef", want: true},
+		{name: "the lowest identity", id: "0000000000000000", want: true},
+		{name: "the highest identity", id: "ffffffffffffffff", want: true},
+		{name: "nothing at all"},
+		{name: "one character short", id: "0123456789abcde"},
+		{name: "one character long", id: "0123456789abcdef0"},
+		{name: "the same digits in capitals", id: "0123456789ABCDEF"},
+		{name: "a letter past f", id: "0123456789abcdeg"},
+		{name: "the character below zero", id: "0123456789abcde/"},
+		{name: "the character above nine", id: "0123456789abcde:"},
+		{name: "the character below a", id: "0123456789abcde`"},
+		{name: "a path separator", id: "0123456789abcde/"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := safeCandidateID(test.id); got != test.want {
+				t.Fatalf("safeCandidateID(%q) = %t, want %t", test.id, got, test.want)
+			}
+		})
+	}
+}
+
+func TestApplyCandidatesAnswersAnEmptyBatchWithNoResults(t *testing.T) {
+	results, err := ApplyCandidates(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results == nil {
+		t.Fatal("an empty batch answered with no slice rather than no results")
+	}
+	if len(results) != 0 {
+		t.Fatalf("an empty batch produced %d results", len(results))
+	}
+}
+
+func TestApplyCandidatesRefusesEveryPathNoRepairMayTouch(t *testing.T) {
+	for _, path := range []string{"main.go", "internal/app/service.go", "../outside_test.go", ""} {
+		t.Run("path "+path, func(t *testing.T) {
+			root := resolvedTempDir(t)
+			_, err := ApplyCandidates(root, []Application{{
+				Candidate: provider.Candidate{Kind: "patch", Path: path, Content: []byte("package fixture\n")},
+			}})
+			if err == nil {
+				t.Fatalf("ApplyCandidates wrote %q, which no repair may touch", path)
+			}
+			if !strings.Contains(err.Error(), "is invalid") {
+				t.Errorf("the error is %q, want it to refuse the path", err)
+			}
+		})
+	}
+}
+
+const candidateRecordCeiling = 8 << 20
+
+func recordOfExactly(t *testing.T, size int) CandidateRecord {
+	t.Helper()
+	record := CandidateRecord{
+		ID: "0123456789abcdef",
+		Finding: report.Finding{
+			ID: "finding-a", Kind: "surviving-mutant", Summary: "survived",
+		},
+		Candidate: provider.Candidate{
+			Kind: "patch", Path: "generated_test.go", Content: []byte("package fixture\n"),
+		},
+	}
+	base, err := json.MarshalIndent(candidateDocument{Version: candidateVersion, CandidateRecord: record}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	padding := size - len(base) - len("\n")
+	if padding < 0 {
+		t.Fatalf("a record of %d bytes cannot be shrunk to %d", len(base)+1, size)
+	}
+	record.Snapshot = strings.Repeat("x", padding)
+	written, err := json.MarshalIndent(candidateDocument{Version: candidateVersion, CandidateRecord: record}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(written)+len("\n") != size {
+		t.Fatalf("the padded record is %d bytes, want %d", len(written)+1, size)
+	}
+	return record
+}
+
+func TestTheCandidateStoreHoldsARecordOfExactlyItsCeiling(t *testing.T) {
+	root := resolvedTempDir(t)
+	record := recordOfExactly(t, candidateRecordCeiling)
+
+	if _, err := StoreCandidate(root, record); err != nil {
+		t.Fatalf("a record of exactly %d bytes was refused: %v", candidateRecordCeiling, err)
+	}
+	loaded, err := LoadCandidate(root, record.ID)
+	if err != nil {
+		t.Fatalf("a record of exactly %d bytes could not be read back: %v", candidateRecordCeiling, err)
+	}
+	if loaded.Snapshot != record.Snapshot {
+		t.Fatal("the record read back is not the one that was stored")
+	}
+}
+
+func TestTheCandidateStoreRefusesARecordOneByteOverItsCeiling(t *testing.T) {
+	root := resolvedTempDir(t)
+	record := recordOfExactly(t, candidateRecordCeiling+1)
+
+	if _, err := StoreCandidate(root, record); err == nil {
+		t.Fatalf("a record of %d bytes was stored", candidateRecordCeiling+1)
+	} else if !strings.Contains(err.Error(), "exceeds 8 MiB") {
+		t.Errorf("the error is %q, want it to name the ceiling it refused", err)
+	}
+}
+
+func TestApplyCandidatesWritesAnArtifactForEveryPreimageThatDoesNotMatch(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		existing []byte
+		preimage func([]byte) string
+	}{
+		{
+			name:     "a file that is not there and a preimage that says it should be",
+			preimage: func([]byte) string { return strings.Repeat("0", hex.EncodedLen(sha256.Size)) },
+		},
+		{
+			name:     "a file whose contents somebody else changed",
+			existing: []byte("package fixture // edited\n"),
+			preimage: func([]byte) string { return sha256Hex([]byte("package fixture\n")) },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := resolvedTempDir(t)
+			target := filepath.Join(root, "candidate_test.go")
+			if test.existing != nil {
+				if err := os.WriteFile(target, test.existing, filemode.PrivateFile); err != nil {
+					t.Fatal(err)
+				}
+			}
+			results, err := ApplyCandidates(root, []Application{{
+				Finding: report.Finding{ID: "finding-a"},
+				Candidate: provider.Candidate{
+					Kind: "patch", Path: "candidate_test.go",
+					PreimageSHA256: test.preimage(test.existing), Content: []byte("package repaired\n"),
+				},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(results) != 1 || results[0].Status != StatusArtifact || results[0].Artifact == "" {
+				t.Fatalf("ApplyCandidates answered %+v, want one artifact", results)
+			}
+			switch current, readErr := os.ReadFile(target); {
+			case test.existing == nil && !errors.Is(readErr, os.ErrNotExist):
+				t.Errorf("a refused repair created the file it was not allowed to write: %v", readErr)
+			case test.existing != nil && string(current) != string(test.existing):
+				t.Errorf("a refused repair rewrote the file as %q, want %q", current, test.existing)
+			}
+		})
+	}
+}
+
+func TestApplyCandidatesWritesNothingWhenOneOfABatchDoesNotMatch(t *testing.T) {
+	root := resolvedTempDir(t)
+	matching := filepath.Join(root, "matching_test.go")
+	original := []byte("package fixture\n")
+	if err := os.WriteFile(matching, original, filemode.PrivateFile); err != nil {
+		t.Fatal(err)
+	}
+	results, err := ApplyCandidates(root, []Application{
+		{
+			Finding: report.Finding{ID: "finding-a"},
+			Candidate: provider.Candidate{
+				Kind: "patch", Path: "matching_test.go",
+				PreimageSHA256: sha256Hex(original), Content: []byte("package repaired\n"),
+			},
+		},
+		{
+			Finding: report.Finding{ID: "finding-b"},
+			Candidate: provider.Candidate{
+				Kind: "patch", Path: "mismatching_test.go",
+				PreimageSHA256: strings.Repeat("0", hex.EncodedLen(sha256.Size)),
+				Content:        []byte("package repaired\n"),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != applicationsInABatch ||
+		results[0].Status != StatusCandidate || results[1].Status != StatusArtifact {
+		t.Fatalf("ApplyCandidates answered %+v, want a candidate then an artifact", results)
+	}
+	if current, readErr := os.ReadFile(matching); readErr != nil || string(current) != string(original) {
+		t.Fatalf("the matching file of a refused batch reads %q (%v), want %q", current, readErr, original)
+	}
 }
