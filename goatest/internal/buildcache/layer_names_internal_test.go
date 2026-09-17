@@ -99,3 +99,32 @@ func TestALayerWithNoDirectoryRefusesToPrepareOrEnsure(t *testing.T) {
 		t.Fatalf("a layer with no directory walked %+v (%v), want nothing", files, err)
 	}
 }
+
+func TestABuildCachePolicyRefusesEveryNegativeSettingAndAcceptsZero(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		policy Policy
+		valid  bool
+	}{
+		{name: "a policy that names nothing", valid: true},
+		{
+			name:   "a policy that names every setting",
+			policy: Policy{MaxBytes: 1, TTL: time.Second, MinIdle: time.Second}, valid: true,
+		},
+		{name: "a ceiling below zero", policy: Policy{MaxBytes: -1}},
+		{name: "a lifetime below zero", policy: Policy{TTL: -time.Second}},
+		{name: "an idle window below zero", policy: Policy{MinIdle: -time.Second}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := test.policy.validate()
+			if (err == nil) != test.valid {
+				t.Fatalf("Policy%+v validated as %v, want valid: %t", test.policy, err, test.valid)
+			}
+		})
+	}
+	if _, err := (Layer{Dir: t.TempDir()}).collectWithHooks(Policy{MaxBytes: -1}, time.Time{}, layerHooks{}); err == nil {
+		t.Fatal("a collection under a policy that names a negative ceiling was run")
+	}
+}
