@@ -454,7 +454,7 @@ func collectPackageSuiteCoverages(
 		return nil
 	}
 	runs := make([]packageSuiteCoverageRun, len(controls))
-	jobs := baselineJobLimitFor(options.Jobs, len(controls), min(runtime.GOMAXPROCS(0), defaultMutationJobLimit))
+	jobs := baselineJobLimitFor(options.Jobs, len(controls), defaultMutationJobLimit())
 	indexes := make(chan int, len(controls))
 	finished := make(chan int, len(controls))
 	var workers sync.WaitGroup
@@ -511,7 +511,7 @@ func collectPackageBaselineTargets(
 	if len(targets) == 0 {
 		return nil
 	}
-	jobs := baselineJobLimitFor(options.Jobs, len(targets), min(runtime.GOMAXPROCS(0), defaultMutationJobLimit))
+	jobs := baselineJobLimitFor(options.Jobs, len(targets), defaultMutationJobLimit())
 	type indexedRun struct {
 		index int
 		run   baselineTargetRun

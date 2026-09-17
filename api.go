@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/testlog"
 	"github.com/P4suta/go-mutants/trace"
@@ -390,6 +391,25 @@ type PrepareOptions struct {
 	// Trace receives serialized phase start and finish events synchronously.
 	Trace func(PrepareEvent)
 }
+
+// DefaultJobs is the worker count [PrepareOptions.Jobs] zero resolves to on
+// this machine: the number of logical CPUs, clamped to a ceiling.
+//
+// It is published because a consumer that sets Jobs itself never reaches the
+// zero case, and so never gets this number -- it has to arrive at one of its
+// own. Left unpublished, the two arrive separately, and there is no version of
+// "how much of a machine may a mutation run take" that is answered once.
+//
+// The ceiling is the decision, and the reason for it is that a mutation run is
+// a background chore rather than the only thing a machine is doing: a laptop
+// should stay usable while one is going. A consumer whose run *is* what the
+// machine is for -- a dedicated worker, a nightly job -- should say so by
+// setting Jobs, which is respected up to the engine's maximum and is not
+// clamped against this number.
+//
+// It is a function and not a constant because it depends on the machine, and a
+// constant would be the same number everywhere and right nowhere.
+func DefaultJobs() int { return config.DefaultJobs() }
 
 // Catalog is the immutable public description of one prepared session.
 // Session.Catalog returns a deep copy.

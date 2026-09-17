@@ -44,7 +44,6 @@ const (
 	maximumRounds              = 3
 	commandOutputLimit         = 32 << 20
 	workspaceInspectionTimeout = 5 * time.Minute
-	defaultMutationJobLimit    = 4
 	progressDivisions          = 100
 )
 
@@ -1402,7 +1401,29 @@ func mutationJobLimit(options Options, loaded config.Config) int {
 	if options.MutationJobs > 0 {
 		return options.MutationJobs
 	}
-	return max(1, min(runtime.GOMAXPROCS(0), defaultMutationJobLimit))
+	return defaultMutationJobLimit()
+}
+
+// defaultMutationJobLimit is the worker count a run derives when nothing asked
+// for one.
+//
+// It is the engine's published number and not a second opinion about the same
+// question. This was a bare 4 with no argument beside it, and because a run
+// always hands the engine an explicit Jobs the engine's own ceiling was never
+// consulted -- so on a machine with eighteen cores a run took four of them, and
+// the number that was supposed to decide that was unreachable from here.
+// [gomutants.DefaultJobs] carries the reason: a mutation run is a background
+// chore and a laptop should stay usable through one.
+//
+// GOMAXPROCS is still the floor of the pair. The engine derives from the
+// machine's logical CPUs, which is the right input for a default; an operator
+// who has lowered GOMAXPROCS has said something narrower about this process in
+// particular, and a chore should not talk over that.
+//
+// A run that *is* what the machine is for says so with `jobs` in .goatest.toml,
+// which is taken as given and not clamped against this.
+func defaultMutationJobLimit() int {
+	return max(1, min(runtime.GOMAXPROCS(0), gomutants.DefaultJobs()))
 }
 
 func reportExecution(options Options, mutationJobs int) report.Execution {
