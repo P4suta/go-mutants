@@ -58,7 +58,13 @@ func readOnlyDir(t *testing.T, dir string) {
 }
 
 // readOnlyFile makes one existing file refuse writes, and skips the test where
-// it cannot. It is [readOnlyDir]'s argument applied to a file that is already
+// it cannot.
+//
+// It cannot release what the caller is holding. A skip from here runs the
+// caller's cleanups and stops, so a caller that has claimed a directory must
+// have registered its release before calling this -- on Windows an open lock
+// file is one t.TempDir cannot unlink, and the skip is then reported as a
+// failure about a temporary directory. It is [readOnlyDir]'s argument applied to a file that is already
 // there, which a read-only directory does not cover.
 func readOnlyFile(t *testing.T, path string) {
 	t.Helper()
@@ -155,6 +161,14 @@ func TestKeepReportsAFailureAndStillReleases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
+	// Released whatever happens next, because what happens next may be a skip.
+	// [readOnlyFile] gives up on Windows, and a skip runs the cleanups and
+	// stops -- so without this the lock file stays open, t.TempDir's own
+	// cleanup cannot unlink it, and the test reports a failure about a
+	// temporary directory instead of a skip about a file mode. The error is
+	// dropped because the Release this test is really about is asserted below,
+	// and cleanups run after it.
+	t.Cleanup(func() { _ = owner.Release() })
 	// The marker file itself, not the directory: Claim has already written it,
 	// and a read-only *directory* still admits a write to a file that is
 	// already in it.
