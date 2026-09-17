@@ -252,6 +252,8 @@ jobs:
             echo "GO_MUTANTS_TEST_KEEP_DIR=$RUNNER_TEMP/go-mutants-kept"
           } >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
         with:
           install: true
@@ -536,6 +538,8 @@ jobs:
           echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
           >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
         with:
           install: true
@@ -598,6 +602,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
         with:
           install: true
@@ -694,12 +700,19 @@ jobs:
         run: |
           set -euo pipefail
           passed='.value.result == "success" or .value.result == "skipped"'
-          report='to_entries | .[] | "\(.key): \(.value.result)"'
+          # One entry, rendered. It is a line and not a whole pipeline because
+          # it is used on both an object and an already-filtered list: the
+          # first version began with to_entries and was applied to the output
+          # of map(select(...)), which is entries already -- so jq indexed the
+          # array and every failure this job exists to name printed as
+          # `0: null`. The one line a reader needs was the one line that broke.
+          line='"\(.key): \(.value.result)"'
+          entries="to_entries | .[] | $line"
           failed=$(printf '%s' "$RESULTS" |
-            jq -r "to_entries | map(select($passed | not)) | $report")
+            jq -r "to_entries | map(select($passed | not)) | .[] | $line")
           if [ -n "$failed" ]; then
             echo "::error::gates that did not pass:"
             printf '%s\n' "$failed"
             exit 1
           fi
-          printf '%s' "$RESULTS" | jq -r "$report"
+          printf '%s' "$RESULTS" | jq -r "$entries"

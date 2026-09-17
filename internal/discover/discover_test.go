@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1549,6 +1550,47 @@ func TestDiscoverReadsATreeWhoseTestFilesDoNotCompile(t *testing.T) {
 	for _, candidate := range result.Candidates {
 		if candidate.Path != "count.go" {
 			t.Errorf("candidate in %q, which is not the file the fixture mutates", candidate.Path)
+		}
+	}
+}
+
+// TestAWorkspaceMayUseItsOwnRootAsAModule pins the layout every repository
+// takes the day it grows a second module.
+//
+// `use .` beside `use ./inner` is what a tree looks like when a tool module is
+// added next to the library it was already publishing. This repository became
+// one, which is how the gap was found: the workspace pass walks each module in
+// turn and hands [Discover] that module's own directory, and for the `.` module
+// that directory *is* the workspace root — so CheckWorkspace saw the go.work it
+// had just read and refused the pass that was reading it, with GOM4102 telling
+// the caller to point at one of the workspace's modules. It was pointing at one.
+//
+// Nothing here covered it because `fixtures/workspace` uses three
+// subdirectories and no root, so every SnapshotRoot handed to Discover was
+// below the file. A corpus can be complete about the shapes it has.
+func TestAWorkspaceMayUseItsOwnRootAsAModule(t *testing.T) {
+	t.Parallel()
+
+	results, err := DiscoverWorkspace(t.Context(), Options{
+		SnapshotRoot: testkit.Fixture(t, "rootmodule"),
+		Toolchain:    toolchain(t),
+		Rules:        []mutation.Rule{{Family: mutation.FamilyComparison, Name: "gt-to-ge", Version: 1, Tier: mutation.TierBalanced}},
+	})
+	if err != nil {
+		t.Fatalf("DiscoverWorkspace over a workspace whose root is a module: %v", err)
+	}
+	paths := make([]string, 0, len(results))
+	for _, result := range results {
+		paths = append(paths, result.Module.Path)
+	}
+	slices.Sort(paths)
+	want := []string{"fixture.example/rootmodule", "fixture.example/rootmodule/inner"}
+	if !slices.Equal(paths, want) {
+		t.Errorf("discovered %v, want %v", paths, want)
+	}
+	for _, result := range results {
+		if len(result.Result.Candidates) == 0 {
+			t.Errorf("module %s contributed no candidate", result.Module.Path)
 		}
 	}
 }

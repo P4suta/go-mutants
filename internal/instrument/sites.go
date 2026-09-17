@@ -611,6 +611,10 @@ func renderSites(
 			Span:        root.Span,
 			Original:    src[root.Span.StartByte:root.Span.EndByte],
 			Replacement: rendered[root],
+			// Named for the same reason every other producer here is: a
+			// conflict between a site and something else used to be reported as
+			// two slice indices, which says nothing about either side.
+			Origin: "the rewrite site at " + root.Span.String(),
 		})
 	}
 	return splices, len(rendered), nil

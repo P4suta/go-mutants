@@ -63,6 +63,19 @@ type Options struct {
 	// directory it is already in is the only spelling that cannot disagree.
 	Workspace bool
 
+	// WorkspaceRoot is the directory holding the `go.work` the caller already
+	// read, and is empty outside a workspace pass.
+	//
+	// It is a path rather than a flag because of what the flag could not say. A
+	// workspace pass hands each module its own directory, and for a `use .`
+	// that directory is the workspace root -- which [Discover] would otherwise
+	// refuse for holding the very file the pass was walking. Excusing every
+	// module of a workspace instead would excuse a module that carries a
+	// *second* `go.work` of its own, which the go command does not support and
+	// which everything below this still has to refuse. Naming the one file
+	// distinguishes the two.
+	WorkspaceRoot string
+
 	// PathPrefix is what [Options.Include] and [Options.Exclude] are written
 	// against, relative to the module root, and is empty outside a workspace.
 	//
@@ -806,8 +819,25 @@ func Discover(ctx context.Context, opts Options) (Result, error) {
 	// also find one in a parent directory or through $GOWORK, and neither is
 	// part of the snapshot; the loader runs with GOWORK=off so that neither can
 	// decide what this run resolves against. See [environment].
-	if workspaceErr := CheckWorkspace(root); workspaceErr != nil {
-		return Result{}, workspaceErr
+	//
+	// The workspace pass is excused for its own root module and for nothing
+	// else. [DiscoverWorkspace] walks a workspace module by module and hands
+	// each one its own directory; for a `use .` that directory is the workspace
+	// root, so this check would find the very file that pass had just read and
+	// refuse it — telling the caller to point at one of the workspace's
+	// modules, which is exactly what it was doing.
+	//
+	// [Options.WorkspaceRoot] is that one file's directory rather than a
+	// boolean, because "the caller is a workspace pass" is not the same
+	// permission as "this go.work is the one the caller already read". A module
+	// *inside* a workspace that carries a second go.work of its own is a nested
+	// workspace, which the go command does not support and which this refuses
+	// for the reason it always has: everything below assumes one module. Told
+	// only that a workspace pass was running, this would have let that through.
+	if opts.WorkspaceRoot == "" || !samePath(opts.WorkspaceRoot, root) {
+		if workspaceErr := CheckWorkspace(root); workspaceErr != nil {
+			return Result{}, workspaceErr
+		}
 	}
 	matchers, err := newMatchers(opts.Rules)
 	if err != nil {

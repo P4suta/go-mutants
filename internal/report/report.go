@@ -1095,10 +1095,14 @@ func (r *Report) ExpectationFailure() bool {
 		outcomes[m.ID] = m.Outcome
 	}
 	for _, e := range r.Expectations {
+		//exhaustive:total Staleness is the other two states. A fulfilled expectation is the case
+		// this question has nothing to say about.
 		switch e.State {
 		case StateStale:
 			return true
 		case StateUnfulfilled:
+			//exhaustive:total The two outcomes that contradict an unfulfilled expectation. The rest are
+			// not evidence either way, and this clause falls through for them.
 			switch outcomes[e.ID] {
 			case OutcomeKilled, OutcomeTimedOut:
 				return true

@@ -1270,6 +1270,7 @@ is the whole of what was asked for and a failure is an error.
 | --- | --- | --- |
 | `.` — the module root (`gomutants`) | Public frozen-workspace and reusable-session API | implemented |
 | `cmd/go-mutants` | Thin main | implemented |
+| `cmd/gomutants-vet` | Thin main for the checks that need types: a `go/analysis` driver the same passes load into `go vet -vettool` and golangci-lint from | implemented |
 | `internal/cli` | cobra tree, flag validation, GOM errors, exit codes | implemented |
 | `internal/config` | Strict TOML decode and precedence merge | implemented |
 | `internal/mutation` | Pure: spans, stable IDs, rules, catalog, score | implemented |
@@ -1301,6 +1302,7 @@ is the whole of what was asked for and a failure is an error.
 | `internal/testkit` | Module and fixture paths, tree copies, hermetic environment, toolchain lookup, child processes, golden files, helper subprocesses, clocks, the keep-on-failure policy and its dumps | test-only support |
 | `internal/testkit/mutantkit` | Snapshots, the discover/catalogue/instrument sequence, mutant lookups, report marshalling and normalisation, a per-test trace recording, a scripted `go` command | test-only support |
 | `internal/devgates` | The checks whose subject is this repository rather than the product: what a configuration file claims, and whether it is still true | test-only support |
+| `internal/analysis/exhaustive` | The `go/analysis` pass that refuses a switch over one of this repository's closed vocabularies that does not name every word | test-only support |
 | `internal/devtools/testcache` | The test-owned build cache and the kept scratch root: `path`, `status`, `clean`, `trim`, `exec` | developer tool |
 | `internal/devtools/testcost` | Turns `go test -json` into a per-package cost and skip table | developer tool |
 | `internal/devtools/traceaudit` | Re-derives a run's conclusions from the recording beside it, with code that never calls the engine's | developer tool |
@@ -1308,6 +1310,38 @@ is the whole of what was asked for and a failure is an error.
 | `schema` | Public: the JSON Schema documents go-mutants publishes, embedded | implemented |
 | `schema/stryker` | The vendored mutation-testing-report schema and its provenance | vendored |
 | `vendor-assets` | The vendored viewer bundle and its digest check | vendored |
+| `goatest` | The runner's public API: what a Go test needs in order to mean anything, as a library | implemented |
+| `goatest/cmd/goatest` | The runner's single command | implemented |
+| `goatest/internal/advisorylock` | A lock a second run reads rather than blocks on | implemented |
+| `goatest/internal/app` | The command's own layer: flags, output, diagnostics bundles and the interrupt path | implemented |
+| `goatest/internal/assure` | Coordinates a round: baseline, probes, mutants, verdict | implemented |
+| `goatest/internal/buildcache` | The build cache a round reuses between its phases | implemented |
+| `goatest/internal/cache` | The evidence cache, keyed on content identity | implemented |
+| `goatest/internal/checkpoint` | What a round writes down so that an interrupted one can be resumed | implemented |
+| `goatest/internal/cli` | The cobra tree | implemented |
+| `goatest/internal/config` | `.goatest.toml`, its defaults and its validation | implemented |
+| `goatest/internal/devgates` | The checks whose subject is the runner's repository rather than the runner | test-only support |
+| `goatest/internal/devtools/proofaudit` | Re-derives a round's verdict from its own evidence, with code that never calls the runner's | developer tool |
+| `goatest/internal/devtools/reportdiff` | Compares two reports and says which fields moved | developer tool |
+| `goatest/internal/devtools/testaudit` | Turns a test run into the table a reader audits it from | developer tool |
+| `goatest/internal/devtools/tracesummary` | Turns a recording into a summary a person reads | developer tool |
+| `goatest/internal/environment` | The environment a measured command is given, and nothing the caller's leaks into | implemented |
+| `goatest/internal/evidence` | Content identities and the impact graph | implemented |
+| `goatest/internal/filemode` | The permission bits a file is written with, per platform | implemented |
+| `goatest/internal/golang` | Discovers native targets and coverage through the go command | implemented |
+| `goatest/internal/keptledger` | What a kept temporary directory records about why it was kept | implemented |
+| `goatest/internal/mutationbridge` | The one door the engine is reached through, and the only file in the runner that names its API. It was one because a module boundary made it one; it is one now because [ADR 0036](adr/0036-the-runner-reaches-the-engine-through-its-public-api.md) says so, and a gate refuses the shortcut Go's path-prefix rule would otherwise permit | implemented |
+| `goatest/internal/processtree` | A measured command's whole process tree, and how it is ended | implemented |
+| `goatest/internal/provider` | Providers run as subprocesses behind strict JSON protocols; core holds no network client | implemented |
+| `goatest/internal/repair` | What a round offers to fix, and what it refuses to touch | implemented |
+| `goatest/internal/report` | Report v1: the document a round publishes, its limitations and its audit | implemented |
+| `goatest/internal/resource` | The resources a target acquires, and the limit an exclusive one reduces | implemented |
+| `goatest/internal/retention` | How long evidence is kept and what decides it is stale | implemented |
+| `goatest/internal/tempowner` | Which run owns a temporary directory, and what a later sweep reads | implemented |
+| `goatest/internal/testargs` | The arguments a measured `go test` is given | test-only support |
+| `goatest/internal/testkit` | The runner's harness | test-only support |
+| `goatest/internal/trace` | The runner's own trace vocabulary, which the engine's deliberately rejects | implemented |
+| `goatest/internal/ui` | The dashboard and the console a round renders into | implemented |
 
 Pure packages have no filesystem or process access, which is what makes the
 golden ID vectors and property tests meaningful.

@@ -4,6 +4,9 @@
 package instrument_test
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -191,4 +194,110 @@ func candidatesInFile(t *testing.T, path string, src []byte) []mutation.Candidat
 		out[i].Path = path
 	}
 	return out
+}
+
+// loopInsideAMutatedStatement is the shape that broke instrumentation outright.
+//
+// `return-err-to-nil` mints a mutant whose span is the whole returned
+// expression, and here that expression is a call taking a function literal with
+// a `for` inside it. So a counted loop sits *inside* a rewrite site, and the
+// counter's declaration is an insertion into bytes another splice replaces.
+//
+// It is an ordinary Go shape -- a callback that loops -- and nothing in the
+// corpus had it, which is why `GOM7312: splice 71 at [4942,4942) overlaps
+// splice 6 at [4232,5675)` was first seen against another module's source and
+// not against this one's tests.
+const loopInsideAMutatedStatement = `package sample
+
+import "errors"
+
+func each(f func() error) error { return f() }
+
+func run(n int) error {
+	return each(func() error {
+		for i := 0; i < n; i++ {
+			if i > 2 {
+				return errors.New("too big")
+			}
+		}
+		return nil
+	})
+}
+`
+
+// TestALoopInsideARewriteSiteIsStillCounted pins the ceiling against the one
+// place it had no way to land.
+//
+// The counter is what ADR 0013 rests on: a mutant that will not return is
+// settled by counted work rather than by the clock. A loop whose enclosing
+// statement is itself a rewrite site is not a special case a user would ever
+// know they had written, so it gets its ceiling like every other loop -- and
+// the file instruments at all, which before this it did not.
+func TestALoopInsideARewriteSiteIsStillCounted(t *testing.T) {
+	t.Parallel()
+
+	src := []byte(loopInsideAMutatedStatement)
+	root := t.TempDir()
+	testkit.WriteFile(t, filepath.Join(root, sampleFile), src)
+
+	// The statement-wide candidate is built here rather than taken from
+	// candidatesIn, which only ever synthesises comparisons and booleans --
+	// spans one operator wide, and so spans that can never contain a loop. That
+	// is the whole reason the corpus could not have caught this.
+	candidates := append(candidatesIn(t, src), returnedCallCandidate(t, src))
+	catalog := catalogOf(t, candidates)
+	instrumentSnapshot(t, root, catalog)
+	out := testkit.ReadFile(t, filepath.Join(root, sampleFile))
+
+	assertWellFormed(t, src, out, catalog)
+
+	text := string(out)
+	declarations := regexp.MustCompile(`__gm_n(\d+), __gm_k(\d+) :=`).FindAllStringSubmatch(text, -1)
+	if len(declarations) == 0 {
+		t.Fatalf("the one loop in this file was left uncounted:\n%s", text)
+	}
+	for _, d := range declarations {
+		if want := "__gm_n" + d[1] + " > __gm_k" + d[1]; !strings.Contains(text, want) {
+			t.Errorf("counter %s is declared and never tested; %q is not in the file", d[1], want)
+		}
+	}
+}
+
+// returnedCallCandidate is `return-err-to-nil` over a returned call: the rule
+// whose span is a whole expression rather than a token, and the one that puts a
+// loop inside a rewrite site.
+func returnedCallCandidate(t *testing.T, src []byte) mutation.Candidate {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, sampleFile, src, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parsing the fixture: %v", err)
+	}
+	tok := fset.File(file.Package)
+	var found *ast.CallExpr
+	ast.Inspect(file, func(node ast.Node) bool {
+		ret, ok := node.(*ast.ReturnStmt)
+		if !ok || len(ret.Results) != 1 || found != nil {
+			return true
+		}
+		call, ok := ret.Results[0].(*ast.CallExpr)
+		if ok && len(call.Args) == 1 {
+			if _, isLiteral := call.Args[0].(*ast.FuncLit); isLiteral {
+				found = call
+			}
+		}
+		return true
+	})
+	if found == nil {
+		t.Fatal("the fixture has no returned call taking a function literal")
+	}
+	start, end := uint32(tok.Offset(found.Pos())), uint32(tok.Offset(found.End()))
+	return mutation.Candidate{
+		Path:         sampleFile,
+		Rule:         lookupRule(t, "return-err-to-nil"),
+		Span:         mutation.Span{StartByte: start, EndByte: end},
+		Original:     string(src[start:end]),
+		Replacement:  "nil",
+		SourceDigest: mutation.Digest(src),
+	}
 }

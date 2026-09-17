@@ -40,3 +40,37 @@ For the contracts these decisions produced, see
 [the trace format](../trace-v1.md); for how the pieces fit together, see
 [the architecture](../architecture.md). For how to work on any of it, see
 [the development guide](../development.md).
+
+## The runner's records
+
+Renumbered by +13 when the two products came into one repository, so that
+one sequence covers both: the engine's 167 references include public godoc
+and could not move, the runner's 38 were all prose and could. Each record
+keeps the number it was accepted under in its own Status line.
+
+| ADR | Decision |
+| --- | --- |
+| [0014](../../goatest/docs/adr/0014-seam-policy.md) | 0001 — Test seams are arguments, not package-level variables |
+| [0015](../../goatest/docs/adr/0015-trace-is-not-evidence.md) | 0002 — A trace is not evidence |
+| [0016](../../goatest/docs/adr/0016-no-replay-engine.md) | 0003 — No general record/replay engine |
+| [0017](../../goatest/docs/adr/0017-proof-layers-not-budgets.md) | 0004 — Proof layers, not budgets |
+| [0018](../../goatest/docs/adr/0018-build-cache-goatest-owns.md) | 0005 — A build cache goatest owns, and what may write to it |
+| [0019](../../goatest/docs/adr/0019-every-temporary-directory-has-an-owner.md) | 0006 — Every temporary directory has an owner |
+| [0020](../../goatest/docs/adr/0020-survived-evidence-is-universal.md) | 0007 — Survived evidence is a universal proposition over the reaching set |
+| [0021](../../goatest/docs/adr/0021-controls-before-timeouts.md) | 0008 — Controls before timeouts |
+| [0022](../../goatest/docs/adr/0022-parallel-measurement-serial-commit.md) | 0009 — Parallel measurement, serial commit |
+| [0023](../../goatest/docs/adr/0023-whole-suite-reach-before-fallback.md) | 0010 — Whole-suite reach before fallback execution |
+| [0024](../../goatest/docs/adr/0024-append-only-checkpoint-journal.md) | 0011 — Append-only checkpoint journal |
+| [0025](../../goatest/docs/adr/0025-aggregate-proof-before-timeout.md) | 0012 — Exact compatible-group mutation proofs |
+| [0026](../../goatest/docs/adr/0026-preserve-block-routing-across-resume.md) | 0013 — Preserve block routing across resume |
+| [0027](../../goatest/docs/adr/0027-resume-complete-probe-phase.md) | 0014 — Resume a complete probe phase |
+| [0028](../../goatest/docs/adr/0028-execute-framed-baselines-directly.md) | Execute framed baseline targets directly |
+| [0029](../../goatest/docs/adr/0029-publish-every-baseline-control.md) | 0016 — Publish every completed baseline control |
+| [0030](../../goatest/docs/adr/0030-project-controls-use-a-native-cache-projection.md) | 0017 — Project controls use a native cache projection |
+| [0031](../../goatest/docs/adr/0031-confirm-comparative-watchdogs.md) | 0018 — Fail closed at comparative watchdogs |
+| [0032](../../goatest/docs/adr/0032-instrument-the-test-binary-import-closure.md) | 0019 — Instrument the test binary import closure |
+| [0033](../../goatest/docs/adr/0033-bootstrap-cold-preparation-with-verified-local-work.md) | 0020 — Bootstrap cold preparation with verified local work |
+| [0034](../../goatest/docs/adr/0034-what-a-ledger-cannot-check.md) | 0021 — What a ledger cannot check |
+| [0035](0035-one-repository-two-modules.md) | The engine and the runner live in one repository as two modules joined by `go.work`, so that one proof is one pull request rather than a sequence of two with a version pin between them |
+| [0036](0036-the-runner-reaches-the-engine-through-its-public-api.md) | The runner's production code imports the engine's published API and never its `internal/`, which Go's path-prefix rule permits and a gate refuses |
+| [0037](0037-a-value-carries-its-meaning-in-its-type.md) | A value's meaning belongs in its type; where Go cannot express it a check enforces it, and where a check cannot decide it a reason is required beside the code |

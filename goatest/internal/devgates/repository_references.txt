@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2026 goatest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Every place this repository names itself as a GitHub repository rather than
+# as a Go import path, one path per line, sorted.
+#
+# The two look alike and move differently, and this file was written the day
+# before they had to. The fold happened: this module's import path is
+# github.com/P4suta/go-mutants/goatest now and every import in the tree was
+# rewritten mechanically, while these four were repaired by hand to
+# P4suta/go-mutants. A repository does not gain a path segment when a module
+# inside it does -- `--repo P4suta/go-mutants/goatest` names nothing, and
+# https://github.com/P4suta/go-mutants/goatest/releases is a 404 -- and all four
+# would have become exactly that, in silence, under the substitution that fixed
+# six hundred imports correctly.
+#
+# The ledger outlives the rewrite because the distinction does. The reason it
+# existed for that one day was that four of the five hid inside the same
+# spelling the rewrite looked for. A narrow pattern that matches
+# `github.com/P4suta/go-mutants/goatest` catches them all and leaves the fifth, which is
+# how go-mutants found the one in README.md; a pattern narrow enough to miss
+# the fifth is wide enough to corrupt the four in silence. Neither is safe
+# without knowing which is which, and that is what this file is.
+#
+# One of them is not a rename at all.  README.md's `gh attestation verify
+# --repo P4suta/goatest` is correct about the artefacts it describes, because
+# P4suta/goatest really did attest v0.1.0, and it becomes wrong only for
+# artefacts released afterwards. That line needs a decision, not a substitution.
+CLAUDE.md
+README.md
+REUSE.toml
+SECURITY.md
+internal/assure/version_test.go
+internal/report/formats.go

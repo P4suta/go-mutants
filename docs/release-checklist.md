@@ -106,7 +106,8 @@ nothing at all — no version bump, and no Release PR. See `CONTRIBUTING.md`.
 ## Toolchain and gates
 
 - [ ] `mise install` and `mise run bootstrap` on a clean checkout
-- [ ] `mise run check` green — `fmt`, `build`, `test`, `lint` in CI order
+- [ ] `mise run check` green — `fmt`, `build`, `build-published`, `test`, `lint`
+      in CI order
 - [ ] `mise run test-integration` green on Windows, Linux, and macOS
 - [ ] CI green on the exact release commit: the `quality` job, all three legs
       of the `platform-tests` matrix, `artifacts`, and `dogfood`

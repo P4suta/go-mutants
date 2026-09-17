@@ -28,6 +28,17 @@ type guardRenderer struct {
 	alias string
 	// sites is what each node of the forest turned out to be, by site span.
 	sites map[mutation.Span]site
+	// loops is every counted-loop insertion in this file, in the file's own
+	// coordinates, and it is here because a loop can be *inside* a rewrite
+	// site.
+	//
+	// That is an ordinary shape -- `return each(func() error { for ... } })`
+	// puts one there -- and a file-level insertion into bytes a guard replaces
+	// is an overlap, which is what GOM7312 said when the whole file then
+	// refused to instrument. A loop inside a site belongs to that site's text,
+	// exactly as a nested guard does, so it is folded in here and never
+	// reaches the file's own splice list.
+	loops []Splice
 }
 
 // A siteNode is one node of the rewrite forest for a file.
@@ -61,15 +72,20 @@ func (r *guardRenderer) compose(node *siteNode, rendered map[*siteNode][]byte) (
 	}
 	base := r.original(node.Span)
 
-	splices := make([]Splice, 0, len(node.Children)+len(s.undeclare))
+	splices := make([]Splice, 0, len(node.Children)+len(s.undeclare)+len(r.loops))
 	for _, child := range node.Children {
 		splices = append(splices, Splice{
 			Span:        relativeTo(child.Span, node.Span.StartByte),
 			Original:    r.original(child.Span),
 			Replacement: rendered[child],
+			Origin:      "the rewrite site at " + child.Span.String(),
 		})
 	}
 	splices = append(splices, s.undeclare...)
+	// The loops this site holds directly. A loop inside a child is already in
+	// the bytes that child rendered -- it was folded in when the child was
+	// composed, which is what makes one pass over the forest enough.
+	splices = append(splices, r.loopsWithin(node.Span, node.Children)...)
 	if !LinePreserving(splices) {
 		return nil, r.lineDrift("folding nested guards into the site at " + node.Span.String())
 	}
@@ -340,13 +356,22 @@ func (r *guardRenderer) mutated(s site, m mutation.Mutant) ([]byte, error) {
 				r.path, m.DisplayID, m.Span, s.span),
 		}
 	}
-	splices := make([]Splice, 0, 1+len(s.undeclare))
+	splices := make([]Splice, 0, 1+len(s.undeclare)+len(r.loops))
 	splices = append(splices, Splice{
 		Span:        relativeTo(m.Span, s.span.StartByte),
 		Original:    []byte(m.Original),
 		Replacement: []byte(m.Replacement),
+		Origin:      "the mutant " + m.DisplayID,
 	})
 	splices = append(splices, s.undeclare...)
+	// Every loop this copy still holds is counted in it too. A mutant is one
+	// edit to the program the user wrote, and a loop the edit did not touch is
+	// part of that program -- if anything the ceiling matters more here, since
+	// the mutant is the reason a loop that terminated might not. The ones
+	// inside the edit are dropped rather than counted: those bytes are gone,
+	// replaced by whatever the mutant writes, and a counter for a loop that is
+	// no longer there would not compile.
+	splices = append(splices, loopsOutside(r.loopsWithin(s.span, nil), m.Span, s.span.StartByte)...)
 
 	patched, _, err := Apply(r.original(s.span), splices)
 	if err != nil {
@@ -368,4 +393,60 @@ func (r *guardRenderer) lineDrift(detail string) error {
 		Code:    CodeLineDrift,
 		Message: "internal error: instrumenting " + strconv.Quote(r.path) + " would move a line: " + detail,
 	}
+}
+
+// loopsWithin is the loop insertions that belong to one site's own text: the
+// ones inside its span, less the ones any child already carries, expressed
+// relative to the site.
+//
+// Containment is by insertion point, because every one of these is an empty
+// span. A point exactly at a child's start is the parent's -- it writes in
+// front of the child rather than into it -- and one strictly inside the child
+// is the child's.
+func (r *guardRenderer) loopsWithin(span mutation.Span, children []*siteNode) []Splice {
+	if len(r.loops) == 0 {
+		return nil
+	}
+	out := make([]Splice, 0, len(r.loops))
+	for _, loop := range r.loops {
+		at := loop.Span.StartByte
+		if at < span.StartByte || at > span.EndByte {
+			continue
+		}
+		nested := false
+		for _, child := range children {
+			if at > child.Span.StartByte && at < child.Span.EndByte {
+				nested = true
+				break
+			}
+		}
+		if nested {
+			continue
+		}
+		out = append(out, Splice{
+			Span:        relativeTo(loop.Span, span.StartByte),
+			Original:    loop.Original,
+			Replacement: loop.Replacement,
+			Origin:      loop.Origin,
+		})
+	}
+	return out
+}
+
+// loopsOutside drops the insertions that fall inside one mutant's edit, which
+// is bytes the mutated copy does not have. The spans handed in are already
+// relative to base; cut is not.
+func loopsOutside(relative []Splice, cut mutation.Span, base uint32) []Splice {
+	out := relative[:0:0]
+	for _, loop := range relative {
+		at := loop.Span.StartByte + base
+		if at > cut.StartByte && at < cut.EndByte {
+			continue
+		}
+		if cut.Len() == 0 && at == cut.StartByte {
+			continue
+		}
+		out = append(out, loop)
+	}
+	return out
 }

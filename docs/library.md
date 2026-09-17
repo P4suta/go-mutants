@@ -373,13 +373,51 @@ silent merge.
 | `Packages []string` | `nil` → `./...` | module-relative package patterns whose test binaries are built |
 | `ProbeCoverPackages []string` | `nil` | package patterns included in probe coverage |
 | `Selection *Selection` | `nil` | module-relative paths onto 1-based inclusive line ranges. Narrows what the caller means to *execute*; `nil` selects everything, while a non-nil `Selection` that retains no range (an empty map, or paths with no ranges) selects nothing. See [Selecting by line range](#selecting-by-line-range) |
-| `Jobs int` | `0` → `min(NumCPU, 8)`, at most 32 | concurrent validation and test-binary builds |
+| `Jobs int` | `0` → `DefaultJobs()`, at most 32 | concurrent validation and test-binary builds. `DefaultJobs()` is `min(NumCPU, 8)` and is published because a consumer that sets `Jobs` itself never reaches the zero case, and so has to arrive at a number of its own — see [How much of a machine a run takes](#how-much-of-a-machine-a-run-takes) |
 | `BuildTimeout time.Duration` | `0` → 10 minutes | bounds each validation and test-binary build. Negative is invalid |
 | `MutantTimeout time.Duration` | `0` → 10 seconds | the default outer timeout `Session.Exec` and `Session.Probe` use. Negative is invalid |
 | `Verify Command` | zero → `go test ./...`, timed at `BuildTimeout` | run once against pristine files with instrumented Go builds |
 | `SkipVerify bool` | `false` | omit `Verify`. Combining it with a non-zero `Verify` is an error rather than a silent preference |
 | `Probe bool` | `false` | also prepare the probe tree |
 | `Trace func(PrepareEvent)` | `nil` | receives serialized phase start and finish events synchronously |
+
+### How much of a machine a run takes
+
+`DefaultJobs()` returns the number `Jobs: 0` resolves to on this machine: the
+logical CPU count, clamped to a ceiling of 8.
+
+The ceiling is the decision, and its reason is that a mutation run is a
+background chore rather than the only thing a machine is doing — a laptop
+should stay usable through one. A consumer whose run *is* what the machine is
+for, a dedicated worker or a nightly job, should say so by setting `Jobs`. An
+explicit value is taken as given up to 32 and is never clamped against
+`DefaultJobs()`.
+
+It is published rather than left as an internal default because a consumer that
+sets `Jobs` itself never reaches the zero case, and so never gets this number:
+it has to arrive at one of its own. Two numbers then exist for one question,
+and nothing either side can import says which is the answer. goatest had a
+bare 4 for exactly this reason, so on an eighteen-core machine its runs took
+four cores and the ceiling that was supposed to decide that was unreachable
+from where the decision was made.
+
+It is a function rather than a constant because it depends on the machine, and
+a constant would be the same number everywhere and right nowhere.
+
+The ceiling is also where the work stops paying. Measured on an 18-core machine
+(6 performance cores, 12 efficiency) over goatest's own suite, counting mutants
+finished per minute across a four-minute window:
+
+| Workers | Mutants per minute |
+|---|---|
+| 4 | 78 |
+| **8** | **174** |
+| 16 | 152 |
+
+Sixteen is slower than eight, and the CPU sat above 60% idle at both: a
+mutation run is bound by process starts and file system contention rather than
+by cores. Raising `Jobs` past the ceiling on a machine like that costs the
+machine its responsiveness and returns a slower run.
 
 ### `ExecRequest`, `ProbeRequest` and `ControlRequest`
 

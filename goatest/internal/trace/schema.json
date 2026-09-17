@@ -1,0 +1,529 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "goatest-trace-v1",
+  "title": "goatest trace event v1",
+  "description": "One line of a goatest trace stream. A trace is diagnostic exhaust, never evidence, and it records environment names without their values.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["seq", "type", "timestamp", "elapsed_ms"],
+  "properties": {
+    "seq": {
+      "description": "Position of the event in the recording, counting from one.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "type": {
+      "description": "Which event this is, and therefore which payload it carries.",
+      "enum": [
+        "run-start",
+        "phase-start",
+        "phase-end",
+        "prepare",
+        "exec",
+        "mutant-exec",
+        "route",
+        "probe-exec",
+        "progress",
+        "artifact",
+        "run-end"
+      ]
+    },
+    "schema": {
+      "description": "Format identity, carried by the run-start event alone.",
+      "const": "goatest-trace-v1"
+    },
+    "timestamp": {
+      "description": "When the event was recorded, RFC 3339 in UTC.",
+      "type": "string",
+      "format": "date-time",
+      "minLength": 1
+    },
+    "elapsed_ms": {
+      "description": "Milliseconds between the start of the recording and the event.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "phase": { "$ref": "#/$defs/phase" },
+    "prepare": { "$ref": "#/$defs/prepare" },
+    "exec": { "$ref": "#/$defs/exec" },
+    "mutant": { "$ref": "#/$defs/mutant" },
+    "route": { "$ref": "#/$defs/route" },
+    "probe": { "$ref": "#/$defs/probe" },
+    "progress": { "$ref": "#/$defs/progress" },
+    "artifact": { "$ref": "#/$defs/artifact" },
+    "run": { "$ref": "#/$defs/run" }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["type"], "properties": { "type": { "const": "run-start" } } },
+      "then": { "required": ["schema"] }
+    },
+    {
+      "if": { "required": ["type"], "properties": { "type": { "const": "phase-start" } } },
+      "then": { "required": ["phase"] }
+    },
+    {
+      "if": { "required": ["type"], "properties": { "type": { "const": "phase-end" } } },
+      "then": { "required": ["phase"] }
+    },
+    {
+      "if": { "required": ["type"], "properties": { "type": { "const": "prepare" } } },
+      "then": { "required": ["prepare"] }
+    },
+    {
+      "if": { "required": ["type"], "properties": { "type": { "const": "exec" } } },
+      "then": { "required": ["exec"] }
+    },
+    {
+      "if": { "required": ["type"], "properties": { "type": { "const": "mutant-exec" } } },
+      "then": { "required": ["mutant"] }
+    },
+    {
+      "if": { "required": ["type"], "properties": { "type": { "const": "route" } } },
+      "then": { "required": ["route"] }
+    },
+    {
+      "if": { "required": ["type"], "properties": { "type": { "const": "probe-exec" } } },
+      "then": { "required": ["probe"] }
+    },
+    {
+      "if": { "required": ["type"], "properties": { "type": { "const": "progress" } } },
+      "then": { "required": ["progress"] }
+    },
+    {
+      "if": { "required": ["type"], "properties": { "type": { "const": "artifact" } } },
+      "then": { "required": ["artifact"] }
+    },
+    {
+      "if": { "required": ["type"], "properties": { "type": { "const": "run-end" } } },
+      "then": { "required": ["run"] }
+    },
+    {
+      "if": { "required": ["schema"] },
+      "then": { "properties": { "type": { "const": "run-start" } } }
+    },
+    {
+      "if": { "required": ["phase"] },
+      "then": { "properties": { "type": { "enum": ["phase-start", "phase-end"] } } }
+    },
+    {
+      "if": { "required": ["prepare"] },
+      "then": { "properties": { "type": { "const": "prepare" } } }
+    },
+    {
+      "if": { "required": ["exec"] },
+      "then": { "properties": { "type": { "const": "exec" } } }
+    },
+    {
+      "if": { "required": ["mutant"] },
+      "then": { "properties": { "type": { "const": "mutant-exec" } } }
+    },
+    {
+      "if": { "required": ["route"] },
+      "then": { "properties": { "type": { "const": "route" } } }
+    },
+    {
+      "if": { "required": ["probe"] },
+      "then": { "properties": { "type": { "const": "probe-exec" } } }
+    },
+    {
+      "if": { "required": ["progress"] },
+      "then": { "properties": { "type": { "const": "progress" } } }
+    },
+    {
+      "if": { "required": ["artifact"] },
+      "then": { "properties": { "type": { "const": "artifact" } } }
+    },
+    {
+      "if": { "required": ["run"] },
+      "then": { "properties": { "type": { "const": "run-end" } } }
+    }
+  ],
+  "$defs": {
+    "phase": {
+      "description": "A phase of a run. A phase is only timed when it ends.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "prepare": {
+      "description": "One timed stage reported by mutation session preparation.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "state"],
+      "properties": {
+        "phase": {
+          "enum": [
+            "discovery",
+            "probe_snapshot",
+            "main_validation",
+            "main_restoration",
+            "verification",
+            "binary_build",
+            "probe_validation",
+            "probe_coverage_build",
+            "probe_restoration"
+          ]
+        },
+        "state": { "enum": ["started", "finished"] },
+        "result": { "enum": ["succeeded", "failed", "skipped"] },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["state"], "properties": { "state": { "const": "started" } } },
+          "then": {
+            "not": { "anyOf": [{ "required": ["result"] }, { "required": ["duration_ms"] }] }
+          }
+        },
+        {
+          "if": { "required": ["state"], "properties": { "state": { "const": "finished" } } },
+          "then": { "required": ["result", "duration_ms"] }
+        }
+      ]
+    },
+    "exec": {
+      "description": "One executed command, recorded without its environment values and without its captured output.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["argv", "exit_code"],
+      "properties": {
+        "argv": { "type": "array", "items": { "type": "string" } },
+        "dir": { "type": "string" },
+        "env_names": {
+          "description": "Environment variable names alone: an item holding a value is not a trace.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[^=]+$" }
+        },
+        "timeout_ms": { "type": "integer", "minimum": 0 },
+        "exit_code": { "type": "integer" },
+        "timed_out": { "type": "boolean" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "output_bytes": { "type": "integer", "minimum": 0 },
+        "output_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "output_truncated": { "type": "boolean" },
+        "output_path": { "type": "string" },
+        "error": { "type": "string" }
+      }
+    },
+    "mutant": {
+      "description": "One mutant execution and what became of it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "display_id": { "type": "string" },
+        "package": { "type": "string" },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "timeout_ms": { "type": "integer", "minimum": 0 },
+        "outcome": { "type": "string" },
+        "killed_by": { "type": "string" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "whole_tree": {
+          "description": "Whether this mutant execution keys the whole snapshot rather than its ordinary closure. A killing execution that opens a repository-reading branch the baseline never took widens the key here, which is where a mutant-only reader would otherwise escape it.",
+          "type": "boolean"
+        },
+        "whole_tree_reason": {
+          "description": "Why the key was widened: the package is statically beyond the action log, no log could be created or read back, the completed log was malformed or carried an operation the reader does not model, the execution read a repository directory, or it read a file outside its ordinary input set.",
+          "enum": ["static-unobservable", "log-unavailable", "log-ambiguous", "directory-access", "outside-input"]
+        },
+        "error": { "type": "string" }
+      }
+    },
+    "route": {
+      "description": "How a mutant was routed to the tests that run it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "reason", "granularity"],
+      "properties": {
+        "mutant_id": { "type": "string" },
+        "rule": { "type": "string" },
+        "path": { "type": "string" },
+        "line": { "type": "integer", "minimum": 0 },
+        "column": { "type": "integer", "minimum": 0 },
+        "reaching_targets": { "type": "array", "items": { "type": "string" } },
+        "plan": { "type": "array", "items": { "type": "string" } },
+        "reason": { "enum": ["coverage-reaching", "probe-reaching", "unreached"] },
+        "granularity": {
+          "description": "Whether the reaching set was decided by the coverage blocks around the mutated position or by the file alone.",
+          "enum": ["block", "file"]
+        },
+        "fallback": {
+          "description": "Why a route that would have been decided by block dropped back to the file. Absent when none did.",
+          "enum": ["position-unknown", "outside-blocks"]
+        },
+        "file_candidates": {
+          "description": "How many targets cover the mutated file at all, which is the reaching set the file alone would have selected. Absent on a route carrying a granularity means no candidate at all.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "discharged": {
+          "description": "The targets a proof removed from the reaching set, each with the proof that removed it: a branch the target never takes, or a mutated site the probe pass measured the target never made differ. On a route decided by block, reaching_targets and these together are the targets whose covered blocks contain the mutated position, so a discharged target is never among the reaching ones, and a proof removes a target once, so no target is discharged twice.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["target", "reason"],
+            "properties": {
+              "target": { "type": "string", "minLength": 1 },
+              "reason": { "enum": ["branch-never-taken", "never-infected"] }
+            }
+          }
+        },
+        "probe_reaching": {
+          "description": "Targets added to reaching_targets because their measured probe execution positively infected the mutant even though coverage did not route them.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "suite_coverage": {
+          "description": "The synthetic identity of a passing whole-package coverage control whose instrumented blocks describe the mutant position. When suite_reached is absent, none of its covered blocks contained that position and the package-suite fallback is discharged.",
+          "type": "string",
+          "pattern": "^package-suite-coverage:.+"
+        },
+        "suite_reached": {
+          "description": "Whether the passing whole-package coverage control reached the exact mutant position. It is present only for a reached position; suite_coverage without it proves the position was instrumented but not covered.",
+          "type": "boolean",
+          "const": true
+        },
+        "suite_probe": {
+          "description": "The synthetic target identity of the measured package-suite probe that replaced or calibrated the conservative package-suite fallback.",
+          "type": "string",
+          "pattern": "^package-suite:.+"
+        },
+        "probed": {
+          "description": "Whether the engine compiled a probe of this mutant into the probe tree, so that a measured target which does not name the mutant among its infections never made its site differ and is discharged from the reaching set. Absent on a mutant the engine has no probe form for.",
+          "type": "boolean"
+        },
+        "reused": {
+          "description": "Whether the run resolved this mutant from evidence an earlier run recorded instead of executing it. Nothing ran, so the recording carries no execution of the mutant and the plan is the reuse itself. Absent on every mutant a run executed.",
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["fallback"] },
+          "then": {
+            "description": "A fallback is why a decision by block dropped back to the file, so the route that records one was decided by file.",
+            "required": ["granularity"],
+            "properties": { "granularity": { "const": "file" } }
+          }
+        },
+        {
+          "if": { "required": ["discharged"] },
+          "then": {
+            "description": "A proof removes a target from a reaching set the blocks decided, so the route that records one was decided by block.",
+            "required": ["granularity"],
+            "properties": { "granularity": { "const": "block" } }
+          }
+        },
+        {
+          "if": {
+            "required": ["discharged"],
+            "properties": {
+              "discharged": {
+                "contains": {
+                  "required": ["reason"],
+                  "properties": { "reason": { "const": "never-infected" } }
+                }
+              }
+            }
+          },
+          "then": {
+            "description": "The infection proof is the probe pass's measurement of this mutant, so the route that records one was probed.",
+            "required": ["probed"],
+            "properties": { "probed": { "const": true } }
+          }
+        },
+        {
+          "if": { "required": ["probe_reaching"] },
+          "then": {
+            "description": "A positive probe route names both the probe-reaching reason and the fact that this mutant had a probe form.",
+            "required": ["probed"],
+            "properties": {
+              "reason": { "const": "probe-reaching" },
+              "probed": { "const": true }
+            }
+          }
+        },
+        {
+          "if": { "required": ["reason"], "properties": { "reason": { "const": "probe-reaching" } } },
+          "then": {
+            "description": "The probe-reaching reason always identifies the targets the positive measurement recovered.",
+            "required": ["probe_reaching"]
+          }
+        },
+        {
+          "if": { "required": ["suite_reached"] },
+          "then": {
+            "description": "A reached suite position is meaningful only with the coverage control that measured it.",
+            "required": ["suite_coverage"]
+          }
+        },
+        {
+          "if": { "required": ["suite_coverage"] },
+          "then": {
+            "description": "A suite coverage decision is made only at an exact position described by coverage blocks.",
+            "required": ["granularity"],
+            "properties": { "granularity": { "const": "block" } }
+          }
+        },
+        {
+          "if": { "required": ["suite_probe"] },
+          "then": {
+            "description": "A package-suite probe can speak only for a mutant the engine compiled a probe form for.",
+            "required": ["probed"],
+            "properties": { "probed": { "const": true } }
+          }
+        },
+        {
+          "if": { "required": ["reused"], "properties": { "reused": { "const": true } } },
+          "then": {
+            "description": "Nothing ran for a reused mutant, so the plan of a reused route is the reuse and nothing else.",
+            "required": ["plan"],
+            "properties": { "plan": { "const": ["reused"] } }
+          }
+        },
+        {
+          "if": { "required": ["plan"], "properties": { "plan": { "const": ["reused"] } } },
+          "then": {
+            "description": "A plan that is the reuse belongs to a route that says it was reused, so a reader is not told so by one field and not the other.",
+            "required": ["reused"],
+            "properties": { "reused": { "const": true } }
+          }
+        }
+      ]
+    },
+    "probe": {
+      "description": "One infection probe or exact semantic original mutation preflight against the prepared probe tree, recorded without the environment it ran in and without a path into that tree.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "exit_code"],
+      "properties": {
+        "target": { "type": "string", "minLength": 1 },
+        "package": { "type": "string" },
+        "suite": {
+          "description": "Whether this is one whole package-suite execution rather than one top-level target. Absent and false mean a target probe.",
+          "type": "boolean"
+        },
+        "control": {
+          "description": "Whether this probe-tree execution was used as an exact semantic original preflight before mutation execution. Its infection log is not routing evidence.",
+          "type": "boolean"
+        },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "timeout_ms": { "type": "integer", "minimum": 0 },
+        "outcome": {
+          "description": "What became of the execution. Absent only on one carrying the error that stopped it instead.",
+          "enum": ["measured", "test-failed", "timed-out", "unavailable"]
+        },
+        "exit_code": { "type": "integer" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "infected": {
+          "description": "The mutants whose site this target made differ from the constant the mutant would put there, by their full mutant identity, each named once. A mutant a measured target left out is one that target can never observe.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "whole_tree": {
+          "description": "Whether this package-suite execution keys the whole snapshot rather than its ordinary closure. Absent and false mean the observation kept the key narrow.",
+          "type": "boolean"
+        },
+        "whole_tree_reason": {
+          "description": "Why the key was widened, so that a package which never reuses evidence can be traced to the observation that widened it: the package is statically beyond the action log, no log could be created or read back, the completed log was malformed or carried an operation the reader does not model, the execution read a repository directory, or it read a file outside its ordinary input set.",
+          "enum": ["static-unobservable", "log-unavailable", "log-ambiguous", "directory-access", "outside-input"]
+        },
+        "error": {
+          "description": "The error that stopped the execution before it reached an outcome.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["suite"], "properties": { "suite": { "const": true } } },
+          "then": {
+            "description": "A whole-suite probe names both its package and its synthetic package-suite target identity.",
+            "required": ["package"],
+            "properties": { "target": { "pattern": "^package-suite:.+" } }
+          }
+        },
+        {
+          "if": { "properties": { "target": { "pattern": "^package-suite:" } } },
+          "then": {
+            "description": "A synthetic package-suite target identity belongs only to a whole-suite probe.",
+            "required": ["suite"],
+            "properties": { "suite": { "const": true } }
+          }
+        },
+        {
+          "if": { "required": ["control"], "properties": { "control": { "const": true } } },
+          "then": {
+            "description": "An exact original preflight has its own synthetic identity and is neither a package-suite routing probe nor a source of infection facts.",
+            "properties": { "target": { "pattern": "^mutation-control:.+" } },
+            "not": { "anyOf": [{ "required": ["suite"] }, { "required": ["infected"] }] }
+          }
+        },
+        {
+          "if": { "properties": { "target": { "pattern": "^mutation-control:" } } },
+          "then": {
+            "description": "A synthetic mutation-control identity belongs only to an exact original preflight.",
+            "required": ["control"],
+            "properties": { "control": { "const": true } }
+          }
+        },
+        {
+          "description": "An execution either reached an outcome or was stopped by an error: a record saying neither describes no execution, and one saying both would be an error to one reader and a measurement to another.",
+          "oneOf": [{ "required": ["outcome"] }, { "required": ["error"] }]
+        },
+        {
+          "if": { "required": ["infected"] },
+          "then": {
+            "description": "Only a measured execution observed anything, so the infections it recorded come with the outcome that measured them.",
+            "required": ["outcome"],
+            "properties": { "outcome": { "const": "measured" } }
+          }
+        }
+      ]
+    },
+    "progress": {
+      "description": "A progress note forwarded from the run.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "detail": { "type": "string" }
+      }
+    },
+    "artifact": {
+      "description": "A file the run wrote.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 }
+      }
+    },
+    "run": {
+      "description": "The end of a recording, with the accounting that tells a complete trace from a lossy one.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["events_emitted", "events_dropped"],
+      "properties": {
+        "verdict": { "type": "string" },
+        "error": { "type": "string" },
+        "events_emitted": { "type": "integer", "minimum": 0 },
+        "events_dropped": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

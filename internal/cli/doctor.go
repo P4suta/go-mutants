@@ -390,6 +390,8 @@ func cacheCheck() check {
 // correct either way, and what changes is whether a runaway mutant is stopped
 // or waited on.
 func memoryCheck() check {
+	//exhaustive:total MemoryUnenforced is the warning the default renders, which is what a
+	// platform that enforces nothing is.
 	switch bound := runner.MemoryBound(); bound {
 	case runner.MemoryEnforcedByKernel:
 		return check{checkMemory, statusOK,

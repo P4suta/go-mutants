@@ -1,0 +1,193 @@
+// SPDX-FileCopyrightText: 2026 goatest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+package app
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+)
+
+type atomicReportFile interface {
+	Name() string
+	Write([]byte) (int, error)
+	Sync() error
+	Chmod(os.FileMode) error
+	Close() error
+}
+
+type atomicWriteOperations struct {
+	mkdirAll   func(string, os.FileMode) error
+	createTemp func(string, string) (atomicReportFile, error)
+	remove     func(string) error
+	rename     func(string, string) error
+}
+
+// resolved fills every operation this value leaves unset from package os.
+//
+// The default is written once, in code, rather than restored once per test.
+// This used to be a package-level variable holding the same four functions,
+// which meant a test that replaced one of them owned the package for as long
+// as it ran - and internal/app has forty-six tests.
+func (operations atomicWriteOperations) resolved() atomicWriteOperations {
+	if operations.mkdirAll == nil {
+		operations.mkdirAll = os.MkdirAll
+	}
+	if operations.createTemp == nil {
+		operations.createTemp = func(directory, pattern string) (atomicReportFile, error) {
+			return os.CreateTemp(directory, pattern)
+		}
+	}
+	if operations.remove == nil {
+		operations.remove = os.Remove
+	}
+	if operations.rename == nil {
+		operations.rename = os.Rename
+	}
+	return operations
+}
+
+// WriteReports publishes a run into the report history and points the latest
+// indexes at it.
+func WriteReports(root string, input report.Report) error {
+	return writeReports(root, input, true)
+}
+
+// WriteReportHistory publishes a run into the report history and leaves the
+// latest indexes where they are.
+//
+// The indexes are not a record of what happened last; they are what `report`,
+// `explain`, `accept` and `replay` load when they need a run that can answer a
+// question. A run that was stopped before it settled anything cannot answer
+// one, so pointing them at it would replace a report that could with a report
+// that says only that somebody stopped a run. The history keeps it either way,
+// which is where a reader looking for the stopped run will go.
+func WriteReportHistory(root string, input report.Report) error {
+	return writeReports(root, input, false)
+}
+
+func writeReports(root string, input report.Report, index bool) error {
+	if err := report.ValidateForPersistence(input); err != nil {
+		return err
+	}
+	if !safeRunID(input.RunID) {
+		return fmt.Errorf("goatest: unsafe report run ID %q", input.RunID)
+	}
+	jsonReport := report.JSON(input)
+	htmlReport := report.HTML(input)
+	sarifReport := report.SARIF(input)
+	junitReport := report.JUnit(input)
+	schema := report.JSONSchema()
+	runsDirectory := filepath.Join(root, "reports", "runs")
+	runDirectory := filepath.Join(runsDirectory, input.RunID)
+	if _, err := os.Stat(runDirectory); err == nil {
+		return fmt.Errorf("goatest: report run %s already exists", input.RunID)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("goatest: inspect report run %s: %w", input.RunID, err)
+	}
+	if err := os.MkdirAll(runsDirectory, filemode.ReadableDirectory); err != nil {
+		return fmt.Errorf("goatest: create report history: %w", err)
+	}
+	stagingDirectory, err := os.MkdirTemp(runsDirectory, ".goatest-run-*")
+	if err != nil {
+		return fmt.Errorf("goatest: stage report run %s: %w", input.RunID, err)
+	}
+	defer func() { _ = os.RemoveAll(stagingDirectory) }()
+	artifacts := []struct {
+		name string
+		data []byte
+	}{
+		{"assurance-report-v1.json", jsonReport},
+		{"assurance-report-v1.html", htmlReport},
+		{"assurance-report-v1.sarif", sarifReport},
+		{"assurance-report-v1.junit.xml", junitReport},
+		{"assurance-report-v1.schema.json", schema},
+	}
+	for _, artifact := range artifacts {
+		path := filepath.Join(stagingDirectory, artifact.name)
+		if err := atomicWrite(path, artifact.data); err != nil {
+			return fmt.Errorf("goatest: write report %s: %w", path, err)
+		}
+	}
+	if err := os.Rename(stagingDirectory, runDirectory); err != nil {
+		return fmt.Errorf("goatest: publish report run %s: %w", input.RunID, err)
+	}
+	if !index {
+		return nil
+	}
+	indexes := []string{
+		filepath.Join(root, ".goatest", "latest-any.json"),
+		filepath.Join(root, "reports", "latest-any.json"),
+	}
+	if input.RunKind == report.RunFull {
+		indexes = append(indexes,
+			filepath.Join(root, ".goatest", "latest-full.json"),
+			filepath.Join(root, "reports", "latest-full.json"),
+		)
+	}
+	for _, path := range indexes {
+		if err := atomicWrite(path, jsonReport); err != nil {
+			return fmt.Errorf("goatest: write report index %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func safeRunID(id string) bool {
+	if id == "" || id == "." || id == ".." || strings.ContainsAny(id, `/\\`) {
+		return false
+	}
+	for _, character := range id {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' || strings.ContainsRune("._-", character) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func atomicWrite(path string, data []byte) error {
+	return atomicWriteWith(path, data, atomicWriteOperations{})
+}
+
+func atomicWriteWith(path string, data []byte, operations atomicWriteOperations) error {
+	operations = operations.resolved()
+	if err := operations.mkdirAll(filepath.Dir(path), filemode.ReadableDirectory); err != nil {
+		return err
+	}
+	temporary, err := operations.createTemp(filepath.Dir(path), ".goatest-report-*.tmp")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer func() { _ = operations.remove(temporaryPath) }()
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Chmod(filemode.ReadableFile); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := operations.rename(temporaryPath, path); err != nil {
+		if removeErr := operations.remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			return errors.Join(err, removeErr)
+		}
+		return operations.rename(temporaryPath, path)
+	}
+	return nil
+}

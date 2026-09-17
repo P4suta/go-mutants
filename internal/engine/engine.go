@@ -705,6 +705,8 @@ func (s *session) drainPublished() {
 // not know which one, so it records the interruption's own code rather than the
 // zero a policy verdict that was never computed would carry.
 func exitCodeOf(out RunOutcome) int {
+	//exhaustive:total Every status but the two named ones exits as infrastructure, which is what
+	// the default returns.
 	switch out.Status {
 	case StatusOK:
 		return int(out.Verdict.Code)
@@ -2299,6 +2301,8 @@ func (s *session) compose(out *RunOutcome, st *state, tally mutation.Tally, publ
 		summary.Failure = out.Verdict.Failures[0]
 	}
 	for _, expectation := range published.expectations() {
+		//exhaustive:total Unfulfilled is the default bucket. Fulfilled and stale are counted by name
+		// and the third count is everything else.
 		switch expectation.State {
 		case report.StateFulfilled:
 			summary.Expectations.Fulfilled++
@@ -2528,6 +2532,8 @@ func reportWarnings(warnings []Warning) []report.Warning {
 // format, and one enum serving both would make a rename of a console label a
 // breaking change to somebody's jq expression.
 func reportMemorySource(source MemorySource) report.MemorySource {
+	//exhaustive:total MemoryUnavailable is what the default returns, so the mapping and its
+	// fallback are the same word.
 	switch source {
 	case MemorySourceExplicit:
 		return report.MemoryExplicit

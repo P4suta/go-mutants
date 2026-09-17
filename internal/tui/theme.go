@@ -109,6 +109,8 @@ func themeFrom(r *lipgloss.Renderer) theme {
 // say" are yellow rather than red, because colouring them like a verdict would
 // make an inconclusive result read as a failure of the tests.
 func (t theme) outcome(o mutation.Outcome) lipgloss.Style {
+	//exhaustive:total A colour is a rendering rather than a verdict, as the comment above argues,
+	// and the default is the warning style that argument asks for.
 	switch o {
 	case mutation.OutcomeKilled, mutation.OutcomeTimedOut:
 		return t.ok

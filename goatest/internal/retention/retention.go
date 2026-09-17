@@ -1,0 +1,270 @@
+// SPDX-FileCopyrightText: 2026 goatest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+package retention
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"time"
+)
+
+type Status struct {
+	Entries int
+	Bytes   int64
+	Oldest  time.Time
+	Newest  time.Time
+}
+
+type Result struct {
+	Before         Status
+	After          Status
+	RemovedEntries int
+	RemovedBytes   int64
+}
+
+type entry struct {
+	name, path string
+	size       int64
+	modified   time.Time
+	expired    bool
+}
+
+type childKind int
+
+const (
+	childDirectory childKind = iota
+	childFile
+)
+
+func (kind childKind) String() string {
+	if kind == childFile {
+		return "file"
+	}
+	return "directory"
+}
+
+func (kind childKind) accepts(child fs.DirEntry) bool {
+	if child.Type()&os.ModeSymlink != 0 {
+		return false
+	}
+	if kind == childFile {
+		return child.Type().IsRegular()
+	}
+	return child.IsDir()
+}
+
+func (kind childKind) measure(path string, child fs.DirEntry) (int64, time.Time, error) {
+	if kind != childFile {
+		return metadata(path)
+	}
+	info, err := child.Info()
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("goatest: inspect retained artifact %s: %w", path, err)
+	}
+
+	if !info.Mode().IsRegular() {
+		return 0, time.Time{}, fmt.Errorf("goatest: retained artifact %q is not a confined file", child.Name())
+	}
+	return info.Size(), info.ModTime(), nil
+}
+
+func Inspect(root string) (Status, error) {
+	status, _, err := inspect(root, childDirectory, 0, time.Time{})
+	return status, err
+}
+
+func InspectFiles(root string) (Status, error) {
+	status, _, err := inspect(root, childFile, 0, time.Time{})
+	return status, err
+}
+
+func Collect(root string, maxBytes int64, ttl time.Duration, now time.Time) (Result, error) {
+	return collect(root, childDirectory, maxBytes, ttl, now)
+}
+
+func CollectFiles(root string, maxBytes int64, ttl time.Duration, now time.Time) (Result, error) {
+	return collect(root, childFile, maxBytes, ttl, now)
+}
+
+func collect(root string, kind childKind, maxBytes int64, ttl time.Duration, now time.Time) (Result, error) {
+	if maxBytes < 0 || ttl < 0 {
+		return Result{}, errors.New("goatest: retention policy must not be negative")
+	}
+	before, entries, err := inspect(root, kind, ttl, now)
+	if err != nil {
+		return Result{}, err
+	}
+	result := Result{Before: before}
+	order(entries)
+	remaining := before.Bytes
+	for _, candidate := range entries {
+		if !candidate.expired && (maxBytes <= 0 || remaining <= maxBytes) {
+			continue
+		}
+		if err := remove(root, candidate.path); err != nil {
+			return Result{}, err
+		}
+		result.RemovedEntries++
+		result.RemovedBytes += candidate.size
+		remaining -= candidate.size
+	}
+	result.After, _, err = inspect(root, kind, 0, time.Time{})
+	return result, err
+}
+
+func Keep(root string, keep int, protected func(name string) bool, now time.Time) (Result, error) {
+	before, entries, err := inspect(root, childDirectory, 0, now)
+	if err != nil {
+		return Result{}, err
+	}
+	result := Result{Before: before}
+	order(entries)
+	surplus := 0
+	if keep > 0 {
+		surplus = max(0, len(entries)-keep)
+	}
+	for index, candidate := range entries {
+		if index >= surplus {
+			break
+		}
+		if protected != nil && protected(candidate.name) {
+			continue
+		}
+		if err := remove(root, candidate.path); err != nil {
+			return Result{}, err
+		}
+		result.RemovedEntries++
+		result.RemovedBytes += candidate.size
+	}
+	result.After, _, err = inspect(root, childDirectory, 0, time.Time{})
+	return result, err
+}
+
+func order(entries []entry) {
+	slices.SortFunc(entries, func(a, b entry) int {
+		if a.expired != b.expired {
+			if a.expired {
+				return -1
+			}
+			return 1
+		}
+		if compared := a.modified.Compare(b.modified); compared != 0 {
+			return compared
+		}
+		return strings.Compare(a.name, b.name)
+	})
+}
+
+func inspect(root string, kind childKind, ttl time.Duration, now time.Time) (Status, []entry, error) {
+	children, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return Status{}, []entry{}, nil
+	}
+	if err != nil {
+		return Status{}, nil, fmt.Errorf("goatest: inspect retained artifacts: %w", err)
+	}
+	var status Status
+	entries := make([]entry, 0, len(children))
+	for _, child := range children {
+		if !safeName(child.Name()) || !kind.accepts(child) {
+			return Status{}, nil, fmt.Errorf("goatest: retained artifact %q is not a confined %s", child.Name(), kind)
+		}
+		path := filepath.Join(root, child.Name())
+		size, modified, err := kind.measure(path, child)
+		if err != nil {
+			return Status{}, nil, err
+		}
+		candidate := entry{name: child.Name(), path: path, size: size, modified: modified}
+		if ttl > 0 && !now.IsZero() && !modified.IsZero() {
+			candidate.expired = !modified.Add(ttl).After(now)
+		}
+		entries = append(entries, candidate)
+		status.Entries++
+		status.Bytes += size
+		if status.Oldest.IsZero() || modified.Before(status.Oldest) {
+			status.Oldest = modified
+		}
+		if status.Newest.IsZero() || modified.After(status.Newest) {
+			status.Newest = modified
+		}
+	}
+	return status, entries, nil
+}
+
+func metadata(root string) (int64, time.Time, error) {
+	var size int64
+	var modified time.Time
+	var directoryModified time.Time
+	hasRegularFile := false
+	err := filepath.WalkDir(root, func(path string, item fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if item.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("goatest: retained artifact crosses symbolic link %s", path)
+		}
+		if item.IsDir() {
+			if path == root {
+				info, err := item.Info()
+				if err != nil {
+					return err
+				}
+				directoryModified = info.ModTime()
+			}
+			return nil
+		}
+		info, err := item.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("goatest: retained artifact contains irregular file %s", path)
+		}
+		hasRegularFile = true
+		size += info.Size()
+		if info.ModTime().After(modified) {
+			modified = info.ModTime()
+		}
+		return nil
+	})
+	if err == nil && !hasRegularFile {
+		modified = directoryModified
+	}
+	return size, modified, err
+}
+
+func remove(root, target string) error {
+	relative, err := filepath.Rel(root, target)
+	if err != nil || !filepath.IsLocal(relative) || strings.Contains(relative, string(filepath.Separator)) {
+		return fmt.Errorf("goatest: refusing unconfined retained artifact removal %q", target)
+	}
+	var paths []string
+	if err := filepath.WalkDir(target, func(path string, item fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if item.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("goatest: refusing symbolic link in retained artifact %s", path)
+		}
+		paths = append(paths, path)
+		return nil
+	}); err != nil {
+		return err
+	}
+	for index := len(paths) - 1; index >= 0; index-- {
+		if err := os.Remove(paths[index]); err != nil {
+			return fmt.Errorf("goatest: remove retained artifact: %w", err)
+		}
+	}
+	return nil
+}
+
+func safeName(name string) bool {
+	return name != "" && name != "." && name != ".." && filepath.Base(name) == name && !strings.ContainsAny(name, `/\\`)
+}

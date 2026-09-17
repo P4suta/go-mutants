@@ -1225,9 +1225,63 @@ Before pushing:
 mise run check
 ```
 
-which is `fmt`, `build`, `test` and `lint` in CI order. Run `mise run
-test-integration` as well when the change touches snapshotting, the runner, or
-anything that shells out to `go`.
+which is `fmt`, `build`, `build-published`, `test` and `lint` in CI order. Run
+`mise run test-integration` as well when the change touches snapshotting, the
+runner, or anything that shells out to `go`.
+
+`build-published` builds each module on its own, which is the shape everybody
+outside this repository gets. `build` resolves the engine through `go.work` and
+so compiles the runner against the tree next door; `go install`, goreleaser and
+`mise run dogfood-runner` all resolve it from the version `goatest/go.mod`
+pins. They are two different programs, and a change that names a symbol the
+engine has only just gained is green in one and broken in the other.
+
+## 10a. The checks that need types
+
+`mise run lint` opens with `go run ./cmd/gomutants-vet ./... ./goatest/...`,
+which is this repository's own `go/analysis` driver rather than somebody else's
+linter. It is a separate binary because a pass is a value: the same one loads
+into `go vet -vettool`, into golangci-lint, and into this driver, over either
+module, without being written three times.
+
+It carries one pass so far, `exhaustive`. It refuses a `switch` on one of this
+repository's own closed vocabularies — a named type with two or more declared
+constants, in a package under this module path — that does not name every
+constant of it.
+
+A `default` does not excuse a missing word, and that is the whole point rather
+than a strictness setting. The failure it exists for is this: the engine
+publishes `Outcome`, the runner switches on it and ends in a `default` that
+raises an error, somebody adds a seventh outcome, and both modules' suites stay
+green while the defect waits to arrive at run time on a user's machine. A
+default is exactly what turns that from a compile-time question into a run-time
+one.
+
+A switch whose default really is the right answer for every word says so
+immediately above itself:
+
+```go
+//exhaustive:total a colour is a rendering, and an unstyled new outcome is the
+// right thing to render
+switch outcome {
+```
+
+Two rules about the directive, both load-bearing:
+
+- **It must carry a reason.** Switching a check off is a sentence somebody
+  wrote, not a token somebody copied.
+- **It must be the switch's own comment**, the group immediately above it. A
+  marker five statements away would exempt whichever switch came next, which is
+  how a reader ends up trusting a sentence written about other code.
+
+It is a comment rather than a line in a ledger elsewhere for one reason: it
+cannot go stale. Delete the switch and the exemption goes with it — which is
+the failure every path-keyed allowlist in this repository has had to be taught
+to catch separately.
+
+Vocabularies the standard library owns are not checked. `token.Token` and
+`reflect.Kind` grow on somebody else's schedule, and demanding every case of
+them is how a check ends up switched off.
 
 ## 11. Dogfood
 
@@ -1635,3 +1689,40 @@ survivors (4311/4321 clears, 4310/4321 does not) where 99.5 bought twelve when
 it was set. The floor is a fixed number of survivors rather than a fixed
 percentage of a growing catalogue. Do the arithmetic, write the answer next to
 the number, and only then decide whether it moves.
+
+## 12. The runner
+
+`goatest/` is the second module: the assurance runner that consumes this engine
+as a library, through the single door `goatest/internal/mutationbridge`. It
+lives here so that one proof is one pull request — the engine gains a claim and
+the runner gains the rule, the trace vocabulary, the documentation and the audit
+layer in the same change, rather than in a sequence of two with a version pin
+between them.
+
+Every task below starts in `goatest/` and with `GOWORK=off`, and both halves are
+load-bearing. The runner refuses a workspace on purpose: `internal/golang`
+rejects more than one main module, and its own limitations page calls workspace
+aggregation deliberately deferred. `GOWORK=off` alone is not enough, because
+`DetectWorkspace` reads `go.work` as a *file* and walks up to find it — so the
+task has to be started inside the module rather than above it.
+
+| Task | What it does |
+| --- | --- |
+| `mise run dogfood-runner` | goatest measuring goatest, whole scope |
+| `mise run dogfood-changed` | The same over what the branch changed, which is what CI waits for |
+| `mise run test-audit` | The unit tier, with an audit of what actually ran |
+| `mise run test-integration-audit` | Both tiers, audited the same way |
+| `mise run proof-audit` | Re-derives a round's verdict from its own evidence, with code that never calls the runner's |
+| `mise run report-diff` | Compares two assurance reports: verdict, accounting, mutant transitions, lost kills |
+| `mise run trace-summary-runner` | Turns a `goatest-trace-v1` recording into a performance breakdown |
+
+The last one is a separate task rather than a flag on `mise run trace-summary`
+because the two schemas reject each other by design: `gomutants-trace-v1` and
+`goatest-trace-v1` are different vocabularies for different products, and a
+reader that accepted both would be a reader that could not say which it had.
+
+The engine's own gates run over both modules. `./...` does not descend into a
+nested module — cmd/go's walker returns `SkipDir` the moment it finds a second
+`go.mod`, and it does it in silence — so every whole-tree pattern in
+[`mise.toml`](../mise.toml) names `./goatest/...` on the same line, and
+`internal/devgates/modules_integration_test.go` refuses one that does not.

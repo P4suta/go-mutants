@@ -1,0 +1,82 @@
+// SPDX-FileCopyrightText: 2026 goatest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+package ui_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/P4suta/go-mutants/goatest/internal/ui"
+)
+
+func steppingClock(step time.Duration) func() time.Time {
+	current := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	first := true
+	return func() time.Time {
+		if first {
+			first = false
+			return current
+		}
+		current = current.Add(step)
+		return current
+	}
+}
+
+func TestJSONLStreamsOneEventPerNote(t *testing.T) {
+	t.Parallel()
+	var buffer bytes.Buffer
+	notes := ui.NewJSONL(&buffer, steppingClock(1500*time.Millisecond))
+	notes.Note("snapshot", "captured")
+	notes.Note("mutation-progress", "3/9")
+	notes.Close()
+	want := `{"type":"progress","kind":"snapshot","detail":"captured","elapsed_ms":1500}` + "\n" +
+		`{"type":"progress","kind":"mutation-progress","detail":"3/9","elapsed_ms":3000}` + "\n"
+	if got := buffer.String(); got != want {
+		t.Fatalf("stream = %q, want %q", got, want)
+	}
+}
+
+func TestJSONLStreamsBoundedPhaseProgress(t *testing.T) {
+	t.Parallel()
+	var buffer bytes.Buffer
+	notes := ui.NewJSONL(&buffer, steppingClock(1000*time.Millisecond))
+	notes.Note("baseline-progress", "17/42")
+	notes.Note("probe-target", "42 targets")
+	notes.Note("probe-progress", "21/42")
+	notes.Note("probe-summary", "40 measured, 2 without facts")
+	notes.Close()
+	want := `{"type":"progress","kind":"baseline-progress","detail":"17/42","elapsed_ms":1000}` + "\n" +
+		`{"type":"progress","kind":"probe-target","detail":"42 targets","elapsed_ms":2000}` + "\n" +
+		`{"type":"progress","kind":"probe-progress","detail":"21/42","elapsed_ms":3000}` + "\n" +
+		`{"type":"progress","kind":"probe-summary","detail":"40 measured, 2 without facts","elapsed_ms":4000}` + "\n"
+	if got := buffer.String(); got != want {
+		t.Fatalf("stream = %q, want %q", got, want)
+	}
+}
+
+func TestJSONLKeepsForgedNotesOnOnePhysicalLine(t *testing.T) {
+	t.Parallel()
+	var buffer bytes.Buffer
+	notes := ui.NewJSONL(&buffer, nil)
+	notes.Note("phase\nforged", "detail\x1b[31m\"quoted\"")
+	got := buffer.String()
+	if strings.Count(got, "\n") != 1 {
+		t.Fatalf("event spans several physical lines: %q", got)
+	}
+	var event struct {
+		Type      string `json:"type"`
+		Kind      string `json:"kind"`
+		Detail    string `json:"detail"`
+		ElapsedMS int64  `json:"elapsed_ms"`
+	}
+	if err := json.Unmarshal([]byte(got), &event); err != nil {
+		t.Fatalf("event is not one JSON object: %v\n%q", err, got)
+	}
+	if event.Type != "progress" || event.Kind != "phase\nforged" || event.Detail != "detail\x1b[31m\"quoted\"" || event.ElapsedMS < 0 {
+		t.Fatalf("event = %+v", event)
+	}
+}

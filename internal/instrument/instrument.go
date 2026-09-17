@@ -4,6 +4,7 @@
 package instrument
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -552,15 +553,23 @@ func instrumentSource(
 		loops = loopSites(file, tok, srcPath)
 	}
 
+	// The loop insertions are built before the sites so that the sites can take
+	// the ones that fall inside them. A loop inside a rewrite site -- which is
+	// what `return each(func() error { for ... } })` is -- has to be written
+	// into that site's own text, because the site replaces the bytes the
+	// insertion would otherwise land in, and two splices over the same bytes is
+	// GOM7312 and a file that does not instrument at all.
+	loopEdits := loopSplices(loops, alias, base)
 	splices, guards, completions, err := composeSites(
-		newSiteIndex(tok, file, src), srcPath, src, mutants, hints, alias, taken, mode)
+		newSiteIndex(tok, file, src), srcPath, src, mutants, hints, alias, taken, mode, loopEdits)
 	if err != nil {
 		return nil, 0, nil, err
 	}
 	if guards == 0 {
 		return src, 0, loops, nil
 	}
-	splices = append(splices, loopSplices(loops, alias, base)...)
+	// Whatever the sites did not take is a loop in plain file text.
+	splices = append(splices, loopsOutsideSites(loopEdits, splices)...)
 	imports, err := importSplices(file, tok, srcPath, alias, importPath, completions)
 	if err != nil {
 		return nil, 0, nil, err
@@ -576,7 +585,11 @@ func instrumentSource(
 	}
 	out, _, err := Apply(src, splices)
 	if err != nil {
-		return nil, 0, nil, err
+		// Named, because Apply counts splices and knows nothing about files:
+		// its diagnostics say "splice 71 at [4942,4942)" and a reader with one
+		// of those has no way back to a line of Go. The check two lines above
+		// already quotes the path for the same reason.
+		return nil, 0, nil, fmt.Errorf("instrumenting %s: %w", strconv.Quote(srcPath), err)
 	}
 
 	// Two postconditions, both cheap and both guarding an invariant that
@@ -609,6 +622,7 @@ func composeSites(
 	alias string,
 	taken map[string]bool,
 	mode Mode,
+	loops []Splice,
 ) ([]Splice, int, []discover.Completion, error) {
 	if mode == ModeProbe {
 		forest, sites, edits, widest, completions, err := buildProbeSites(index, srcPath, mutants, hints)
@@ -631,7 +645,7 @@ func composeSites(
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	renderer := &guardRenderer{path: srcPath, src: src, alias: alias, sites: sites}
+	renderer := &guardRenderer{path: srcPath, src: src, alias: alias, sites: sites, loops: loops}
 	splices, guards, err := renderer.render(forest)
 	return splices, guards, completions, err
 }
@@ -650,4 +664,32 @@ func checkLineCount(srcPath string, src, out []byte) error {
 		Message: "internal error: the instrumented " + strconv.Quote(srcPath) + " holds " +
 			strconv.Itoa(got) + " line breaks, the original holds " + strconv.Itoa(want),
 	}
+}
+
+// loopsOutsideSites is the loop insertions no rewrite site claimed: the ones
+// whose insertion point is not inside any of the file-level splices the sites
+// produced.
+//
+// A point exactly at a site's start writes in front of it and stays here; one
+// strictly inside is in bytes that site replaced, and [guardRenderer.loopsWithin]
+// has already put it where it belongs.
+func loopsOutsideSites(loops, sites []Splice) []Splice {
+	if len(loops) == 0 {
+		return nil
+	}
+	out := make([]Splice, 0, len(loops))
+	for _, loop := range loops {
+		at := loop.Span.StartByte
+		claimed := false
+		for _, site := range sites {
+			if at > site.Span.StartByte && at < site.Span.EndByte {
+				claimed = true
+				break
+			}
+		}
+		if !claimed {
+			out = append(out, loop)
+		}
+	}
+	return out
 }

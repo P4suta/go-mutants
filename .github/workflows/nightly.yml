@@ -364,6 +364,46 @@ jobs:
           cache: true
       - run: mise run dogfood-audit
 
+  # goatest measuring goatest, which is the runner's own gate and was running
+  # nowhere after the import: GitHub reads only the root .github, so the
+  # workflow that ran it stopped being a workflow the moment it moved under
+  # goatest/. A gate that exists and never runs is worse than an absent one,
+  # because it is counted.
+  #
+  # On a schedule and not on a push: the whole module is twelve thousand
+  # mutants and over an hour, and ci.yml is held to about a quarter of that end
+  # to end. The scope a push wants is the changeset -- `mise run
+  # dogfood-changed`, which is what goatest/docs/ci.md recommends to a workflow
+  # -- and that job is not in ci.yml yet, because `--changed=origin/main`
+  # resolves to the whole module until the module is on main. Wiring it there
+  # before then would have produced exactly the hour this job is here to hold.
+  #
+  # Both halves of the task's environment are load-bearing: internal/golang
+  # rejects more than one main module on purpose, and DetectWorkspace reads
+  # go.work as a file and walks up to find it, so GOWORK=off alone is not
+  # enough and the task starts inside goatest/. See mise.toml.
+  #
+  # Ninety minutes for the reason dogfood-audit has it: a bound set above any
+  # run this repository has been seen to take, against a GitHub default of 360,
+  # so that a hung run is killed within the hour and a slow one is not.
+  dogfood-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Point the test build cache at the runner's temporary directory
+        shell: bash
+        run: >-
+          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
+          >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+        with:
+          install: true
+          cache: true
+      - run: mise run dogfood-runner
+
   bench:
     runs-on: ubuntu-latest
     timeout-minutes: 30

@@ -35,7 +35,7 @@ decision.
 
 | Job | Runs | Also |
 | --- | --- | --- |
-| `quality` | `mise run check` — `fmt`, `build`, `test`, `lint` in the order a contributor runs them | The corpus gate, and `committed` over the pull request's own commits |
+| `quality` | `mise run check` — `fmt`, `build`, `build-published`, `test`, `lint` in the order a contributor runs them | The corpus gate, and `committed` over the pull request's own commits. `build-published` builds each module alone, because `build` goes through `go.work` and compiles the runner against the engine beside it, while every consumer — `go install`, goreleaser, `dogfood-runner` — resolves the engine from the version `goatest/go.mod` pins. `lint` opens with `cmd/gomutants-vet`, this repository's own `go/analysis` driver, over both modules: the checks it carries read types, which the scans under `internal/devgates` cannot |
 | `platform-tests` | `mise run build`, then `mise run test-cost` and `mise run test-cost-integration` on ubuntu, windows and macos | `fail-fast: false`, so one platform's failure does not hide another's. The corpus gate, the build-cache report, and the kept scratch uploaded on failure |
 | `race` | `mise run test-race` — the unit tier under `-race` | ubuntu only: the detector needs cgo |
 | `coverage` | `mise run cover-integration` | **Not a gate.** `continue-on-error`, and skipped on pull requests entirely. See below |
@@ -52,6 +52,7 @@ decision.
 | `property` | the property suites at `RAPID_CHECKS=2000`, `-count=5` | Each rerun draws a fresh seed, which is the opposite of what a gate wants: the gate pins `RAPID_SEED=1` so a score cannot be a coin flip, and the exploration happens here |
 | `race-integration` | `mise run test-integration-race` | Both tiers under the detector is an hour and a half |
 | `dogfood-audit` | `mise run dogfood-audit` — dogfood with a recording, then the report re-derived from it | Not on a pull request, because it was measured: the recording costs about a third again on the full scope. It answers whether the document agrees with the account of what ran, which is not a question every push asks |
+| `dogfood-runner` | `mise run dogfood-runner` — goatest against the whole of goatest | The runner's own gate, which the import left running nowhere: GitHub reads only the root `.github`, so the workflow that used to run it stopped being a workflow the moment it moved under `goatest/`. Here rather than on a push because it is twelve thousand mutants and over an hour, and the push workflow is held to about a quarter of that end to end. It starts inside the module with `GOWORK=off`, because the runner refuses a workspace on purpose and `DetectWorkspace` reads `go.work` as a file rather than from the environment. The changed scope, `mise run dogfood-changed`, is what [`goatest/docs/ci.md`](../goatest/docs/ci.md) recommends to a workflow, and it is not wired here yet: until this module reaches `main`, `--changed=origin/main` resolves to all of it |
 | `bench` | `mise run bench` | Numbers, never a gate |
 
 ## Coverage is a signal and not a gate

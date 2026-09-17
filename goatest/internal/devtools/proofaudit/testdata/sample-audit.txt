@@ -1,0 +1,38 @@
+trace: testdata/sample-trace.jsonl
+profiles: testdata/sample-profiles
+module: example.com/audited
+
+audit
+counter                                count
+routes                                     5
+reused routes                              0
+targets with profiles                      3
+package suites with coverage profiles      0
+probe executions                           0
+targets the probe measured                 0
+package-suite probe executions             0
+package suites the probe measured          0
+killed executions                          6
+target kill pairs audited                  3
+package-suite kills                        1
+package-suite kill pairs audited           0
+batch kills                                1
+unattributed kills                         0
+truncated trailing lines                   1
+
+layers
+layer  audited  kept  inapplicable  unverifiable  violations
+reach        3     1             0             1           1
+branch: not audited (no -catalog given)
+infection: not audited (the recording holds no probe pass)
+suite-reach: not audited (the recording holds no package-suite coverage profile)
+
+unverifiable
+kill pairs a layer could not decide: 1
+mutant                rule       position             killer target     layer  why
+c1d2e3f405162738495a  eq-to-neq  pkg/subject.go:31:5  c1d2e3f405162738  reach  the killer target left no coverage profile
+
+violations
+killers a layer would drop: 1
+mutant                rule       position             killer target     layer  why
+b1c2d3e4f5061728394a  eq-to-neq  pkg/subject.go:21:4  b1c2d3e4f5061728  reach  position outside every covered block of the killer

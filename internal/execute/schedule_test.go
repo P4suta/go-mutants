@@ -1286,6 +1286,8 @@ func TestAProvedRunawayIsNotMeasuredTwice(t *testing.T) {
 			var started atomic.Int64
 			f := &fake{respond: func(context.Context, call) runner.Result {
 				started.Add(1)
+				//exhaustive:total The fake answers the outcomes this table asks for; every other one is a
+				// passing run, which is the default.
 				switch c.outcome {
 				case mutation.OutcomeTimedOut:
 					return runner.Result{TimedOut: true, ExitCode: runner.ExitCodeUnavailable}

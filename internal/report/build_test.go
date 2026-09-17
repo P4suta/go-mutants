@@ -420,6 +420,8 @@ func TestOptionalStringsAreNullNotEmpty(t *testing.T) {
 	r := buildFixture(t)
 	var killed, notRun *report.Mutant
 	for i := range r.Mutants {
+		//exhaustive:total This test wants one killed mutant and one not-run one out of the fixture.
+		// The rest of it is not this test's subject.
 		switch r.Mutants[i].Outcome {
 		case report.OutcomeKilled:
 			killed = &r.Mutants[i]

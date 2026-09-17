@@ -996,6 +996,8 @@ func TestUncanonicalisableDirectoriesReachTheValidatorVerbatim(t *testing.T) {
 	}
 	for _, problem := range got {
 		var written string
+		//exhaustive:total This test is about two codes. Any other is the failure the default
+		// reports, which is what makes it a test rather than a switch.
 		switch problem.Code {
 		case CodeInvalidReportDirectory:
 			written = absolute

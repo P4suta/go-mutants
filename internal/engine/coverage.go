@@ -508,6 +508,8 @@ func indicesOf(covering []string, index map[string]int) []int {
 // reportCoverageMode maps this package's spelling onto the document's, as
 // [reportTimeoutSource] does for the other enum the two share.
 func reportCoverageMode(mode CoverageMode) report.CoverageMode {
+	//exhaustive:total CoverageOff is what the default returns, so the mapping and its fallback
+	// are the same word.
 	switch mode {
 	case CoveragePackage:
 		return report.CoveragePackage

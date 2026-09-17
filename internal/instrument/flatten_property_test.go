@@ -353,6 +353,7 @@ func render(t *rapid.T, pieces []piece) string {
 		if i == len(pieces)-1 {
 			break
 		}
+		//exhaustive:total sepInline is the generator the default draws from.
 		switch p.sep {
 		case sepBreakOK:
 			b.WriteString(rapid.SampledFrom(breakSeps).Draw(t, "sep"))
