@@ -296,6 +296,10 @@ func DiscoverWorkspace(ctx context.Context, opts Options) ([]WorkspaceResult, er
 		moduleOpts := opts
 		moduleOpts.SnapshotRoot = filepath.Join(root, filepath.FromSlash(module.Dir))
 		moduleOpts.Workspace = true
+		// The file this pass read, so that the module whose directory is the
+		// workspace root is not refused for holding it -- and so that a module
+		// holding a *different* go.work still is. See [Discover].
+		moduleOpts.WorkspaceRoot = root
 		if module.Dir != "." {
 			moduleOpts.PathPrefix = module.Dir
 		}

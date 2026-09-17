@@ -433,7 +433,21 @@ run = [
 [tasks.check]
 description = "Run every local gate that CI runs, in CI order"
 run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
-
+# GOWORK=off and nothing else would not do it, and that is worth stating where
+# somebody will look for it. internal/discover reads go.work as a *file* inside
+# the snapshot -- DetectWorkspace joins it to the root and os.ReadFile's it --
+# so a run pointed at this directory finds the workspace whatever the
+# environment says, and refuses it with GOM4102: a single-module discovery has
+# no module for its mutants to be relative to and no one baseline to measure
+# against. The refusal is right. What is wrong is pointing it here.
+#
+# The engine can measure a workspace -- `go-mutants/workspace-report` is a
+# document type it publishes -- and this task deliberately does not ask for one.
+# The seventy-five [[mutation.expect]] rows below are identities minted in a
+# single-module domain, and a workspace run re-mints every one of them. Two
+# ledgers for one gate is the cost, and ADR 0012 already says so. So this
+# measures the engine's own module, from inside it, and dogfood-runner measures
+# the runner's from inside that.
 [tasks.dogfood]
 # go-mutants against go-mutants. The scope, the measured score and the floor
 # all live in .go-mutants.toml, next to the settings they justify; only the two
