@@ -16,6 +16,8 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
+const unknownCommandDiagnosticLines = 2
+
 type service struct {
 	request cli.Request
 	command cli.Command
@@ -445,7 +447,7 @@ func TestHelpForAnUnknownCommandSaysSoAndFails(t *testing.T) {
 	if stdout.Len() != 0 {
 		t.Errorf("stdout = %q, want no help text for a command there is none for", stdout.String())
 	}
-	if lines := strings.Count(strings.TrimRight(stderr.String(), "\n"), "\n") + 1; lines != 2 {
+	if lines := strings.Count(strings.TrimRight(stderr.String(), "\n"), "\n") + 1; lines != unknownCommandDiagnosticLines {
 		t.Errorf("stderr holds %d lines:\n%s\nwant the refusal and where to look, said once", lines, stderr.String())
 	}
 }
