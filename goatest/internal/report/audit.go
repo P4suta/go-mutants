@@ -345,6 +345,8 @@ func validateReuse(disposition MutantDisposition) error {
 	if !disposition.Reused {
 		return nil
 	}
+	//exhaustive:total The dispositions no run executes share the refusal the default writes,
+	// and the message names whichever one it was.
 	switch disposition.Status {
 	case MutantKilled, MutantSurvived, MutantInconclusive, MutantAccepted:
 		return nil
@@ -358,6 +360,8 @@ func validateVerdictScope(input Report) error {
 		return nil
 	}
 	resolved := input.Scope.Resolved.Kind
+	//exhaustive:total Only the verdicts that constrain the run kind are checked here. A verdict
+	// that constrains nothing has nothing for this to check.
 	switch input.Verdict {
 	case VerdictAssured:
 		if resolved != string(RunFull) {

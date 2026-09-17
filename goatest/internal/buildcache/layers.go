@@ -22,6 +22,7 @@ const (
 )
 
 func (source Source) String() string {
+	//exhaustive:total SourceNone is the zero value and its name is the default.
 	switch source {
 	case SourceScratch:
 		return "scratch"

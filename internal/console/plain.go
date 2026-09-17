@@ -505,6 +505,9 @@ func ResultLabel(o mutation.Outcome, uncovered bool) string {
 // [mutation.OutcomeNotRun] deliberately has none: a mutant nothing was learned
 // about is a number in the counts, not a line claiming a result.
 func OutcomeLabel(o mutation.Outcome) string {
+	//exhaustive:total The comment above says it: OutcomeNotRun deliberately has no label, because
+	// a mutant nothing was learned about is a number in the counts rather than a
+	// line claiming a result. The default is that empty label.
 	switch o {
 	case mutation.OutcomeKilled:
 		return "KILLED"

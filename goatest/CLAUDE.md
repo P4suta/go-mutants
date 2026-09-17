@@ -50,6 +50,12 @@ every word of the difference is in
 - **SPDX on every file.** The ones whose format cannot hold a header are
   annotated in `REUSE.toml`, and a gate refuses a file that is in neither - or
   an annotation that covers nothing.
+- **A switch over a closed vocabulary names every word.** The engine's
+  `cmd/gomutants-vet` runs over this module too, and its `exhaustive` pass
+  refuses a switch that leaves one unnamed - `gomutants.Outcome` above all,
+  where a seventh word would otherwise reach a `default` at run time with both
+  modules' suites green. A total default says so in `//exhaustive:total
+  <reason>` directly above the switch.
 - **Conventional Commits**, written as a declarative sentence about behaviour.
 
 ## The documentation ledger
@@ -75,6 +81,7 @@ and the only question is when.
 | which files may start a toolchain | the build tags | `internal/devgates/tiers_test.go` |
 | package-level seams | `seam_allowlist.txt` | `internal/devgates/seams_test.go` |
 | the worker ceiling a run derives | the engine's, read from the tree beside this one | `internal/devgates/worker_default_test.go` |
+| every switch over a closed vocabulary | the constants it declares, by type | the engine's `internal/analysis/exhaustive` |
 | which tests may skip | `skip_ledger.txt` | `internal/devtools/testaudit` |
 
 Adding a page that enumerates something means adding its ledger in the same

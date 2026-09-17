@@ -1236,6 +1236,53 @@ so compiles the runner against the tree next door; `go install`, goreleaser and
 pins. They are two different programs, and a change that names a symbol the
 engine has only just gained is green in one and broken in the other.
 
+## 10a. The checks that need types
+
+`mise run lint` opens with `go run ./cmd/gomutants-vet ./... ./goatest/...`,
+which is this repository's own `go/analysis` driver rather than somebody else's
+linter. It is a separate binary because a pass is a value: the same one loads
+into `go vet -vettool`, into golangci-lint, and into this driver, over either
+module, without being written three times.
+
+It carries one pass so far, `exhaustive`. It refuses a `switch` on one of this
+repository's own closed vocabularies — a named type with two or more declared
+constants, in a package under this module path — that does not name every
+constant of it.
+
+A `default` does not excuse a missing word, and that is the whole point rather
+than a strictness setting. The failure it exists for is this: the engine
+publishes `Outcome`, the runner switches on it and ends in a `default` that
+raises an error, somebody adds a seventh outcome, and both modules' suites stay
+green while the defect waits to arrive at run time on a user's machine. A
+default is exactly what turns that from a compile-time question into a run-time
+one.
+
+A switch whose default really is the right answer for every word says so
+immediately above itself:
+
+```go
+//exhaustive:total a colour is a rendering, and an unstyled new outcome is the
+// right thing to render
+switch outcome {
+```
+
+Two rules about the directive, both load-bearing:
+
+- **It must carry a reason.** Switching a check off is a sentence somebody
+  wrote, not a token somebody copied.
+- **It must be the switch's own comment**, the group immediately above it. A
+  marker five statements away would exempt whichever switch came next, which is
+  how a reader ends up trusting a sentence written about other code.
+
+It is a comment rather than a line in a ledger elsewhere for one reason: it
+cannot go stale. Delete the switch and the exemption goes with it — which is
+the failure every path-keyed allowlist in this repository has had to be taught
+to catch separately.
+
+Vocabularies the standard library owns are not checked. `token.Token` and
+`reflect.Kind` grow on somebody else's schedule, and demanding every case of
+them is how a check ends up switched off.
+
 ## 11. Dogfood
 
 `mise run dogfood` runs go-mutants against go-mutants with `--strict`, so an

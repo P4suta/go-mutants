@@ -496,6 +496,7 @@ func parsedCommand(command Command, request Request, id string) (Command, Reques
 }
 
 func exitCode(verdict report.Verdict) int {
+	//exhaustive:total VerdictError is the exit code the default returns.
 	switch verdict {
 	case report.VerdictAssured, report.VerdictChangeAssured, report.VerdictScopeAssured,
 		report.VerdictResolved, report.VerdictCompleted:

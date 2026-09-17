@@ -304,6 +304,8 @@ func HelperCoverRoot() string { return os.Getenv(HelperCoverRootEnv) }
 // writing covmeta into the directory `go test` is collecting.
 func isolateCoverageOutput() error {
 	root := HelperCoverRoot()
+	//exhaustive:total coverCarve is the code below. The two actions with an early answer are
+	// named and carving is the remainder.
 	switch helperCoverAction(root, os.Getenv(CoverDirEnv)) {
 	case coverNothing:
 		return nil
@@ -338,6 +340,8 @@ const (
 // String names the action, so that a failure says which of the three a helper
 // took rather than which integer it is.
 func (a coverAction) String() string {
+	//exhaustive:total coverNothing is the zero value, and leaving the output alone is the
+	// sentence the default returns for it.
 	switch a {
 	case coverCarve:
 		return "carve a private coverage directory"

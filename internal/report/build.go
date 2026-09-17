@@ -1273,6 +1273,9 @@ func cacheBlock(mode CacheMode, misses, writes int, mutants []Mutant) (Cache, er
 // round — internal/cache already reads [Mutant] the other way. The package
 // tests hold the two lists together.
 func reusable(o Outcome) bool {
+	//exhaustive:total Reuse is fail-closed. Three outcomes are worth storing and the default
+	// answers false for everything else, which is the only safe answer for an
+	// outcome nobody has decided about yet.
 	switch o {
 	case OutcomeKilled, OutcomeSurvived, OutcomeTimedOut:
 		return true

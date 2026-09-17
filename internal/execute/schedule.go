@@ -456,6 +456,8 @@ func settle(result *MutantResult, attempt Attempt) {
 // disagreement as a kill inflates the score exactly where it is least entitled
 // to.
 func confirm(result *MutantResult, attempt Attempt) {
+	//exhaustive:total The default says it in a sentence of its own: a retry that errored,
+	// was inconclusive or never ran established nothing about the mutant.
 	switch attempt.Outcome {
 	case mutation.OutcomeTimedOut:
 		result.Final = mutation.OutcomeTimedOut

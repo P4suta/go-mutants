@@ -78,6 +78,7 @@ const (
 
 // String is the spelling that appears in a log line and in [KeptFileName].
 func (k Keep) String() string {
+	//exhaustive:total KeepNever is the zero value and its spelling is the default.
 	switch k {
 	case KeepOnFailure:
 		return "on-failure"
@@ -181,6 +182,7 @@ func Verbose() bool { return truthy(harnessSetting(VerboseEnv, pinnedVerbose)) }
 // directory. The answer is only final inside a cleanup, because that is the
 // first moment [testing.TB.Failed] is.
 func Keeping(t testing.TB) bool {
+	//exhaustive:total KeepNever is the zero value and not keeping is the default.
 	switch policyFor(t) {
 	case KeepAlways:
 		return true

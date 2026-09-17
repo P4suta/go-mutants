@@ -141,6 +141,8 @@ func (r *PlainRenderer) attribution(m engine.MutantResult) string {
 	}
 	var b strings.Builder
 	if m.KilledBy != "" {
+		//exhaustive:total Only a kill and a timeout have anything to say about what killed a mutant.
+		// For every other outcome this clause writes nothing, which is its job.
 		switch m.Outcome {
 		case mutation.OutcomeKilled:
 			b.WriteString(" killed by " + m.KilledBy)
@@ -203,6 +205,8 @@ func memoryDerivedLine(e engine.MemoryDerived) string {
 // attempted reports whether an outcome is one a pass over the test binaries
 // produced. See [engine.MutantResult.Attempts], which counts those passes.
 func attempted(o mutation.Outcome) bool {
+	//exhaustive:total An attempt is a pass over the test binaries. The outcomes that are not one
+	// share the default.
 	switch o {
 	case mutation.OutcomeKilled, mutation.OutcomeSurvived, mutation.OutcomeTimedOut:
 		return true

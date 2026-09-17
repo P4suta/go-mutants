@@ -172,6 +172,8 @@ func FailTempFiles(step TempFileStep, skip int) func() {
 		if created != skip+1 {
 			return file, nil
 		}
+		//exhaustive:total TempCreate is the step this fake fails at. Every other step gets the
+		// wrapper the default returns.
 		switch step {
 		case TempCreate:
 			name := file.Name()

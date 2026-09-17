@@ -74,6 +74,8 @@ var (
 // because they are not a verdict about the tests and colouring them like one
 // would make an inconclusive result read as a failure.
 func outcomeStyle(o mutation.Outcome) lipgloss.Style {
+	//exhaustive:total A colour is a rendering rather than a verdict. The comment above says which
+	// outcomes are yellow and why, and the default is that colour.
 	switch o {
 	case mutation.OutcomeKilled, mutation.OutcomeTimedOut:
 		return styleOK

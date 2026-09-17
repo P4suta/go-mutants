@@ -37,6 +37,14 @@ const secondModule = "goatest"
 // same line. Naming it in a later step of the same task would leave a task
 // whose first step passes over a tree that does not build, and the failure
 // would name the step that did look.
+//
+// Two exemptions, and both are the same fact rather than two conveniences: the
+// rule is about `./...` read as "the whole repository", and there are places
+// where it provably cannot be read that way. A task with `dir` is already
+// inside one module. A task with GOWORK=off has no workspace to aggregate, so
+// `./...` is the module it starts in whatever anybody meant -- which is the
+// point of build-published, where naming both modules on one line would be
+// asking for exactly the aggregate build the task exists to avoid.
 func TestEveryWholeTreePatternNamesBothModules(t *testing.T) {
 	t.Parallel()
 
@@ -48,7 +56,7 @@ func TestEveryWholeTreePatternNamesBothModules(t *testing.T) {
 		// and what they have to mean, since the runner refuses a workspace. The
 		// rule is about a command run at the root, where `./...` reads as the
 		// whole repository and is not.
-		if task.Dir != "" {
+		if task.Dir != "" || task.Env["GOWORK"] == "off" {
 			continue
 		}
 		for _, step := range taskSteps(task.Run) {
@@ -73,6 +81,10 @@ type miseTask struct {
 	Run any `toml:"run"`
 	// RunWindows is the second list a task may carry.
 	RunWindows any `toml:"run_windows"`
+	// Env is the task's own environment. Only GOWORK is read here, and only to
+	// tell a command that means one module on purpose from one that means the
+	// repository and gets one module by accident.
+	Env map[string]string `toml:"env"`
 }
 
 // tasksOf decodes every task mise.toml defines.

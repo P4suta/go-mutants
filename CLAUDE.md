@@ -77,6 +77,15 @@ before committing. The second prints a per-package cost and skip table.
 - **Conventional Commits.** This repository squash-merges, so the pull request
   title becomes the subject on `main` and is release-please's only input. Write
   it as a declarative sentence about behaviour, not about implementation.
+- **A switch over a closed vocabulary names every word.** `mise run lint` runs
+  `cmd/gomutants-vet`, whose `exhaustive` pass refuses a switch on one of this
+  repository's own named-constant sets that leaves a word unnamed — and a
+  `default` does not excuse one, because a default is exactly what turns "this
+  set grew" from a compile error into a failure on somebody else's machine. A
+  switch whose default really is the right answer for every word says so in a
+  `//exhaustive:total <reason>` comment directly above itself, and the reason is
+  required: the marker is attached to the switch so that deleting the switch
+  deletes the exemption, which no path-keyed allowlist manages.
 - **No skip list wearing a ledger's clothes.** A `[[mutation.expect]]` row is
   for a survivor no honest test can reach, and it carries the argument for
   which. "No test covers this" is a missing test.
@@ -120,6 +129,7 @@ repository's prose worth reading, so here is where each ledger lives.
 | that a whole-tree pattern names both modules | what `go list ./...` actually walks | `internal/devgates/modules_integration_test.go` |
 | that the runner reaches the engine through its published API | every import in both modules, parsed | `goatest/internal/devgates/direction_test.go` |
 | how much of a machine a mutation run may take | one ceiling, read from both trees rather than imported | `goatest/internal/devgates/worker_default_test.go` |
+| every switch over a closed vocabulary in either module | the constants that vocabulary declares, by type | `internal/analysis/exhaustive` |
 
 Adding a page that enumerates something means adding its ledger in the same
 change. A page nothing checks is a page that will be wrong, and the only

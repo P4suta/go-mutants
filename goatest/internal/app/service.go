@@ -723,6 +723,8 @@ func requestedScope(request cli.Request, kind report.RunKind) report.ScopeSpec {
 
 func scopedVerdict(verdict report.Verdict, kind report.RunKind, resolved string, findings int) report.Verdict {
 	if kind == report.RunReplay {
+		//exhaustive:total A replay has two answers and an error is neither: every verdict but Error
+		// becomes Resolved or Reproduced by whether the replay found anything.
 		switch verdict {
 		case report.VerdictError:
 			return verdict

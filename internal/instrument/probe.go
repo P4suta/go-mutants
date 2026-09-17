@@ -201,6 +201,9 @@ type probeSite struct {
 // inside the result the hint says it does — because the whole meaning of the
 // rewrite is that this temporary holds that value.
 func (x *siteIndex) probeSiteFor(m mutation.Mutant, hint *discover.ProbeSite, srcPath string) (probeSite, error) {
+	//exhaustive:total ProbeFormReturn is the code below this switch. The three forms with a
+	// site builder of their own are named; the return form is what is left, and
+	// naming it here would mean writing the fall-through twice.
 	switch hint.Form {
 	case discover.ProbeFormBool, discover.ProbeFormValue:
 		return x.expressionSiteFor(m, hint, srcPath)
@@ -485,6 +488,9 @@ func (r *probeRenderer) compose(node *siteNode, rendered map[*siteNode][]byte) (
 				r.path, node.Span),
 		}
 	}
+	//exhaustive:total ProbeFormReturn is what the code below composes, for the reason the same
+	// switch in probeSiteFor has: the forms with a composer of their own are
+	// named and the return form is the remainder.
 	switch s.form {
 	case discover.ProbeFormBool:
 		return r.composeBool(node, s, rendered)

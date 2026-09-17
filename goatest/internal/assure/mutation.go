@@ -350,6 +350,8 @@ func mutationAccounting(catalog gomutants.Catalog, replayID string, evaluation M
 			Package: mutant.Package, Rule: mutant.Rule, Detail: detail,
 			Reused: reused, Provenance: provenance,
 		})
+		//exhaustive:total MutantOutOfScope is counted by subtraction above -- Discovered minus
+		// Selected -- and a case here would count it twice.
 		switch status {
 		case report.MutantKilled:
 			accounting.Killed++

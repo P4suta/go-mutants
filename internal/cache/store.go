@@ -426,6 +426,9 @@ func (e Entry) UsableWithin(limit int64) bool {
 // not in the key, so a cached "survived (uncovered)" could be adopted by a run
 // that would have executed the mutant and killed it.
 func Cacheable(o mutation.Outcome) bool {
+	//exhaustive:total Fail-closed, as the comment above argues: three outcomes are cacheable and
+	// the default stores nothing, which is what an outcome the cache has no
+	// opinion about has to be.
 	switch o {
 	case mutation.OutcomeKilled, mutation.OutcomeSurvived, mutation.OutcomeTimedOut:
 		return true

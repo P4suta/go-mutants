@@ -452,7 +452,17 @@ run_windows = [
 
 [tasks.lint]
 description = "Run the Go, spelling, TOML, workflow, YAML, secret, and doc linters"
+
+# gomutants-vet is first because it is ours and it is the only one here that
+# reads types. Everything else in this list is somebody else's opinion about Go
+# or about a file format; this is the opinion this repository formed about
+# itself, and a check that needs the type checker cannot be written as one of
+# the scans under internal/devgates -- see cmd/gomutants-vet.
+#
+# Both modules by name, for the reason every other whole-tree pattern here
+# names both: `./...` walks past a nested module without a word.
 run = [
+  "go run ./cmd/gomutants-vet ./... ./goatest/...",
   "golangci-lint run",
   "typos",
   "taplo check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml",

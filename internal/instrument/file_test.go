@@ -211,6 +211,8 @@ func TestInstrumentFileRefusesAlreadyInstrumentedBytes(t *testing.T) {
 	if err == nil {
 		t.Fatal("InstrumentFile rewrote an already-instrumented file, want a refusal")
 	}
+	//exhaustive:total Two codes are the acceptable answers here and the default is the
+	// assertion that refuses every other one.
 	switch got := instrument.CodeOf(err); got {
 	case instrument.CodeSiteNotFound, instrument.CodeSpliceMismatch:
 	default:

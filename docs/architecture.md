@@ -1270,6 +1270,7 @@ is the whole of what was asked for and a failure is an error.
 | --- | --- | --- |
 | `.` — the module root (`gomutants`) | Public frozen-workspace and reusable-session API | implemented |
 | `cmd/go-mutants` | Thin main | implemented |
+| `cmd/gomutants-vet` | Thin main for the checks that need types: a `go/analysis` driver the same passes load into `go vet -vettool` and golangci-lint from | implemented |
 | `internal/cli` | cobra tree, flag validation, GOM errors, exit codes | implemented |
 | `internal/config` | Strict TOML decode and precedence merge | implemented |
 | `internal/mutation` | Pure: spans, stable IDs, rules, catalog, score | implemented |
@@ -1301,6 +1302,7 @@ is the whole of what was asked for and a failure is an error.
 | `internal/testkit` | Module and fixture paths, tree copies, hermetic environment, toolchain lookup, child processes, golden files, helper subprocesses, clocks, the keep-on-failure policy and its dumps | test-only support |
 | `internal/testkit/mutantkit` | Snapshots, the discover/catalogue/instrument sequence, mutant lookups, report marshalling and normalisation, a per-test trace recording, a scripted `go` command | test-only support |
 | `internal/devgates` | The checks whose subject is this repository rather than the product: what a configuration file claims, and whether it is still true | test-only support |
+| `internal/analysis/exhaustive` | The `go/analysis` pass that refuses a switch over one of this repository's closed vocabularies that does not name every word | test-only support |
 | `internal/devtools/testcache` | The test-owned build cache and the kept scratch root: `path`, `status`, `clean`, `trim`, `exec` | developer tool |
 | `internal/devtools/testcost` | Turns `go test -json` into a per-package cost and skip table | developer tool |
 | `internal/devtools/traceaudit` | Re-derives a run's conclusions from the recording beside it, with code that never calls the engine's | developer tool |
