@@ -992,3 +992,45 @@ id = '3da28d44093c4f16'
 reason = 'validateReadEvent runs on every event before this line and admits exactly one payload, the one its type names, so an event of type prepare has a prepare payload and an event with a prepare payload is of type prepare; the two halves of this conjunction are the same fact by the time the reader reaches them, and or and and agree wherever both halves agree'
 expires = '2027-09-17T00:00:00Z'
 owner = 'goatest'
+
+[[acceptance]]
+id = '49ba93868d31079c'
+reason = 'the match this returns beside a non-nil error is never read: ApplyCandidates answers the error and stops'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '1d727bb04a73bb1a'
+reason = 'the match this returns beside a non-nil error is never read: ApplyCandidates answers the error and stops'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '416a9120e5acfb16'
+reason = 'the match this returns beside a non-nil error is never read: ApplyCandidates answers the error and stops'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '0a6bae29a609743c'
+reason = 'the atomicWrite that follows confines the same path under the same root, so skipping this check reaches the same failure by a longer route'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'dfc7493c7b487a5a'
+reason = 'the atomicWrite that follows confines the same path under the same root, so skipping this check reaches the same failure by a longer route'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '64662b9abee96c8d'
+reason = 'json.MarshalIndent is given a document of strings, byte slices and records of the same, so it has no value in it that can fail to marshal'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'f11ce548af036318'
+reason = 'normalize answers a path it rejects with the empty string, which ends in no _test.go and holds no testdata/fuzz segment, so the longer route reaches the same false'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
