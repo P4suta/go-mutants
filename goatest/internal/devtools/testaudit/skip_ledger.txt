@@ -28,6 +28,7 @@ github.com/P4suta/go-mutants/goatest/cmd/goatest TestTheCLIServiceNamesWhatBelon
 github.com/P4suta/go-mutants/goatest/internal/app TestATraceDirectoryIsJudgedByWhereItLands
 github.com/P4suta/go-mutants/goatest/internal/app TestReadingANamedTraceRefusesEveryRunItCannotTrust
 github.com/P4suta/go-mutants/goatest/internal/app TestAnEntryThatCannotBeStatedKeepsItsPlaceInTheLedger
+github.com/P4suta/go-mutants/goatest/internal/buildcache TestOpeningANativeObjectRefusesALinkToTheFileItExpects
 github.com/P4suta/go-mutants/goatest/internal/buildcache TestResolvingANativeSourceFollowsALinkToWhatItNames
 github.com/P4suta/go-mutants/goatest/internal/cache TestFlushDoesNotFollowAnEntryReplacedAfterValidation
 github.com/P4suta/go-mutants/goatest/internal/cache TestInspectRefusesASymbolicLinkForTheVersionRoot
