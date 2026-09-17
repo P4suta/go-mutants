@@ -514,6 +514,48 @@ jobs:
   # spelling too many. That is the part of the growth this job's budget
   # feels, because a mutant that hangs costs a whole derived timeout and
   # every other mutant costs a fraction of a second.
+  # goatest measuring goatest, which is the runner's own gate and was running
+  # nowhere after the import: GitHub reads only the root .github, so the
+  # workflow that used to run it stopped being a workflow the moment it moved
+  # under goatest/. A gate that exists and never runs is worse than an absent
+  # one, because it is counted.
+  #
+  # `mise run dogfood-runner` starts inside goatest/ with GOWORK=off, and both
+  # halves are load-bearing: internal/golang rejects more than one main module
+  # on purpose, and DetectWorkspace reads go.work as a file and walks up to find
+  # it, so unsetting the variable is not enough. See mise.toml.
+  dogfood-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Point the test build cache at the runner's temporary directory
+        shell: bash
+        run: >-
+          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
+          >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+        with:
+          install: true
+          cache: true
+      - run: mise run dogfood-runner
+      # The same gate the engine's dogfood job carries, for the same reason: a
+      # run writes into the tree it is pointed at, and `always()` because a run
+      # that wrote into the corpus and then failed its own verdict is the case
+      # worth naming.
+      - name: The corpus is unchanged
+        if: always()
+        shell: bash
+        run: |
+          dirty=$(git status --porcelain --ignored -- fixtures goatest)
+          if [ -n "$dirty" ]; then
+            printf '%s\n' "$dirty"
+            echo "::error:: a run left something behind in the corpus" >&2
+            exit 1
+          fi
+
   dogfood:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -688,6 +730,7 @@ jobs:
       - coverage
       - artifacts
       - dogfood
+      - dogfood-runner
       - action-smoke
     if: always()
     runs-on: ubuntu-latest

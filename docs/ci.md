@@ -41,6 +41,7 @@ decision.
 | `coverage` | `mise run cover-integration` | **Not a gate.** `continue-on-error`, and skipped on pull requests entirely. See below |
 | `artifacts` | `mise run package` | Exercises the packaging path on every run rather than for the first time on a tag, and smoke-tests that the version stamp reached its target |
 | `dogfood` | `mise run dogfood` — go-mutants against go-mutants | The gate on whether the tests *catch* anything. `--strict`, so one undeclared survivor fails it. The audit that reads this run's report against a recording of it is `mise run dogfood-audit`, and it is nightly rather than here — measured after it was wired up, it costs about a third again on the longest job in this workflow |
+| `dogfood-runner` | `mise run dogfood-runner` — goatest against goatest | The runner's own gate, and the one that was running nowhere after the import: GitHub reads only the root `.github`, so the workflow that used to run it stopped being a workflow the moment it moved under `goatest/`. It starts inside the module with `GOWORK=off`, because the runner refuses a workspace on purpose and `DetectWorkspace` reads `go.work` as a file rather than from the environment |
 | `action-smoke` | the composite action, over `fixtures/killable` | Builds this checkout onto `PATH` and passes `version: skip`, so what is measured is this source and not the last release. Asserts that every output arrived and that they agree with the report |
 | `ci-success` | nothing | Needs every job above, so branch protection names one check instead of seven |
 
