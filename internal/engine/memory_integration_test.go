@@ -16,7 +16,7 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// runawayMemoryBound is what the `runaway` fixture's mutants are allowed.
+// runawayMemoryBound is what the `memorybound` fixture's mutants are allowed.
 //
 // It is explicit rather than derived, and that is the point of running it here
 // at all. The derived bound is a gibibyte at its floor, and a test that had to
@@ -53,7 +53,7 @@ func TestARunawayMutantIsKilledByTheMemoryBoundNotTheTimeout(t *testing.T) {
 		t.Skip("this platform cannot sample a live process tree, so no bound is enforced on it")
 	}
 
-	opts := options(t, "runaway")
+	opts := options(t, "memorybound")
 	opts.Config.Test.Memory = runawayMemoryBound
 	sink := trace.NewMemorySink(0)
 	opts.TraceSink = sink
@@ -291,7 +291,7 @@ func TestAMemoryKillIsNotReusedByARunWithADifferentBound(t *testing.T) {
 		t.Skip("this platform enforces no bound, so no measurement is made under one")
 	}
 
-	root := testkit.Copy(t, "runaway")
+	root := testkit.Copy(t, "memorybound")
 	cacheRoot := t.TempDir()
 
 	// A tight bound: the runaway mutant is killed by it, and the entry says so.
@@ -379,7 +379,7 @@ func TestACachedMemoryKillReadsLikeAMeasuredOne(t *testing.T) {
 		t.Skip("this platform enforces no bound, so no memory kill is measured to be cached")
 	}
 
-	root := testkit.Copy(t, "runaway")
+	root := testkit.Copy(t, "memorybound")
 	cacheRoot := t.TempDir()
 
 	cold := cacheOptions(t, root, cacheRoot)
