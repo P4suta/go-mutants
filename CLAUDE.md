@@ -33,7 +33,13 @@ mise run test-integration
 mise run dogfood
 ```
 
-`check` is `fmt`, `build`, `test` and `lint` in the order CI runs them.
+`check` is `fmt`, `build`, `build-published`, `test` and `lint` in the order
+CI runs them. `build-published` is the same two modules built *alone*, which is
+what everybody outside this repository gets: `build` goes through `go.work` and
+compiles the runner against the engine in the tree, while `go install`,
+goreleaser and `dogfood-runner` all resolve the engine from the version
+`goatest/go.mod` pins. They are two different programs, and until this task
+existed nothing said so.
 `test-integration` is the tier that starts real toolchains. `dogfood` is
 go-mutants measuring go-mutants, and it is the one that says whether the tests
 *catch* anything rather than which lines they ran.

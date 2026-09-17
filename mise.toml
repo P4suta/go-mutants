@@ -40,6 +40,38 @@ run = ["mise install", "go mod download", "lefthook install"]
 description = "Build every package and run the vet gate"
 run = ["go build ./... ./goatest/...", "go vet ./... ./goatest/..."]
 
+# The same two modules, each alone, which is the shape everybody outside this
+# repository gets.
+#
+# [tasks.build] goes through go.work, so the runner there is compiled against
+# the engine in the tree next door. Nobody else ever builds it that way: `go
+# install`, goreleaser and `mise run dogfood-runner` all resolve the engine from
+# the version goatest/go.mod pins, and a pinned version is by definition not
+# this tree. The two builds are two different programs.
+#
+# Nothing said so, and it cost a whole afternoon: a runner change that named a
+# symbol the engine had just gained compiled green under `mise run check` and
+# failed under `mise run dogfood-runner` with `undefined: gomutants.DefaultJobs`
+# -- the runner's own gate, and the last place anybody looks. A `replace` would
+# close the gap and is not available: `go help install` refuses a module whose
+# go.mod carries one, and `go install .../goatest/cmd/goatest@latest` is a
+# promise this repository keeps. So the pin is the mechanism, moved with
+# `go get github.com/P4suta/go-mutants@<pushed sha>` when the runner needs
+# something new, and this task is what makes forgetting it a failure here
+# instead of an hour into the runner's gate.
+#
+# `go -C` rather than a `dir` on the task, because the point is that both
+# happen: a task per module would let one of them be skipped.
+[tasks.build-published]
+description = "Build each module on its own, the way a consumer gets it"
+env = { GOWORK = "off" }
+run = [
+  "go build ./...",
+  "go vet ./...",
+  "go -C goatest build ./...",
+  "go -C goatest vet ./...",
+]
+
 [tasks.test]
 # The tier a developer runs on every save, and the one CI runs on three
 # operating systems: everything that needs a compiler and nothing else. What
@@ -432,7 +464,13 @@ run = [
 
 [tasks.check]
 description = "Run every local gate that CI runs, in CI order"
-run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
+run = [
+  "mise run fmt",
+  "mise run build",
+  "mise run build-published",
+  "mise run test",
+  "mise run lint",
+]
 # GOWORK=off and nothing else would not do it, and that is worth stating where
 # somebody will look for it. internal/discover reads go.work as a *file* inside
 # the snapshot -- DetectWorkspace joins it to the root and os.ReadFile's it --

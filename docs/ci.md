@@ -35,7 +35,7 @@ decision.
 
 | Job | Runs | Also |
 | --- | --- | --- |
-| `quality` | `mise run check` — `fmt`, `build`, `test`, `lint` in the order a contributor runs them | The corpus gate, and `committed` over the pull request's own commits |
+| `quality` | `mise run check` — `fmt`, `build`, `build-published`, `test`, `lint` in the order a contributor runs them | The corpus gate, and `committed` over the pull request's own commits. `build-published` builds each module alone, because `build` goes through `go.work` and compiles the runner against the engine beside it, while every consumer — `go install`, goreleaser, `dogfood-runner` — resolves the engine from the version `goatest/go.mod` pins |
 | `platform-tests` | `mise run build`, then `mise run test-cost` and `mise run test-cost-integration` on ubuntu, windows and macos | `fail-fast: false`, so one platform's failure does not hide another's. The corpus gate, the build-cache report, and the kept scratch uploaded on failure |
 | `race` | `mise run test-race` — the unit tier under `-race` | ubuntu only: the detector needs cgo |
 | `coverage` | `mise run cover-integration` | **Not a gate.** `continue-on-error`, and skipped on pull requests entirely. See below |

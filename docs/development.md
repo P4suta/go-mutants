@@ -1225,9 +1225,16 @@ Before pushing:
 mise run check
 ```
 
-which is `fmt`, `build`, `test` and `lint` in CI order. Run `mise run
-test-integration` as well when the change touches snapshotting, the runner, or
-anything that shells out to `go`.
+which is `fmt`, `build`, `build-published`, `test` and `lint` in CI order. Run
+`mise run test-integration` as well when the change touches snapshotting, the
+runner, or anything that shells out to `go`.
+
+`build-published` builds each module on its own, which is the shape everybody
+outside this repository gets. `build` resolves the engine through `go.work` and
+so compiles the runner against the tree next door; `go install`, goreleaser and
+`mise run dogfood-runner` all resolve it from the version `goatest/go.mod`
+pins. They are two different programs, and a change that names a symbol the
+engine has only just gained is green in one and broken in the other.
 
 ## 11. Dogfood
 
