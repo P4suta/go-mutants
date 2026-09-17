@@ -144,3 +144,38 @@ func TestDiscoverTargetsReportsDirectoryAndParseFailures(t *testing.T) {
 		}
 	})
 }
+
+func TestDiscoverTargetsKeepsAnExampleOnlyWhenItStatesItsOutput(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeGo(t, root, "sample/sample_test.go", `package sample
+
+func ExampleStated() {
+	// Output: one
+}
+
+func ExampleSilent() {
+}
+
+func ExampleUnordered() {
+	// Unordered output: one
+}
+`)
+	targets, err := gotest.DiscoverTargets(root,
+		[]gotest.Package{{ImportPath: "example.com/sample", RelativeDir: "sample"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(targets))
+	for _, target := range targets {
+		if target.Kind != gotest.KindExample {
+			t.Errorf("target %+v is not an example", target)
+		}
+		got = append(got, target.Name)
+	}
+	slices.Sort(got)
+	want := []string{"ExampleStated", "ExampleUnordered"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("discovered %q, want %q: an example with no output is not a target", got, want)
+	}
+}

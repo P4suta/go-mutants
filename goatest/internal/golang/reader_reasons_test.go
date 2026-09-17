@@ -224,8 +224,13 @@ func TestARepositoryReadCandidateAnswersConservativelyForSourceItCannotParse(t *
 func TestARepositoryReadCandidateAnswersConservativelyForADirectoryItCannotRead(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
+	writeGo(t, root, "user/user.go", "package user\n\nfunc Use() int { return 1 }\n")
 	candidates := gotest.RepositoryReadCandidates(root, []gotest.Package{
 		{ImportPath: "example.com/module/absent", RelativeDir: "absent"},
+		{
+			ImportPath: "example.com/module/user", RelativeDir: "user",
+			Dependencies: []string{"example.com/module/absent"},
+		},
 	})
 	candidate, named := candidates["example.com/module/absent"]
 	if !named {
@@ -233,6 +238,13 @@ func TestARepositoryReadCandidateAnswersConservativelyForADirectoryItCannotRead(
 	}
 	if !candidate.Unobservable || !slices.Equal(candidate.Reasons, []string{"unreadable source"}) {
 		t.Fatalf("the candidate is %+v, want it unobservable because its source is unreadable", candidate)
+	}
+	user, inherited := candidates["example.com/module/user"]
+	if !inherited {
+		t.Fatal("a package depending on one nobody can read is not a read candidate")
+	}
+	if !user.Unobservable || !slices.Contains(user.Reasons, "unreadable source") {
+		t.Fatalf("the dependent is %+v, want it unobservable for the reason it inherited", user)
 	}
 }
 

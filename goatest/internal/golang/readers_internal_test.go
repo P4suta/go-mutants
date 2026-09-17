@@ -299,6 +299,11 @@ func TestInitializerDependencyReferencesNamesThePackagesThatRunBeforeAnyTest(t *
 			source: "package subject\n\nimport \"os\"\n\nvar value = func() { os.ReadFile(name) }\n",
 		},
 		{
+			name: "a pair sync.OnceValues defers",
+			source: "package subject\n\nimport (\n\t\"os\"\n\t\"sync\"\n)\n\n" +
+				"var value = sync.OnceValues(func() ([]byte, error) { return os.ReadFile(name) })\n",
+		},
+		{
 			name: "a call sync.OnceValue defers",
 			source: "package subject\n\nimport (\n\t\"os\"\n\t\"sync\"\n)\n\n" +
 				"var value = sync.OnceValue(func() []byte { data, _ := os.ReadFile(name); return data })\n",
@@ -390,6 +395,9 @@ func TestRepositoryReaderSelectorsReadEveryImportShapeItCanSee(t *testing.T) {
 			if got := sortedKeys(selectorQualifiers(selectors)); !slices.Equal(got, test.callers) {
 				t.Fatalf("repositoryReaderSelectors named %q, want %q", got, test.callers)
 			}
+			if len(test.callers) == 0 && selectors != nil {
+				t.Errorf("a file naming no reader answered with %v, want no map at all", selectors)
+			}
 		})
 	}
 }
@@ -473,6 +481,18 @@ func helper() int { return 1 }
 
 func init() { absent.Helper() }
 `,
+		},
+		{
+			name: "a value an initialization reads through",
+			source: `package subject
+
+import "os"
+
+func init() { _ = listing }
+
+var listing, _ = os.Readlink(name)
+`,
+			candidate: true, unobservable: true,
 		},
 		{
 			name: "a constant declaration beside a reader",
