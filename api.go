@@ -730,6 +730,35 @@ const (
 	OutcomeErrored      Outcome = "errored"
 )
 
+// KnownOutcomes returns every [Outcome] this build can return, in declaration
+// order.
+//
+// Go's switch is exhaustive by convention and not by compiler, so a consumer
+// that routes outcomes has no way to be told it is missing one. This list is
+// what makes that a test it can write: pin it, and the day the vocabulary grows
+// is the day that test says so, rather than the day a `default` written for
+// values that never arrive receives one that does.
+//
+// It is the vocabulary of the type and not a claim about which call returns
+// which member. [OutcomeNotRun] is the zero value of a result nothing filled
+// in, so an ordinary [Session.Exec] does not produce it — but a consumer's
+// switch can still reach it, and whether that is a `default` or a case saying
+// the engine broke its contract is the consumer's decision to make. Leaving the
+// member out of the list would make it for them.
+//
+// Each call returns a fresh slice: the list is a fact about this build and not
+// a value a caller may edit out from under the next one.
+func KnownOutcomes() []Outcome {
+	return []Outcome{
+		OutcomeNotRun,
+		OutcomeKilled,
+		OutcomeSurvived,
+		OutcomeTimedOut,
+		OutcomeInconclusive,
+		OutcomeErrored,
+	}
+}
+
 // MutantResult is one execution of one mutant against the selected binaries.
 type MutantResult struct {
 	ID        string
@@ -885,6 +914,26 @@ const (
 	// saw nothing.
 	ProbeUnavailable ProbeOutcome = "unavailable"
 )
+
+// KnownProbeOutcomes returns every [ProbeOutcome] this build can return, in
+// declaration order.
+//
+// It is [KnownOutcomes] for the probe vocabulary, and it exists for the same
+// reason. The asymmetry worth knowing before routing them is that exactly one
+// member — [ProbeMeasured] — carries [ProbeResult.Infected]; the other three
+// are distinct reasons there is no infection set to carry, and a consumer that
+// collapses them into "no infection" has thrown away the difference between a
+// pass that saw nothing and a pass that never got to look.
+//
+// Each call returns a fresh slice.
+func KnownProbeOutcomes() []ProbeOutcome {
+	return []ProbeOutcome{
+		ProbeMeasured,
+		ProbeTestFailed,
+		ProbeTimedOut,
+		ProbeUnavailable,
+	}
+}
 
 // ProbeResult is one pass of one target over the session's probe tree.
 type ProbeResult struct {
