@@ -9,12 +9,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/P4suta/go-mutants/goatest/internal/cli"
 	"github.com/P4suta/go-mutants/goatest/internal/report"
 	"github.com/P4suta/go-mutants/goatest/internal/trace"
+	enginetrace "github.com/P4suta/go-mutants/trace"
 )
 
 const traceDirectoryTimeFormat = "20060102T150405Z"
@@ -28,8 +31,47 @@ const (
 	traceVerdictUnknown     = "UNKNOWN"
 )
 
+// An engineRecordings collects what the engine recorded, one workspace at a
+// time.
+//
+// A run opens a workspace per round, and the interesting one is not the last:
+// it is whichever round refused. So they accumulate rather than replace, in
+// order, and the file they are written to is one stream of the whole run the way
+// the engine saw it.
+//
+// It is guarded because a round's workspace closes on whichever goroutine got
+// there, and a diagnostics writer that raced a close would be reading a slice
+// somebody was appending to.
+type engineRecordings struct {
+	mu     sync.Mutex
+	events []enginetrace.Event
+}
+
+func (collected *engineRecordings) add(events []enginetrace.Event) {
+	if collected == nil || len(events) == 0 {
+		return
+	}
+	collected.mu.Lock()
+	defer collected.mu.Unlock()
+	collected.events = append(collected.events, events...)
+}
+
+// Events is what the engine recorded, or nothing when it recorded nothing.
+func (collected *engineRecordings) Events() []enginetrace.Event {
+	if collected == nil {
+		return nil
+	}
+	collected.mu.Lock()
+	defer collected.mu.Unlock()
+	return slices.Clone(collected.events)
+}
+
 type traceRecording struct {
 	recorder *trace.Recorder
+
+	// engine is the other half of a run's account: what the engine recorded,
+	// in the engine's own vocabulary.
+	engine *engineRecordings
 
 	sink trace.Sink
 
@@ -69,13 +111,13 @@ func (service Service) openRecording(root string, request cli.Request) traceReco
 		service.note(traceUnavailable, err.Error())
 		return service.recordInMemory()
 	}
-	return traceRecording{recorder: trace.New(sink, service.Now), sink: sink, directory: sink.Directory()}
+	return traceRecording{recorder: trace.New(sink, service.Now), sink: sink, directory: sink.Directory(), engine: &engineRecordings{}}
 }
 
 func (service Service) recordInMemory() traceRecording {
 	ring := trace.NewMemorySink(alwaysOnTraceEvents)
 	sink := digestedSink{ring: ring}
-	return traceRecording{recorder: trace.New(sink, service.Now), sink: sink, ring: ring}
+	return traceRecording{recorder: trace.New(sink, service.Now), sink: sink, ring: ring, engine: &engineRecordings{}}
 }
 
 type digestedSink struct{ ring *trace.MemorySink }

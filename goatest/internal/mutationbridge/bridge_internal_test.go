@@ -12,6 +12,7 @@ import (
 
 	gomutants "github.com/P4suta/go-mutants"
 	"github.com/P4suta/go-mutants/goatest/internal/trace"
+	enginetrace "github.com/P4suta/go-mutants/trace"
 )
 
 func TestOpenMapsOptionsWithoutAliasingAndWrapsFailure(t *testing.T) {
@@ -225,6 +226,7 @@ type fakeMutationWorkspace struct {
 	prepareErr   error
 	closeCalls   int
 	closeErr     error
+	recording    []enginetrace.Event
 }
 
 func (workspace *fakeMutationWorkspace) Exec(_ context.Context, command gomutants.Command) (gomutants.CommandResult, error) {
@@ -250,6 +252,8 @@ func (workspace *fakeMutationWorkspace) Close() error {
 func (workspace *fakeMutationWorkspace) Swept() gomutants.SweepResult { return workspace.swept }
 
 func (workspace *fakeMutationWorkspace) Preserved() []string { return workspace.preserved }
+
+func (workspace *fakeMutationWorkspace) Recording() []enginetrace.Event { return workspace.recording }
 
 // TestExecKeepsEveryCommandInsideTheModuleItMeasures pins the one place this
 // module answers go-mutants' rule for consumers that run their own go
@@ -299,5 +303,42 @@ func TestExecObeysACallerThatNamesGOWORKItself(t *testing.T) {
 	}
 	if !slices.Equal(engine.command.Env, explicit) {
 		t.Fatalf("Env = %q, want the caller's own %q untouched", engine.command.Env, explicit)
+	}
+}
+
+// TestCloseKeepsTheEnginesRecording pins the half of a run's account that was
+// being thrown away.
+//
+// The engine records a note saying why a preparation failed. goatest's own
+// recording has a `prepare` event that says `failed` and can say no more: its
+// schema is closed and the reason has no field to sit in. So the sentence that
+// explains the run was already written down, in a recording nobody kept, and
+// the workspace that held it was closed.
+//
+// Before Close there is nothing to hand back, and after it there is no
+// workspace to ask, which is why the recording is taken in Close rather than
+// fetched later.
+func TestCloseKeepsTheEnginesRecording(t *testing.T) {
+	// A sequence number nothing else in this test uses, so that an edit through
+	// the returned slice is visible as itself rather than as a coincidence.
+	const overwrittenSeq = 99
+
+	events := []enginetrace.Event{{Seq: 1, Type: enginetrace.TypeNote}}
+	engine := &fakeMutationWorkspace{recording: events}
+	workspace := &Workspace{inner: engine}
+
+	if got := workspace.Recording(); len(got) != 0 {
+		t.Fatalf("Recording() before Close = %+v, want nothing: the run is not over", got)
+	}
+	if err := workspace.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	got := workspace.Recording()
+	if len(got) != 1 || got[0].Seq != 1 {
+		t.Fatalf("Recording() after Close = %+v, want the engine's account of the run", got)
+	}
+	got[0].Seq = overwrittenSeq
+	if again := workspace.Recording(); again[0].Seq != 1 {
+		t.Error("Recording() handed back its own slice; a caller editing it edited the record")
 	}
 }

@@ -13,6 +13,7 @@ import (
 
 	gomutants "github.com/P4suta/go-mutants"
 	"github.com/P4suta/go-mutants/goatest/internal/trace"
+	enginetrace "github.com/P4suta/go-mutants/trace"
 )
 
 type Options struct {
@@ -61,6 +62,7 @@ type mutationWorkspace interface {
 	Close() error
 	Swept() gomutants.SweepResult
 	Preserved() []string
+	Recording() []enginetrace.Event
 }
 
 type Workspace struct {
@@ -69,6 +71,18 @@ type Workspace struct {
 
 	swept     gomutants.SweepResult
 	preserved []string
+	// recording is the engine's own account of the run, taken at Close.
+	//
+	// It is kept because the two products record different things and only one
+	// of them was being kept. The engine writes a note naming why a preparation
+	// failed; goatest's own recording has a `prepare` event that says `failed`
+	// and cannot say more, because its schema is closed and the reason has no
+	// field to go in. So a run used to end with the sentence that explains it
+	// already written down, in a recording nobody read, thrown away at Close.
+	//
+	// Taken here rather than asked for later for the ordinary reason: after
+	// Close there is no workspace to ask.
+	recording []enginetrace.Event
 }
 
 var openMutationWorkspace = func(ctx context.Context, root string, options gomutants.OpenOptions) (mutationWorkspace, error) {
@@ -258,6 +272,21 @@ func (workspace *Workspace) Close() error {
 	}
 	err := workspace.inner.Close()
 	workspace.swept, workspace.preserved = workspace.inner.Swept(), workspace.inner.Preserved()
+	workspace.recording = workspace.inner.Recording()
 	workspace.inner = nil
 	return err
+}
+
+// Recording is the engine's account of what this workspace did, available after
+// [Workspace.Close] and empty before it.
+//
+// It is the engine's vocabulary and not this module's, deliberately: the two
+// trace formats reject each other by design, and a reader of one needs to know
+// which they are holding. It is written beside goatest's own rather than merged
+// into it.
+func (workspace *Workspace) Recording() []enginetrace.Event {
+	if workspace == nil {
+		return nil
+	}
+	return slices.Clone(workspace.recording)
 }

@@ -322,10 +322,10 @@ func (service Service) runAndWrite(ctx context.Context, root string, request cli
 	var ran bool
 	if err == nil {
 		ran = true
-		result, err = service.run(ctx, root, request, recording.recorder)
+		result, err = service.run(ctx, root, request, recording)
 	} else if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		ran = true
-		runResult, runErr := service.run(ctx, root, request, recording.recorder)
+		runResult, runErr := service.run(ctx, root, request, recording)
 		result = runResult
 		err = errors.Join(err, runErr)
 	}
@@ -456,13 +456,18 @@ func interruptedReport(partial report.Report, cause error) report.Report {
 	return result
 }
 
-func (service Service) run(ctx context.Context, root string, request cli.Request, recorder *trace.Recorder) (report.Report, error) {
+func (service Service) run(ctx context.Context, root string, request cli.Request, recording traceRecording) (report.Report, error) {
 	runner := service.Run
 	if runner == nil {
 		runner = assure.Run
 	}
 	options := service.assureOptions(root, request)
-	options.Trace = recorder
+	options.Trace = recording.recorder
+	// The engine's own account, which a run used to close a workspace on and
+	// lose. The two recordings are kept beside each other rather than merged:
+	// they are different formats that reject each other by design, and a reader
+	// has to know which one they are holding.
+	options.EngineRecording = recording.engine.add
 	cacheHit := false
 	var mutex sync.Mutex
 	options.Progress = func(event assure.Event) {

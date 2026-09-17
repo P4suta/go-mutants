@@ -18,6 +18,7 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 	"github.com/P4suta/go-mutants/goatest/internal/report"
 	"github.com/P4suta/go-mutants/goatest/internal/trace"
+	enginetrace "github.com/P4suta/go-mutants/trace"
 )
 
 const (
@@ -27,6 +28,19 @@ const (
 	diagnosticsPreservedFileName   = "preserved-paths.txt"
 
 	diagnosticsTraceFileName = trace.FileName
+
+	// diagnosticsEngineTraceFileName is the engine's own recording, beside
+	// goatest's rather than merged into it.
+	//
+	// Beside, because the two are different formats that reject each other's
+	// schemas by design, and a reader has to know which one they are holding.
+	// Kept at all, because only one of them was: the engine writes a note
+	// saying why a preparation failed, goatest's own `prepare` event says
+	// `failed` and has no field the reason could go in, and the workspace
+	// holding the engine's account was closed and the account dropped. A run
+	// could end with the sentence that explains it already written down and
+	// nowhere a reader would ever look.
+	diagnosticsEngineTraceFileName = "engine-" + trace.FileName
 )
 
 const diagnosticsEnvironmentNamesHeading = "environment variable names, values excluded:"
@@ -74,9 +88,14 @@ func (service Service) writeDiagnostics(root string, result report.Report, recor
 	if encodeErr != nil {
 		failures = append(failures, encodeErr)
 	}
+	engineStream, engineErr := diagnosticsEngineTrace(recording.engine.Events())
+	if engineErr != nil {
+		failures = append(failures, engineErr)
+	}
 	written := 0
 	for _, file := range []diagnosticsFile{
 		{name: diagnosticsTraceFileName, data: stream},
+		{name: diagnosticsEngineTraceFileName, data: engineStream},
 		{name: diagnosticsErrorFileName, data: diagnosticsError(result, runErr)},
 		{name: diagnosticsEnvironmentFileName, data: service.diagnosticsEnvironment(result)},
 		{name: diagnosticsPreservedFileName, data: diagnosticsPreservedPaths(recording.directory, events)},
@@ -217,4 +236,25 @@ func diagnosticsPreservedPaths(directory string, events []trace.Event) []byte {
 		text.WriteString("# this run left nothing behind\n")
 	}
 	return []byte(text.String())
+}
+
+// diagnosticsEngineTrace encodes the engine's recording the way
+// [diagnosticsTrace] encodes goatest's, and separately from it because the two
+// event types are different types with different schemas.
+func diagnosticsEngineTrace(events []enginetrace.Event) ([]byte, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
+	var stream bytes.Buffer
+	var failures []error
+	for _, event := range events {
+		encoded, err := json.Marshal(event)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("encode engine trace event %d: %w", event.Seq, err))
+			continue
+		}
+		stream.Write(encoded)
+		stream.WriteByte('\n')
+	}
+	return stream.Bytes(), errors.Join(failures...)
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/evidence"
 	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
 	"github.com/P4suta/go-mutants/goatest/internal/mutationbridge"
+	enginetrace "github.com/P4suta/go-mutants/trace"
 
 	"github.com/P4suta/go-mutants/goatest/internal/provider"
 	"github.com/P4suta/go-mutants/goatest/internal/repair"
@@ -161,6 +162,15 @@ type Options struct {
 
 	Trace *trace.Recorder
 
+	// EngineRecording receives the engine's own account of a workspace, once
+	// per workspace, as that workspace closes.
+	//
+	// It is a sink rather than a return value because a run opens a workspace
+	// per round and the last one is not the interesting one: a round that ended
+	// in a refusal is. Nil discards them, which is what every caller but the
+	// diagnostics writer wants.
+	EngineRecording func([]enginetrace.Event)
+
 	KeepTemp bool
 
 	BuildCacheProgram string
@@ -277,6 +287,13 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 	closeWorkspace := func(workspace *mutationbridge.Workspace) error {
 		err := dependencies.closeWorkspace(workspace)
 		recordTemporaryArtifacts(options, artifactMutationWorkspace, workspace.Preserved())
+		// After Close and not before: the engine's recording is complete only
+		// once the workspace it belongs to is.
+		if options.EngineRecording != nil {
+			if recording := workspace.Recording(); len(recording) != 0 {
+				options.EngineRecording(recording)
+			}
+		}
 		return err
 	}
 
