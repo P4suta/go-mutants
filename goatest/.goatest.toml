@@ -1034,3 +1034,15 @@ id = 'f11ce548af036318'
 reason = 'normalize answers a path it rejects with the empty string, which ends in no _test.go and holds no testdata/fuzz segment, so the longer route reaches the same false'
 expires = '2027-09-17T00:00:00Z'
 owner = 'goatest'
+
+[[acceptance]]
+id = '2ac97e834e88124c'
+reason = 'the selector names no test, and every caller of killerTests ranges over the slice it returns or reads its length, where nil and empty answer alike'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '9fe3871b196bac32'
+reason = 'no argument is a selector, and every caller of killerTests ranges over the slice it returns or reads its length, where nil and empty answer alike'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'

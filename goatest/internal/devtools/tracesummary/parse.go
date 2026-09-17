@@ -4,7 +4,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -21,23 +20,22 @@ import (
 
 const routePlanReused = "reused"
 
-const readBufferSize = 1 << 16
-
 const firstSequence = 1
 
 func readEvents(reader io.Reader) ([]trace.Event, error) {
-	buffered := bufio.NewReaderSize(reader, readBufferSize)
+	stream, readErr := io.ReadAll(reader)
+	if readErr != nil {
+		return nil, fmt.Errorf("read the recording: %w", readErr)
+	}
 	var events []trace.Event
 	var previousSeq int64
 	ended := false
-	for number := 1; ; number++ {
-		line, readErr := buffered.ReadBytes('\n')
-		if readErr != nil && !errors.Is(readErr, io.EOF) {
-			return nil, fmt.Errorf("line %d: %w", number, readErr)
-		}
-		line = bytes.TrimRight(line, "\r\n")
-		if len(line) == 0 && readErr != nil {
-			break
+	lines := bytes.Split(stream, []byte("\n"))
+	for index, line := range lines {
+		number := index + 1
+		line = bytes.TrimRight(line, "\r")
+		if len(line) == 0 && index == len(lines)-1 {
+			continue
 		}
 		event, err := decodeEvent(line)
 		if err != nil {
@@ -49,9 +47,6 @@ func readEvents(reader io.Reader) ([]trace.Event, error) {
 		previousSeq = event.Seq
 		ended = event.Type == trace.TypeRunEnd
 		events = append(events, event)
-		if readErr != nil {
-			break
-		}
 	}
 	if len(events) == 0 {
 		return nil, errors.New("the stream carries no events")
