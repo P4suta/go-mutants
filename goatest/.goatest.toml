@@ -253,3 +253,93 @@ id = '59e4579e2e5863dd'
 reason = 'a finding that names no mutant would be filed under the empty identity, and no mutant disposition carries that identity, so the entry is never read; the guard says the attribution is deliberate rather than accidental'
 expires = '2027-09-17T00:00:00Z'
 owner = 'goatest'
+
+[[acceptance]]
+id = '3294c0164e21fe62'
+reason = 'every field of a ledger entry is a string, an int64, or a time.Time, so encoding/json has no value in this document that can fail to marshal'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'd38d83dcbfe23543'
+reason = 'every field of a ledger entry is a string, an int64, or a time.Time, so encoding/json has no value in this document that can fail to marshal'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '39b9e7302e90310d'
+reason = 'os.CreateTemp is called in a directory the line above it has just made, so it fails only for a filesystem that has run out of room or inodes, which a test cannot bring about without becoming the machine'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'd9ca2e991f3900ab'
+reason = 'os.CreateTemp is called in a directory the line above it has just made, so it fails only for a filesystem that has run out of room or inodes, which a test cannot bring about without becoming the machine'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'f43c2c16637e3583'
+reason = 'the file being written was created moments earlier in a directory this call made, so a write or a sync fails only for a filesystem that has run out of room; every stage of writeAndSync is measured against a file that refuses it'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '41e43607bb59cdc0'
+reason = 'the file being written was created moments earlier in a directory this call made, so a write or a sync fails only for a filesystem that has run out of room; every stage of writeAndSync is measured against a file that refuses it'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'd4118b12eccb57f4'
+reason = 'os.Chmod names a file this function created and still holds, so it fails only if another process removes it inside that window'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'f9d7b48e2101af31'
+reason = 'os.Chmod names a file this function created and still holds, so it fails only if another process removes it inside that window'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '9fc1562ed7cfcb5d'
+reason = 'a sync that reports nothing and a sync that reports nothing through errors.Join are the same value, and the close that follows either way happens exactly once, so no caller can tell the two apart'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'd41fbbeffb14c077'
+reason = 'time.ParseDuration returns a zero duration with every error it reports, so the duration check beside this one already refuses everything a failed parse can produce; the error half is written out because the zero it returns is a consequence of the failure rather than a promise of the API'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'd511700119f4ac3f'
+reason = 'time.ParseDuration returns a zero duration with every error it reports, so the duration check beside this one already refuses everything a failed parse can produce; the error half is written out because the zero it returns is a consequence of the failure rather than a promise of the API'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'd1a3b9a04652df7b'
+reason = 'this branch is reached only when the configuration file does not exist, and Load answers an absent file with the defaults rather than an error, so the failure it names cannot arrive here'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'd58634752703a5cd'
+reason = 'this branch is reached only when the configuration file does not exist, and Load answers an absent file with the defaults rather than an error, so the failure it names cannot arrive here'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '785a1512ba2f345f'
+reason = 'the table being encoded holds four strings, so toml has no value in it that can fail to marshal'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'd3775f0194119f4f'
+reason = 'the table being encoded holds four strings, so toml has no value in it that can fail to marshal'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'

@@ -254,30 +254,30 @@ func Load(root string) (Config, error) {
 	if err := validateEnvironmentNames("generation", raw.Generation.Environment); err != nil {
 		return Config{}, err
 	}
+	if raw.Cache.MaxBytes < 0 {
+		return Config{}, errors.New("goatest: cache max_bytes must not be negative")
+	}
 	cacheMaxBytes := raw.Cache.MaxBytes
 	if cacheMaxBytes == 0 {
 		cacheMaxBytes = defaultCacheMaxBytes
 	}
-	if cacheMaxBytes < 0 {
-		return Config{}, errors.New("goatest: cache max_bytes must not be negative")
+	if raw.Cache.BuildMaxBytes < 0 {
+		return Config{}, errors.New("goatest: cache build_max_bytes must not be negative")
 	}
 	buildMaxBytes := raw.Cache.BuildMaxBytes
 	if buildMaxBytes == 0 {
 		buildMaxBytes = defaultBuildMaxBytes
 	}
-	if buildMaxBytes < 0 {
-		return Config{}, errors.New("goatest: cache build_max_bytes must not be negative")
-	}
 	buildDir := strings.TrimSpace(raw.Cache.BuildDir)
 	if buildDir != raw.Cache.BuildDir {
 		return Config{}, fmt.Errorf("goatest: cache build_dir %q has surrounding whitespace", raw.Cache.BuildDir)
 	}
+	if raw.Reports.Keep < 0 {
+		return Config{}, errors.New("goatest: reports keep must not be negative")
+	}
 	reportsKeep := raw.Reports.Keep
 	if reportsKeep == 0 {
 		reportsKeep = DefaultReportsKeep
-	}
-	if reportsKeep < 0 {
-		return Config{}, errors.New("goatest: reports keep must not be negative")
 	}
 	cacheTTL := defaultCacheTTL
 	if raw.Cache.TTL != "" {
