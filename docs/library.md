@@ -404,6 +404,21 @@ from where the decision was made.
 It is a function rather than a constant because it depends on the machine, and
 a constant would be the same number everywhere and right nowhere.
 
+The ceiling is also where the work stops paying. Measured on an 18-core machine
+(6 performance cores, 12 efficiency) over goatest's own suite, counting mutants
+finished per minute across a four-minute window:
+
+| Workers | Mutants per minute |
+|---|---|
+| 4 | 78 |
+| **8** | **174** |
+| 16 | 152 |
+
+Sixteen is slower than eight, and the CPU sat above 60% idle at both: a
+mutation run is bound by process starts and file system contention rather than
+by cores. Raising `Jobs` past the ceiling on a machine like that costs the
+machine its responsiveness and returns a slower run.
+
 ### `ExecRequest`, `ProbeRequest` and `ControlRequest`
 
 | Field | Default | Meaning |
