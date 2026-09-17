@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// Package stryker carries the vendored mutation-testing-report schema, and.
 package stryker
 
 import (

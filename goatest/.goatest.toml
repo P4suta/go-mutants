@@ -7,3 +7,9 @@ contract = "standard-v1"
 
 [execution]
 build_tags = []
+
+[[acceptance]]
+id = '239afd2b864d0119'
+reason = 'EWOULDBLOCK and EAGAIN are one value on every platform this file builds for, so no error can tell the two halves of the disjunction apart; it is written out because POSIX permits them to differ and a platform where they do would need both'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'

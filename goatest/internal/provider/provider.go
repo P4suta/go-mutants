@@ -84,9 +84,7 @@ func (client Client) Generate(parent context.Context, request Request) (Response
 		return Response{}, err
 	}
 	cmd := exec.Command(client.Command[0], client.Command[1:]...)
-	if client.Environment != nil {
-		cmd.Env = slices.Clone(client.Environment)
-	}
+	cmd.Env = slices.Clone(client.Environment)
 	cmd.Stdin = bytes.NewReader(append(input, '\n'))
 	stdout := &limitedBuffer{remaining: outputLimit}
 	stderr := &limitedBuffer{remaining: outputLimit}

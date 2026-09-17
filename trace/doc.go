@@ -1,5 +1,4 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// Package trace records what a go-mutants run did, as a machine-readable stream.
 package trace

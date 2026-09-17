@@ -79,3 +79,20 @@ func TestTryOnADescriptionThatAlreadyHoldsTheLockKeepsIt(t *testing.T) {
 		t.Fatalf("lock against the still-held one = (%t, %v), want it refused without an error", locked, err)
 	}
 }
+
+func TestTryReportsAFailureItCannotReadAsContention(t *testing.T) {
+	t.Parallel()
+
+	file := open(t, filepath.Join(t.TempDir(), "lock"))
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	held, err := advisorylock.Try(file)
+	if err == nil {
+		t.Fatal("Try on a closed descriptor returned no error; a question that could not be asked is not an answer")
+	}
+	if held {
+		t.Error("Try reported the lock as held after failing to ask for it")
+	}
+}

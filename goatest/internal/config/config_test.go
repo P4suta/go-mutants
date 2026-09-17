@@ -480,7 +480,7 @@ func TestAddAcceptanceRejectsEveryIncompleteFieldAndPropagatesLoadFailure(t *tes
 	}
 }
 
-func TestAddAcceptancePersistsDeterministicIDOrder(t *testing.T) {
+func TestAddAcceptancePersistsTheOrderItRecordedThemIn(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	if err := config.Init(root); err != nil {
@@ -500,7 +500,7 @@ func TestAddAcceptancePersistsDeterministicIDOrder(t *testing.T) {
 	for i, acceptance := range loaded.Acceptance {
 		got[i] = acceptance.ID
 	}
-	if strings.Join(got, ",") != "finding-a,finding-m,finding-z" {
+	if strings.Join(got, ",") != "finding-z,finding-a,finding-m" {
 		t.Fatalf("acceptance order = %v", got)
 	}
 }

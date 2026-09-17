@@ -32,3 +32,12 @@ func TestSelectDistinguishesNilAndExplicitEmptyInputs(t *testing.T) {
 		t.Fatalf("explicit empty selection = %#v", got)
 	}
 }
+
+func TestSelectSkipsAnEntryThatIsNotAnAssignment(t *testing.T) {
+	t.Parallel()
+
+	got := environment.Select([]string{"BARE", "=orphaned", "KEEP=value"}, []string{"KEEP", "BARE", ""})
+	if !slices.Equal(got, []string{"KEEP=value"}) {
+		t.Errorf("Select = %v, want only the entry that is an assignment with a name", got)
+	}
+}

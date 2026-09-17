@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -410,9 +411,41 @@ func AddAcceptance(root string, acceptance Acceptance) error {
 			return fmt.Errorf("goatest: acceptance %q already exists", acceptance.ID)
 		}
 	}
-	loaded.Acceptance = append(loaded.Acceptance, acceptance)
-	slices.SortFunc(loaded.Acceptance, func(a, b Acceptance) int { return strings.Compare(a.ID, b.ID) })
-	return save(root, loaded)
+	return appendAcceptance(root, acceptance)
+}
+
+func appendAcceptance(root string, acceptance Acceptance) error {
+	path := filepath.Join(root, FileName)
+	existing, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		loaded, loadErr := Load(root)
+		if loadErr != nil {
+			return loadErr
+		}
+		loaded.Acceptance = append(loaded.Acceptance, acceptance)
+		return save(root, loaded)
+	}
+	if err != nil {
+		return fmt.Errorf("goatest: read %s: %w", FileName, err)
+	}
+	block, err := toml.Marshal(struct {
+		Acceptance []rawAcceptance `toml:"acceptance"`
+	}{Acceptance: []rawAcceptance{{
+		ID: acceptance.ID, Reason: acceptance.Reason,
+		Expires: acceptance.Expires.UTC().Format(time.RFC3339),
+		Owner:   acceptance.Owner, Ticket: acceptance.Ticket,
+	}}})
+	if err != nil {
+		return fmt.Errorf("goatest: encode acceptance: %w", err)
+	}
+	var out bytes.Buffer
+	out.Write(existing)
+	if len(existing) != 0 && !bytes.HasSuffix(existing, []byte("\n")) {
+		out.WriteByte('\n')
+	}
+	out.WriteByte('\n')
+	out.Write(block)
+	return os.WriteFile(path, out.Bytes(), filemode.ReadableFile)
 }
 
 func save(root string, input Config) error {

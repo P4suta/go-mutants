@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// Package tempowner gives every temporary directory go-mutants creates an owner.
 package tempowner
 
 import (

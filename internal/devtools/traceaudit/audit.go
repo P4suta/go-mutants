@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// Package traceaudit re-derives a run's conclusions from the recording beside it.
 package traceaudit
 
 import (

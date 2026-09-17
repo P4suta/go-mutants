@@ -16,6 +16,8 @@ const (
 	MemoryUnenforced        MemoryEnforcement = "none"
 )
 
+func PeakMemoryReachesEveryRun() bool { return accountedPeakBelongsToTheChild }
+
 func MemoryBound() MemoryEnforcement {
 	switch {
 	case kernelBoundsMemory:
