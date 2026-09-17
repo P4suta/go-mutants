@@ -296,7 +296,6 @@ func reportCoverageMode(mode CoverageMode) report.CoverageMode {
 	case CoverageTest:
 		return report.CoverageTest
 	case CoverageOff:
-		return report.CoverageOff
 	}
 	return report.CoverageOff
 }

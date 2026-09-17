@@ -44,7 +44,6 @@ func (k Keep) String() string {
 	case KeepAlways:
 		return "always"
 	case KeepNever:
-		return "never"
 	}
 	return "never"
 }
@@ -93,7 +92,6 @@ func Keeping(t testing.TB) bool {
 	case KeepOnFailure:
 		return t.Failed()
 	case KeepNever:
-		return false
 	}
 	return false
 }

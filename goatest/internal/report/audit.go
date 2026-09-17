@@ -349,7 +349,6 @@ func validateReuse(disposition MutantDisposition) error {
 	case MutantKilled, MutantSurvived, MutantInconclusive, MutantAccepted:
 		return nil
 	case MutantCompileRejected, MutantOutOfScope, MutantUnknown:
-		return fmt.Errorf("goatest: mutant %s reused a %q disposition, which no run executes", disposition.ID, disposition.Status)
 	}
 	return fmt.Errorf("goatest: mutant %s reused a %q disposition, which no run executes", disposition.ID, disposition.Status)
 }

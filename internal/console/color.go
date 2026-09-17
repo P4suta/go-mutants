@@ -51,7 +51,6 @@ func outcomeStyle(o mutation.Outcome) lipgloss.Style {
 	case mutation.OutcomeSurvived:
 		return styleFailed
 	case mutation.OutcomeErrored, mutation.OutcomeInconclusive, mutation.OutcomeNotRun:
-		return styleWarning
 	}
 	return styleWarning
 }

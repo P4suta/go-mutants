@@ -30,7 +30,6 @@ func (source Source) String() string {
 	case SourceNative:
 		return "native"
 	case SourceNone:
-		return "none"
 	}
 	return "none"
 }
