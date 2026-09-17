@@ -32,6 +32,7 @@ whose Done when reads "it works well" is a row that cannot be finished.
 | # | What | Done when |
 | ---: | --- | --- |
 | 3 | Probing at test granularity rather than binary granularity. A probe pass records, per *binary*, whether it could rule a mutant out; a pass that recorded it per test would narrow a mutant to the tests that could observe it rather than to the binaries | A second soundness argument is written as an ADR and survives review. The current design rejects this on purpose, and the argument to beat is stated in [ADR 0011](adr/0011-an-unobservable-mutant-need-not-be-executed.md): a test profiled on its own is a different execution from the same test inside its set, so "this test could not observe it" is a weaker licence than "this binary could not" |
+| 4 | A public way to turn a diff into a [`Selection`](library.md). The rule that intersects ranges with mutant spans is shared with `run --changed` rather than reimplemented, and the ranges themselves are not: `internal/gitdiff` resolves them and is internal, so a consumer that wants what `--changed` does has to resolve a diff itself. PR #10 proposed `Changed`/`ChangedRef` on the options and was closed because the rest of it had landed in better form; this is the part that had not | A consumer can narrow a session to a diff without shelling out to `git` or to the CLI, and the engine still does not resolve a revision on a consumer's behalf without being asked — the reason the options-flag shape was not simply taken |
 
 ## Reserved and unemitted
 
