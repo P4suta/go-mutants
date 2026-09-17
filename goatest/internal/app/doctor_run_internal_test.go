@@ -6,6 +6,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,21 +21,18 @@ import (
 
 const (
 	doctorHelperVariable = "GOATEST_DOCTOR_HELPER"
-	doctorHelperOutput   = "GOATEST_DOCTOR_HELPER_OUTPUT"
 	doctorHelperCode     = "GOATEST_DOCTOR_HELPER_CODE"
 	doctorHelperMisuse   = 97
 )
 
 func TestDoctorHelperProcess(t *testing.T) {
-	script, selected := os.LookupEnv(doctorHelperVariable)
-	if !selected {
-		if _, stray := os.LookupEnv(doctorHelperOutput); stray {
+	if _, selected := os.LookupEnv(doctorHelperVariable); !selected {
+		if _, stray := os.LookupEnv(doctorHelperCode); stray {
 			t.Fatalf("%s is set without %s, so this process was selected by half a contract",
-				doctorHelperOutput, doctorHelperVariable)
+				doctorHelperCode, doctorHelperVariable)
 		}
 		return
 	}
-	_, _ = fmt.Fprint(os.Stdout, script)
 	code, err := strconv.Atoi(os.Getenv(doctorHelperCode))
 	if err != nil {
 		code = doctorHelperMisuse
@@ -59,11 +57,17 @@ func scriptedDoctor(answer func(arguments []string) doctorAnswer) startDoctorPro
 		if reply.start != nil {
 			return nil, reply.start
 		}
+		if writer, ok := command.Stdout.(io.Writer); ok && reply.output != "" {
+			if _, err := io.WriteString(writer, reply.output); err != nil {
+				return nil, err
+			}
+		}
 		command.Path = os.Args[0]
 		command.Args = []string{os.Args[0], "-test.run=^TestDoctorHelperProcess$"}
 		command.Env = append(slices.Clone(command.Env),
-			doctorHelperVariable+"="+reply.output,
+			doctorHelperVariable+"=1",
 			doctorHelperCode+"="+strconv.Itoa(reply.code))
+		command.Stdout, command.Stderr = io.Discard, io.Discard
 		if err := command.Start(); err != nil {
 			return nil, err
 		}

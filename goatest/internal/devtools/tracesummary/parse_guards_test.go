@@ -335,3 +335,73 @@ func TestReadEventsAcceptsARouteThatSaysItsReuseInBothFields(t *testing.T) {
 		}
 	}
 }
+
+func TestReadEventsRefusesEveryShapeARouteCanBeWrong(t *testing.T) {
+	t.Parallel()
+	route := func(payload string) string {
+		return `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":` + payload + `}`
+	}
+	sound := `"mutant_id":"m-1","rule":"eq-to-neq","path":"a.go","line":1,"column":1,` +
+		`"granularity":"block","reason":"coverage-reaching","plan":["individual:TestOne"],` +
+		`"reaching_targets":["TestOne"]`
+	for _, test := range []struct {
+		name string
+		line string
+		want string
+	}{
+		{
+			name: "a route that counted a negative number of file candidates",
+			line: route(`{` + sound + `,"file_candidates":-1}`),
+			want: "route.file_candidates is -1",
+		},
+		{
+			name: "a route on a line before the first",
+			line: route(`{` + sound + `,"line":-1}`), want: "route.line is -1",
+		},
+		{
+			name: "a route in a column before the first",
+			line: route(`{` + sound + `,"column":-1}`), want: "route.column is -1",
+		},
+		{
+			name: "suite controls that name different packages",
+			line: route(`{` + sound + `,"suite_coverage":"package-suite-coverage:example.com/app",` +
+				`"suite_reached":true,"suite_probe":"package-suite:example.com/lib","probed":true}`),
+			want: "suite controls name different packages",
+		},
+		{
+			name: "a suite probe with no package-suite identity",
+			line: route(`{` + sound + `,"suite_probe":"TestOne","probed":true}`),
+			want: "want a package-suite identity and probed=true",
+		},
+		{
+			name: "a suite probe that names no package after the prefix",
+			line: route(`{` + sound + `,"suite_probe":"package-suite:","probed":true}`),
+			want: "want a package-suite identity and probed=true",
+		},
+		{
+			name: "a suite probe nothing probed",
+			line: route(`{` + sound + `,"suite_probe":"package-suite:example.com/app","probed":false}`),
+			want: "want a package-suite identity and probed=true",
+		},
+		{
+			name: "a route that says it was reused without the plan that means it",
+			line: route(`{` + sound + `,"reused":true}`),
+			want: "nothing runs for a reused mutant",
+		},
+		{
+			name: "a route planned as reused without saying so",
+			line: route(`{"mutant_id":"m-1","rule":"eq-to-neq","path":"a.go","line":1,"column":1,` +
+				`"granularity":"block","reason":"coverage-reaching","plan":["reused"],` +
+				`"reaching_targets":["TestOne"]}`),
+			want: "without saying it was reused",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := readEvents(strings.NewReader(stream(runStart, test.line)))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want one containing %q", err, test.want)
+			}
+		})
+	}
+}

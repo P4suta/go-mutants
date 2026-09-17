@@ -395,3 +395,113 @@ func TestACountThatNamesOneNumberIsHeldToItsEquations(t *testing.T) {
 		})
 	}
 }
+
+func TestEveryVerdictNamesTheScopeItIsReservedFor(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		verdict  report.Verdict
+		runKind  report.RunKind
+		resolved string
+		want     string
+	}{
+		{
+			name: "an assurance of the whole project", verdict: report.VerdictAssured,
+			runKind: report.RunFull, resolved: string(report.RunFull),
+		},
+		{
+			name:    "an assurance of the whole project resolved to a package",
+			verdict: report.VerdictAssured, runKind: report.RunFull, resolved: string(report.RunPackage),
+			want: "reserved for resolved full scope",
+		},
+		{
+			name: "a changeset assurance", verdict: report.VerdictChangeAssured,
+			runKind: report.RunChangeset, resolved: string(report.RunChangeset),
+		},
+		{
+			name: "a changeset assurance of another run kind", verdict: report.VerdictChangeAssured,
+			runKind: report.RunFull, resolved: string(report.RunChangeset),
+			want: "requires a resolved changeset run",
+		},
+		{
+			name: "a changeset assurance resolved elsewhere", verdict: report.VerdictChangeAssured,
+			runKind: report.RunChangeset, resolved: string(report.RunFull),
+			want: "requires a resolved changeset run",
+		},
+		{
+			name: "a package assurance", verdict: report.VerdictScopeAssured,
+			runKind: report.RunPackage, resolved: string(report.RunPackage),
+		},
+		{
+			name: "a package assurance of another run kind", verdict: report.VerdictScopeAssured,
+			runKind: report.RunFull, resolved: string(report.RunPackage),
+			want: "requires a resolved package run",
+		},
+		{
+			name: "a package assurance resolved elsewhere", verdict: report.VerdictScopeAssured,
+			runKind: report.RunPackage, resolved: string(report.RunFull),
+			want: "requires a resolved package run",
+		},
+		{
+			name: "a reproduction of a replay", verdict: report.VerdictReproduced,
+			runKind: report.RunReplay, resolved: string(report.RunReplay),
+		},
+		{
+			name: "a resolution of a replay", verdict: report.VerdictResolved,
+			runKind: report.RunReplay, resolved: string(report.RunReplay),
+		},
+		{
+			name: "a reproduction of something that is not a replay", verdict: report.VerdictReproduced,
+			runKind: report.RunFull, resolved: string(report.RunFull),
+			want: "replay outcomes require a replay run",
+		},
+		{
+			name: "a resolution of something that is not a replay", verdict: report.VerdictResolved,
+			runKind: report.RunPackage, resolved: string(report.RunPackage),
+			want: "replay outcomes require a replay run",
+		},
+		{
+			name: "a completed operation", verdict: report.VerdictCompleted,
+			runKind: report.RunOperation, resolved: string(report.RunOperation),
+		},
+		{
+			name: "a completed assurance", verdict: report.VerdictCompleted,
+			runKind: report.RunFull, resolved: string(report.RunFull),
+			want: "reserved for non-assurance operations",
+		},
+		{
+			name: "a defect anywhere", verdict: report.VerdictDefect,
+			runKind: report.RunFull, resolved: string(report.RunPackage),
+		},
+		{
+			name: "an error anywhere", verdict: report.VerdictError,
+			runKind: report.RunPackage, resolved: string(report.RunFull),
+		},
+		{
+			name: "insufficient evidence anywhere", verdict: report.VerdictInsufficient,
+			runKind: report.RunReplay, resolved: string(report.RunFull),
+		},
+		{
+			name: "a report that names no run kind at all", verdict: report.VerdictAssured,
+			resolved: string(report.RunPackage),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			input := auditedFixture()
+			input.Verdict = test.verdict
+			input.RunKind = test.runKind
+			input.Scope.Resolved.Kind = test.resolved
+			if test.verdict == report.VerdictError {
+				input.Accounting.Mutants.Unknown = 0
+			}
+			err := report.Validate(input)
+			switch {
+			case test.want == "" && err != nil:
+				t.Fatalf("Validate refused %s: %v", test.name, err)
+			case test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)):
+				t.Fatalf("Validate reported %v, want it to say %q", err, test.want)
+			}
+		})
+	}
+}
