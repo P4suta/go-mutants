@@ -78,6 +78,7 @@ func (r *guardRenderer) compose(node *siteNode, rendered map[*siteNode][]byte) (
 			Span:        relativeTo(child.Span, node.Span.StartByte),
 			Original:    r.original(child.Span),
 			Replacement: rendered[child],
+			Origin:      "the rewrite site at " + child.Span.String(),
 		})
 	}
 	splices = append(splices, s.undeclare...)
@@ -360,6 +361,7 @@ func (r *guardRenderer) mutated(s site, m mutation.Mutant) ([]byte, error) {
 		Span:        relativeTo(m.Span, s.span.StartByte),
 		Original:    []byte(m.Original),
 		Replacement: []byte(m.Replacement),
+		Origin:      "the mutant " + m.DisplayID,
 	})
 	splices = append(splices, s.undeclare...)
 	// Every loop this copy still holds is counted in it too. A mutant is one
@@ -425,6 +427,7 @@ func (r *guardRenderer) loopsWithin(span mutation.Span, children []*siteNode) []
 			Span:        relativeTo(loop.Span, span.StartByte),
 			Original:    loop.Original,
 			Replacement: loop.Replacement,
+			Origin:      loop.Origin,
 		})
 	}
 	return out

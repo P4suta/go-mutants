@@ -190,12 +190,15 @@ func loopSplices(sites []loopSite, alias string, base uint32) []Splice {
 	for i, site := range sites {
 		index := base + uint32(i)
 		n, k := counterName(alias, index), ceilingName(alias, index)
-		out = append(out,
-			insertSplice(site.declareAt, fmt.Sprintf(
-				"%s, %s := uint64(0), %s.%s[%d]; ", n, k, alias, runtimeLimit, index)),
-			insertSplice(site.testAt, fmt.Sprintf(
-				" if %s++; %s > %s { %s = %s.%s(%d, %s) };", n, n, k, k, alias, runtimeOver, index, n)),
-		)
+		declare := insertSplice(site.declareAt, fmt.Sprintf(
+			"%s, %s := uint64(0), %s.%s[%d]; ", n, k, alias, runtimeLimit, index))
+		test := insertSplice(site.testAt, fmt.Sprintf(
+			" if %s++; %s > %s { %s = %s.%s(%d, %s) };", n, n, k, k, alias, runtimeOver, index, n))
+		// Both halves say which loop they are for, because an overlap reported
+		// by index alone is what sent somebody reading bytes in a kept snapshot.
+		declare.Origin = fmt.Sprintf("the ceiling for the loop at %s", site.Position)
+		test.Origin = declare.Origin
+		out = append(out, declare, test)
 	}
 	return out
 }

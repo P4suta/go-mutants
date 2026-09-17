@@ -73,3 +73,4 @@ keeps the number it was accepted under in its own Status line.
 | [0034](../../goatest/docs/adr/0034-what-a-ledger-cannot-check.md) | 0021 — What a ledger cannot check |
 | [0035](0035-one-repository-two-modules.md) | The engine and the runner live in one repository as two modules joined by `go.work`, so that one proof is one pull request rather than a sequence of two with a version pin between them |
 | [0036](0036-the-runner-reaches-the-engine-through-its-public-api.md) | The runner's production code imports the engine's published API and never its `internal/`, which Go's path-prefix rule permits and a gate refuses |
+| [0037](0037-a-value-carries-its-meaning-in-its-type.md) | A value's meaning belongs in its type; where Go cannot express it a check enforces it, and where a check cannot decide it a reason is required beside the code |

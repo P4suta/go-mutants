@@ -30,6 +30,22 @@ type Splice struct {
 	Original []byte
 	// Replacement is written in their place. Empty deletes the span.
 	Replacement []byte
+	// Origin names what produced this splice, and is for diagnostics alone: it
+	// is not part of the edit and two splices differing only here are the same
+	// edit twice.
+	//
+	// It exists because of what an overlap used to be able to say. Apply knows
+	// splices by their position in a slice, so a real conflict reported
+	// "splice 71 at [4942,4942) overlaps splice 6 at [4232,5675)" -- true,
+	// unactionable, and in a file it could not name either. The two producers
+	// were a loop ceiling and a rewrite site, which is the whole of the answer,
+	// and reaching it meant keeping the temporary tree and reading bytes by
+	// hand. A splice that says where it came from turns that into a sentence.
+	//
+	// Empty is allowed and reads as "unnamed" rather than as a failure: Apply
+	// is the mechanism for every edit this package makes, including the small
+	// internal ones where a name would be noise.
+	Origin string
 }
 
 // Apply performs every splice in one left-to-right pass and reports how
@@ -144,15 +160,16 @@ func validateSplices(src []byte, splices []Splice) ([]int, error) {
 			prev := splices[order[k-1]].Span
 			if cur == prev {
 				return nil, &Error{
-					Code:    CodeSpliceOverlap,
-					Message: fmt.Sprintf("splices %d and %d both rewrite %s", order[k-1], i, cur),
+					Code: CodeSpliceOverlap,
+					Message: fmt.Sprintf("%s and %s both rewrite %s",
+						spliceName(splices, order[k-1]), spliceName(splices, i), cur),
 				}
 			}
 			if cur.StartByte < reach {
 				return nil, &Error{
 					Code: CodeSpliceOverlap,
-					Message: fmt.Sprintf("splice %d at %s overlaps splice %d at %s",
-						i, cur, reachIdx, splices[reachIdx].Span),
+					Message: fmt.Sprintf("%s at %s overlaps %s at %s",
+						spliceName(splices, i), cur, spliceName(splices, reachIdx), splices[reachIdx].Span),
 				}
 			}
 		}
@@ -357,4 +374,17 @@ func LinePreserving(splices []Splice) bool {
 		}
 	}
 	return true
+}
+
+// spliceName is how a diagnostic refers to one splice: its origin when it has
+// one, and its index when it does not.
+//
+// The index stays in either case. It is what a reader needs to find the splice
+// in a dump, and an origin is a description rather than an identity -- two
+// loops in one file have the same kind of origin and different indices.
+func spliceName(splices []Splice, i int) string {
+	if splices[i].Origin == "" {
+		return fmt.Sprintf("splice %d", i)
+	}
+	return fmt.Sprintf("splice %d (%s)", i, splices[i].Origin)
 }

@@ -916,3 +916,66 @@ func TestApplyInvariants(t *testing.T) {
 		}
 	})
 }
+
+// TestAnOverlapNamesBothProducers pins the sentence a conflict is allowed to
+// be, and it is here because of how long the alternative took.
+//
+// A real overlap once reported "splice 71 at [4942,4942) overlaps splice 6 at
+// [4232,5675)". Every word of it was true and none of it was actionable: Apply
+// knows splices by their position in a slice, so the two indices named nothing
+// a reader could look at, and the message could not say which file it was even
+// in. Finding out which two producers had collided meant keeping the run's
+// temporary tree and reading bytes out of it by hand.
+//
+// The index stays, because it is what finds the splice in a dump. What is added
+// is who made it.
+func TestAnOverlapNamesBothProducers(t *testing.T) {
+	t.Parallel()
+
+	src := []byte("package sample\n")
+	_, _, err := instrument.Apply(src, []instrument.Splice{
+		{
+			Span:        mutation.Span{StartByte: 0, EndByte: 7},
+			Original:    src[0:7],
+			Replacement: []byte("package"),
+			Origin:      "the rewrite site at [0,7)",
+		},
+		{
+			Span:        mutation.Span{StartByte: 3, EndByte: 3},
+			Replacement: []byte("x"),
+			Origin:      "the ceiling for the loop at sample.go:9",
+		},
+	})
+	if err == nil {
+		t.Fatal("Apply accepted an insertion inside a replacement, want a refusal")
+	}
+	message := err.Error()
+	for _, want := range []string{
+		"the ceiling for the loop at sample.go:9",
+		"the rewrite site at [0,7)",
+	} {
+		if !strings.Contains(message, want) {
+			t.Errorf("the overlap says %q, which does not name %q", message, want)
+		}
+	}
+}
+
+// TestAnUnnamedSpliceIsStillReportedByIndex keeps the other half true: Apply is
+// the mechanism for every edit this package makes, including the internal ones
+// where a name would be noise, and an overlap between two of those has to stay
+// reportable rather than becoming a sentence with a hole in it.
+func TestAnUnnamedSpliceIsStillReportedByIndex(t *testing.T) {
+	t.Parallel()
+
+	src := []byte("package sample\n")
+	_, _, err := instrument.Apply(src, []instrument.Splice{
+		{Span: mutation.Span{StartByte: 0, EndByte: 7}, Original: src[0:7], Replacement: []byte("package")},
+		{Span: mutation.Span{StartByte: 3, EndByte: 3}, Replacement: []byte("x")},
+	})
+	if err == nil {
+		t.Fatal("Apply accepted an insertion inside a replacement, want a refusal")
+	}
+	if message := err.Error(); !strings.Contains(message, "splice 1") || !strings.Contains(message, "splice 0") {
+		t.Errorf("the overlap says %q, which names neither splice by index", message)
+	}
+}
