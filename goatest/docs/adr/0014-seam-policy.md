@@ -12,6 +12,10 @@ implemented by `internal/evidence/hooks.go`, `internal/cache/hooks.go`,
 `trace.Filesystem`, `app.Service.DiagnosticsFilesystem`, and
 `assure.runDependencies`.
 
+Accepted as goatest ADR 0001 and renumbered 0014 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 goatest tests the parts of itself that touch the filesystem, the process table,
@@ -85,7 +89,7 @@ Behaviour a test replaces travels as an argument. Concretely:
    operations one call performs. A collaborator with state or several related
    methods stays an interface: `assure.CommandWorkspace` and
    `assure.MutationSession` are answered by `internal/testkit`, and
-   [ADR 0003](0003-no-replay-engine.md) rests on their staying that way.
+   [ADR 0003](0016-no-replay-engine.md) rests on their staying that way.
    `runDependencies` is this same decision at the altitude of a whole run — a
    table of the run's collaborators, passed to `runWithDependencies` rather
    than read from package scope. Hooks, dependency table, and interface differ

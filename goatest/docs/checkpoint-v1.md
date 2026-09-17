@@ -25,7 +25,7 @@ but are independent from, the completed cached `report.json`. Base writes use a
 synced temporary file and atomic rename; journal appends are synced individually.
 Cache TTL and capacity GC remove the whole digest directory, so neither form of
 checkpoint state can outlive its cache policy. The crash protocol and its
-rationale are [ADR 0011](adr/0011-append-only-checkpoint-journal.md).
+rationale are [ADR 0024](adr/0024-append-only-checkpoint-journal.md).
 
 Verification holds an OS advisory lock on `.goatest/cache/.lock` from before
 cache/checkpoint access through durable report persistence and checkpoint
@@ -74,7 +74,7 @@ set lives only in `routing`.
 `instrumented` is optional only on an incomplete baseline, where at most one
 completed target per package owns the recovery anchor. Missing instrumentation
 cannot establish that an uncovered position was measurable. A present empty
-coverage object is an exact empty measurement. [ADR 0013](adr/0013-preserve-block-routing-across-resume.md)
+coverage object is an exact empty measurement. [ADR 0026](adr/0026-preserve-block-routing-across-resume.md)
 records the decision.
 
 At baseline completion the checkpoint also stores the deduplicated global
@@ -99,7 +99,7 @@ conservative and never become negative facts.
 The fresh attempt emits `probe-exec` records. A restored attempt emits the
 `resume-probe` progress note but no pretend execution record, so trace command
 counts remain physical counts. The decision and its proof are
-[ADR 0014](adr/0014-resume-complete-probe-phase.md).
+[ADR 0027](adr/0027-resume-complete-probe-phase.md).
 
 Repository-read observation is different because a resumed mutation verdict
 must retain the input boundary established by its baseline. A saved target
@@ -135,7 +135,7 @@ publication sort those sets, while the report is reconstructed in discovery
 order. The completed bytes and selected infrastructure error are consequently
 independent of scheduler order, and interruption can expose only complete
 journal records, never a partially decoded coverage profile or repository
-observation. See [ADR 0016](adr/0016-publish-every-baseline-control.md).
+observation. See [ADR 0029](adr/0029-publish-every-baseline-control.md).
 
 A mutant is terminal the moment nothing more can be learned about it, not when
 the phase around it ends. A mutation every reaching test passed is saved as a

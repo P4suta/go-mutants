@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pelletier/go-toml/v2"
+
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
@@ -39,23 +41,53 @@ func TestEveryWholeTreePatternNamesBothModules(t *testing.T) {
 	t.Parallel()
 
 	root := testkit.Root(t)
-	text := readFile(t, root+"/mise.toml")
 	var offenders []string
-	for _, line := range strings.Split(text, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "#") || !strings.Contains(trimmed, "./...") {
+	for name, task := range tasksOf(t, root) {
+		// A task with `dir` is already inside one module, and `./...` there
+		// means that module -- which is what the runner's own audit tasks mean
+		// and what they have to mean, since the runner refuses a workspace. The
+		// rule is about a command run at the root, where `./...` reads as the
+		// whole repository and is not.
+		if task.Dir != "" {
 			continue
 		}
-		if strings.Contains(trimmed, "./"+secondModule+"/...") {
-			continue
+		for _, step := range taskSteps(task.Run) {
+			if !strings.Contains(step, "./...") || strings.Contains(step, "./"+secondModule+"/...") {
+				continue
+			}
+			offenders = append(offenders, name+": "+step)
 		}
-		offenders = append(offenders, trimmed)
 	}
 	if len(offenders) != 0 {
 		t.Errorf("%d command(s) say ./... and mean one module;\n\t%s\n"+
 			"\tadd ./%s/... on the same line -- a nested module is skipped in silence",
 			len(offenders), strings.Join(offenders, "\n\t"), secondModule)
 	}
+}
+
+// miseTask is one task's shape, as much of it as the gates here read.
+type miseTask struct {
+	// Dir is the directory the task runs in, empty for the repository root.
+	Dir string `toml:"dir"`
+	// Run is a string for a one-step task and a list for the rest.
+	Run any `toml:"run"`
+	// RunWindows is the second list a task may carry.
+	RunWindows any `toml:"run_windows"`
+}
+
+// tasksOf decodes every task mise.toml defines.
+func tasksOf(t testing.TB, root string) map[string]miseTask {
+	t.Helper()
+	var file struct {
+		Tasks map[string]miseTask `toml:"tasks"`
+	}
+	if err := toml.Unmarshal([]byte(readFile(t, root+"/mise.toml")), &file); err != nil {
+		t.Fatalf("decoding mise.toml: %v", err)
+	}
+	if len(file.Tasks) == 0 {
+		t.Fatal("mise.toml defines no task, and the reader of it sees many")
+	}
+	return file.Tasks
 }
 
 // TestTheWholeTreePatternReallyStopsAtTheNestedModule is the measurement the

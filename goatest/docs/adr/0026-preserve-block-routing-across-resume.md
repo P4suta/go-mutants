@@ -9,6 +9,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Accepted, 2026-09-05. Implemented by the baseline checkpoint conversion.
 
+Accepted as goatest ADR 0013 and renumbered 0026 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 A baseline profile establishes two different facts for a target: the files it
@@ -50,7 +54,7 @@ planner reduces commands from 82,353 to 78,208 when those blocks are restored.
    command. An unfinished checkpoint reruns only missing controls.
 6. Probe infection facts remain a separate phase-level fact. Their complete,
    catalog-bound checkpoint and fail-closed restoration are specified by
-   [ADR 0014](0014-resume-complete-probe-phase.md); this decision carries only
+   [ADR 0014](0027-resume-complete-probe-phase.md); this decision carries only
    baseline facts.
 
 ## Soundness

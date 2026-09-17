@@ -17,6 +17,10 @@ cacheprog` subcommand in `cmd/goatest`, the run wiring and the persist rule in
 in `internal/config`, and the build-cache reporting and collection in `goatest
 cache status|gc`.
 
+Accepted as goatest ADR 0005 and renumbered 0018 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 A verification of this repository leaves gigabytes behind. The measured figure
@@ -34,7 +38,7 @@ the work that *would* be hit again — the standard library, the dependencies, t
 project's own packages — is evicted by that garbage, so a run recompiles what
 the machine already compiled an hour ago. The first is a housekeeping problem;
 the second is a speed problem, and speed is a product property here (see
-[0004](0004-proof-layers-not-budgets.md): the answer to a slow run is never a
+[0004](0017-proof-layers-not-budgets.md): the answer to a slow run is never a
 smaller run).
 
 The go command has exactly the hook this needs. `GOCACHEPROG` names a program it
@@ -67,7 +71,7 @@ toolchain makes by TTL.
    layer; mutation preparation's instrumented test run and candidate validation
    use continuously bounded external scratch; baseline, race, probe, and
    prepared mutant executions use the gated native projection specified by [ADR
-   0017](0017-project-controls-use-a-native-cache-projection.md). This is the
+   0017](0030-project-controls-use-a-native-cache-projection.md). This is the
    load-bearing half. A current baseline target begins with the compiled test
    binary itself; older versions wrapped it in `go tool test2json`, whose
    argument list began with the go binary exactly as a compile does. Both shapes
@@ -208,5 +212,5 @@ toolchain makes by TTL.
   reported as a `build-cache-summary` progress note, and what its final base
   collection removed as `build-cache-collected`. A reader who sees goatest go
   faster can see how much of it was the cache, which is the same rule
-  [0004](0004-proof-layers-not-budgets.md) asks of a proof layer: the answer is
+  [0004](0017-proof-layers-not-budgets.md) asks of a proof layer: the answer is
   in the recording, never in a configuration file.

@@ -10,6 +10,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 Accepted, 2026-09-05. Implemented by `internal/cache` and the optional journal
 interface consumed by the assurance coordinator.
 
+Accepted as goatest ADR 0011 and renumbered 0024 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 An interrupted run must durably publish every completely classified baseline

@@ -39,7 +39,7 @@ evidence, coverage, checkpoints, and errors in target or import-path order.
 Thus process time overlaps without making report bytes or error selection
 depend on scheduler completion order. An exclusive configured resource reduces
 the shared limit to one. The decision and its frozen-workspace boundary are in
-[ADR 0009](adr/0009-parallel-measurement-serial-commit.md).
+[ADR 0022](adr/0022-parallel-measurement-serial-commit.md).
 
 Mutation routing reads the baseline coverage at block granularity: a mutant is
 run by the targets whose executed blocks contain its start position, cheapest
@@ -57,7 +57,7 @@ position is instrumented and not covered, the original suite did not reach it
 and activating the mutation cannot change that execution. Unknown positions,
 coverage gaps, failed controls, and missing profiles narrow nothing. This
 operator-independent layer, its positive-counterexample rule, and its
-independent audit are [ADR 0010](adr/0010-whole-suite-reach-before-fallback.md).
+independent audit are [ADR 0023](adr/0023-whole-suite-reach-before-fallback.md).
 
 Between preparing the catalog and executing it, a `probe` phase measures
 infection. go-mutants builds a second instrumented tree — the program the user
@@ -100,7 +100,7 @@ kill. Compilation is outside the derived budget. Replay takes the same control
 through the same prepared session. With no positive control, no mutant starts
 for that group. A mutant timeout answers only its group and starts no
 recalibration, split, or retry. The design is recorded in [ADR
-0018](adr/0018-confirm-comparative-watchdogs.md).
+0018](adr/0031-confirm-comparative-watchdogs.md).
 
 Within a reaching route, every target with the same package and environment
 shares one exact selector. There are no cost, duration, target-count, or
@@ -114,7 +114,7 @@ every group to pass. Execution, API, and protocol errors and context
 cancellation abort the run. The operating system may reject an exceptionally
 large selector, which is an explicit infrastructure error rather than a reason
 to guess a platform-dependent argv boundary. This is
-[ADR 0012](adr/0012-aggregate-proof-before-timeout.md).
+[ADR 0025](adr/0025-aggregate-proof-before-timeout.md).
 
 Across runs, the mutation phase keeps a store of what it established about each
 mutant, `.goatest/cache/mutation-evidence-v1.json`, read once before the phase
@@ -152,7 +152,7 @@ a record about a mutant the catalogue no longer names is pruned
 when the store is written back. The report marks each reused disposition with
 its provenance and the trace records the reuse as a route with no execution
 beside it. The rule is in [the assurance contract](assurance-contract.md) and
-the reasoning in [ADR 0007](adr/0007-survived-evidence-is-universal.md).
+the reasoning in [ADR 0020](adr/0020-survived-evidence-is-universal.md).
 
 Changeset routing reads two things about each top-level target: the files its
 baseline run covered, and the import closure its test binary links. That
@@ -168,7 +168,7 @@ production-file change stays exact. Downstream packages selected to run tests
 do not become mutation candidates merely because they execute. An unscoped run
 retains repository-wide discovery. Workspace inspection builds the selected
 model from one exact `go list -json` invocation. See
-[ADR 0020](adr/0020-bootstrap-cold-preparation-with-verified-local-work.md).
+[ADR 0033](adr/0033-bootstrap-cold-preparation-with-verified-local-work.md).
 
 Every go command a run starts uses cache storage goatest owns. The durable form
 is served through `GOCACHEPROG` and the hidden `goatest cacheprog` subcommand,
@@ -213,10 +213,10 @@ barrier stops new native commands, drains the finite active batch, and collects
 or refreshes only at zero active; projection or collection failure sends every
 later command to external scratch and cannot change a verdict. The rules are
 pinned by tests that name every command goatest issues. See
-[ADR 0015](adr/0015-execute-framed-baselines-directly.md) and
-[ADR 0017](adr/0017-project-controls-use-a-native-cache-projection.md), with
+[ADR 0028](adr/0028-execute-framed-baselines-directly.md) and
+[ADR 0030](adr/0030-project-controls-use-a-native-cache-projection.md), with
 the cold bootstrap in
-[ADR 0020](adr/0020-bootstrap-cold-preparation-with-verified-local-work.md).
+[ADR 0033](adr/0033-bootstrap-cold-preparation-with-verified-local-work.md).
 
 All three layers are bounded, and nobody has to remember to bound them. The run
 collects the base layer when it ends and the served processes keep the scratch
@@ -228,7 +228,7 @@ a cached file after the response that named it. goatest never adopts a directory
 it did not make, so a `build_dir` pointing at anything that already holds other
 files is refused rather than collected. The native projection is collected at
 zero-active-command boundaries and removed with the run. See
-[ADR 0005](adr/0005-build-cache-goatest-owns.md) and
+[ADR 0018](adr/0018-build-cache-goatest-owns.md) and
 [configuration](configuration.md) for the bound and the location.
 
 Every byte a run writes outside the repository has one owned top-level
@@ -249,7 +249,7 @@ behind, and `goatest cache gc` does the same on demand. A directory kept with
 `.goatest/kept-temp-v1.json`, which `cache status` lists and `cache gc` collects
 once it is older than the cache TTL. None of this can fail a run: it is
 housekeeping, and a run that could not do it still produces its verdict. See
-[ADR 0006](adr/0006-every-temporary-directory-has-an-owner.md).
+[ADR 0019](adr/0019-every-temporary-directory-has-an-owner.md).
 
 Verification is read-only. A generated test or corpus entry is stored through
 `internal/repair` as an isolated candidate. The separate `fix --apply`
@@ -276,10 +276,10 @@ controls so resume starts no baseline command. A complete catalog-bound probe
 phase is another atomic boundary, so a mutation continuation does not repeat
 its target and package-suite controls. See
 [checkpoint v1](checkpoint-v1.md),
-[ADR 0011](adr/0011-append-only-checkpoint-journal.md),
-[ADR 0013](adr/0013-preserve-block-routing-across-resume.md),
-[ADR 0014](adr/0014-resume-complete-probe-phase.md), and
-[ADR 0016](adr/0016-publish-every-baseline-control.md).
+[ADR 0024](adr/0024-append-only-checkpoint-journal.md),
+[ADR 0026](adr/0026-preserve-block-routing-across-resume.md),
+[ADR 0027](adr/0027-resume-complete-probe-phase.md), and
+[ADR 0029](adr/0029-publish-every-baseline-control.md).
 
 The current implementation supports one main Go module per run. Detecting
 multiple main modules causes an error rather than an aggregate that could omit

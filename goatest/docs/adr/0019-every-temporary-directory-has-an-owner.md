@@ -14,6 +14,10 @@ run scratch and its lifecycle in `internal/assure` (`run_scratch.go`,
 `internal/mutationbridge`, and the temporary-directory evidence of
 `goatest cache status|gc` in `internal/app`.
 
+Accepted as goatest ADR 0006 and renumbered 0019 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 A run writes far more outside the repository than inside it. go-mutants copies
@@ -147,7 +151,7 @@ answered either.
    Creation or ownership failure stops before verification because no command
    may write to an unowned topology. None of this enters a cache identity:
    where a run put its directories and what its sweep found are facts about the
-   machine, exactly as [0002](0002-trace-is-not-evidence.md) says of a trace.
+   machine, exactly as [0002](0015-trace-is-not-evidence.md) says of a trace.
 
 ## Consequences
 

@@ -261,7 +261,7 @@ probe pass, which drop a target whose measured probe run never saw the mutant
 infect — and the invariant every layer has to satisfy is that it drops no
 killer: for each mutant a target actually killed, the narrowed rule must still
 route that mutant to that target. Why every speed-up is such a layer, and why a
-budget never is, is [ADR 0004](adr/0004-proof-layers-not-budgets.md). The
+budget never is, is [ADR 0017](adr/0017-proof-layers-not-budgets.md). The
 `infection` layer reads the recording alone, so it is audited whenever the
 recording holds a target probe pass and left out — with a line under the layer
 table saying so — whenever it holds none. A resumed attempt announces
@@ -324,7 +324,7 @@ A trace directory holds `trace.jsonl`, one JSON object per line in sequence
 order, and `output/<seq>.txt`, the captured output of the commands that
 produced any. The stream, its ten event types, and the fields of each are
 specified in [trace v1](trace-v1.md); the rules behind them are recorded in
-[ADR 0002](adr/0002-trace-is-not-evidence.md). In short: a trace is never
+[ADR 0015](adr/0015-trace-is-not-evidence.md). In short: a trace is never
 evidence, nothing about one changes what a run decides — a sink that fails
 costs a `trace-unavailable` note and never the run — and it is honest about
 what it dropped.
@@ -392,7 +392,7 @@ names it, and that the accounting in `run-end` matches the lines in the file.
 
 A run that ends in an error leaves a bundle of what it knew behind it, and
 `--keep-temp` leaves the directories it would otherwise have removed. Both are
-diagnostic exhaust in the sense [ADR 0002](adr/0002-trace-is-not-evidence.md)
+diagnostic exhaust in the sense [ADR 0015](adr/0015-trace-is-not-evidence.md)
 fixes for a trace: they are best-effort, they take no part in a verdict or in
 the identity a cached result is keyed on, and what they could not do they report
 rather than hide.
@@ -513,7 +513,7 @@ directory as `skipped`. go-mutants' directories are nested below the run root
 and carry their own owner files; its `Open` still reports its child sweep
 through the `mutation-temp-sweep` progress note. Why the lock and not a pid, why
 24 hours, and why the ledger lives in `.goatest` are [ADR
-0006](adr/0006-every-temporary-directory-has-an-owner.md).
+0006](adr/0019-every-temporary-directory-has-an-owner.md).
 
 ### What a kept directory costs, and who collects it
 
@@ -596,7 +596,7 @@ Behaviour a test replaces is passed to the call that uses it. A package-level
 repository is moving away from them: one seam holds every test in its package
 serial, because a test that writes it owns the package while it runs, and the
 external `package cache_test` tests share the binary with the internal ones.
-The rule and the reasoning are [ADR 0001](adr/0001-seam-policy.md); what
+The rule and the reasoning are [ADR 0014](adr/0014-seam-policy.md); what
 follows is how to work with it.
 
 `internal/testkit`'s scripted fakes are not affected. A collaborator with state
@@ -638,7 +638,7 @@ ledger format. It means a new global arrived. The fix is to not introduce it —
 write the [hooks](#writing-hooks) below instead. Pasting the printed line in
 turns the gate green, because the scan and the ledger then agree, and that is
 not enough to land the change: the ledger grows only under the exception in
-[ADR 0001](adr/0001-seam-policy.md), which wants the seam, its ledger line, and
+[ADR 0014](adr/0014-seam-policy.md), which wants the seam, its ledger line, and
 an entry in the ADR giving the reason and the date the seam goes — all in one
 commit. Without that entry the addition is refused in review, however green the
 gate is.

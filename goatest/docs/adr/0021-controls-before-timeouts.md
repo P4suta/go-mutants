@@ -8,11 +8,15 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 ## Status
 
 Accepted, 2026-09-05; amended by
-[ADR 0010](0010-whole-suite-reach-before-fallback.md). Its timeout
+[ADR 0010](0023-whole-suite-reach-before-fallback.md). Its timeout
 classification and calibration are superseded by
-[ADR 0018](0018-confirm-comparative-watchdogs.md). Implemented by target,
+[ADR 0018](0031-confirm-comparative-watchdogs.md). Implemented by target,
 coverage-suite, infection-suite, and exact original controls; probe-recovered
 routing; and control-relative mutation deadlines in `internal/assure`.
+
+Accepted as goatest ADR 0008 and renumbered 0021 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
 
 ## Context
 

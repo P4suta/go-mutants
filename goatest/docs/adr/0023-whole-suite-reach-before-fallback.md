@@ -11,6 +11,10 @@ Accepted, 2026-09-05. Implemented by the package-suite coverage controls,
 filtered suite probes, exact original-suite preflight, route trace fields, and
 the independent `proofaudit` suite-reach layer.
 
+Accepted as goatest ADR 0010 and renumbered 0023 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 The original reach rule deliberately widened to a package suite whenever no

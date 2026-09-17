@@ -10,6 +10,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 Accepted, 2026-09-06. Implemented by `internal/app`, `internal/assure`,
 `internal/buildcache`, `internal/mutationbridge`, and go-mutants preparation.
 
+Accepted as goatest ADR 0020 and renumbered 0033 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 A first verification of one package still paid for repository-wide mutation

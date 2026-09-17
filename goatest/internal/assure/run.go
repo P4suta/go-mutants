@@ -1197,7 +1197,7 @@ func modeIdentity(options Options) string {
 // can change what a build produces, and therefore belong to the identity a
 // cached verdict is keyed on.
 //
-// GOWORK is deliberately absent, for the reason ADR 0005 keeps GOCACHEPROG
+// GOWORK is deliberately absent, for the reason ADR 0018 keeps GOCACHEPROG
 // out: a variable that cannot change what a command does has no business
 // changing what a run is called. Every command this module runs in a frozen
 // workspace carries GOWORK=off - see mutationbridge.Workspace.Exec - so the

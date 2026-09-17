@@ -9,6 +9,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Accepted.
 
+Accepted as goatest ADR 0015 and renumbered 0028 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 The baseline executes every selected top-level test, example, and fuzz seed in

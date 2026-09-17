@@ -150,7 +150,7 @@ is attempted on a route decided by block with no fallback and never on one
 decided by file: a file route is the answer routing falls back to when the
 blocks cannot decide, and it is not narrowed further.
 The all-or-nothing resume boundary and its catalog-index binding are
-[ADR 0014](adr/0014-resume-complete-probe-phase.md).
+[ADR 0027](adr/0027-resume-complete-probe-phase.md).
 
 Both proofs may answer for targets of the same route. They are applied in order
 — branch first, then infection — so a target both would remove is recorded under
@@ -228,10 +228,10 @@ unknown case falls through to the prepared semantic-original preflight and
 mutant suite.
 The full boundary is recorded in [limitations](limitations.md), and the
 negative suite-coverage rule and its independent audit are specified by
-[ADR 0010](adr/0010-whole-suite-reach-before-fallback.md).
+[ADR 0023](adr/0023-whole-suite-reach-before-fallback.md).
 
 These narrowings are proof layers in the sense of
-[ADR 0004](adr/0004-proof-layers-not-budgets.md): an execution is removed only
+[ADR 0017](adr/0017-proof-layers-not-budgets.md): an execution is removed only
 where evidence the run already holds proves it could not observe the mutant,
 never by a time budget, a sample, or an exclusion of slow targets, and a layer
 that cannot establish its premise keeps the execution.
@@ -286,7 +286,7 @@ The aggregate counts must exactly match the ID-level mutant inventory. Any
 ### Reusing a verdict an earlier run reached
 
 The reasoning behind every rule in this section, and the alternatives it
-rejects, is [ADR 0007](adr/0007-survived-evidence-is-universal.md).
+rejects, is [ADR 0020](adr/0020-survived-evidence-is-universal.md).
 
 A full run — the whole project, in a first round no repair has modified —
 records what it established about every mutant it can state a checkable claim
@@ -391,7 +391,7 @@ survival is reported only when every group passed. An execution, API, or
 protocol error or context cancellation aborts the run. A selector too large
 for the host's process API fails explicitly instead of being divided at a
 guessed argv limit. See
-[ADR 0012](adr/0012-aggregate-proof-before-timeout.md).
+[ADR 0025](adr/0025-aggregate-proof-before-timeout.md).
 
 No contract-specific timeout floor or cap participates in this formula. No
 finite verifier can distinguish every slow terminating computation from
@@ -400,7 +400,7 @@ an inconclusive timeout. One initial mutant expiration ends that path: goatest
 does not recalibrate, run a post-timeout original, or retry the mutant. An
 an expiration cannot erase a completed kill from another compatible group.
 The complete argument is
-[ADR 0018](adr/0018-confirm-comparative-watchdogs.md).
+[ADR 0031](adr/0031-confirm-comparative-watchdogs.md).
 
 #### The behaviour key
 

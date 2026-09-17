@@ -13,7 +13,7 @@ execution.
 A trace is never evidence. It takes no part in a verdict and no part in the
 identity a cached result is keyed on, and a trace that cannot be written costs
 a warning rather than the run. See
-[ADR 0002](adr/0002-trace-is-not-evidence.md) for the reasoning and
+[ADR 0015](adr/0015-trace-is-not-evidence.md) for the reasoning and
 [report v1](report-v1.md) for the artifact that *is* the durable claim.
 
 ## Asking for a trace
@@ -78,7 +78,7 @@ and useless for a failure that does not repeat. A recording nobody asked for in
 advance is a recording nobody has.
 
 Three of the usual objections do not apply here, and [ADR
-0002](adr/0002-trace-is-not-evidence.md) is why. Asking for a recording enters
+0002](adr/0015-trace-is-not-evidence.md) is why. Asking for a recording enters
 no identity, so a traced run and an untraced one share a cache key and reach the
 same verdict. A sink that cannot be written costs a `trace-unavailable` note
 rather than the run. And retention bounds the directory by the same TTL and byte
@@ -93,7 +93,7 @@ found a suite going from about seven seconds to over six hundred, and kept the
 flag opt-in for that reason.
 
 That figure carries its mechanism, because a figure without one is a conclusion
-without a reason - see [ADR 0021](adr/0021-what-a-ledger-cannot-check.md), which
+without a reason - see [ADR 0034](adr/0034-what-a-ledger-cannot-check.md), which
 records this number being borrowed badly. The cost is a recorder writing each
 executed command's output to a file, over a suite whose tests execute whole
 commands, and both halves hold here: `DirSink.preserveOutput` writes one file

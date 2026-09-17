@@ -411,11 +411,11 @@ run = [
 description = "Check Go and TOML formatting without rewriting any file"
 run = [
   'test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }',
-  "taplo fmt --check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml",
+  "taplo fmt --check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml",
 ]
 run_windows = [
   'pwsh -NoLogo -NoProfile -Command "$f = gofmt -l .; if ($f) { $f; exit 1 }"',
-  "taplo fmt --check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml",
+  "taplo fmt --check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml",
 ]
 
 [tasks.lint]
@@ -423,7 +423,7 @@ description = "Run the Go, spelling, TOML, workflow, YAML, secret, and doc linte
 run = [
   "golangci-lint run",
   "typos",
-  "taplo check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml",
+  "taplo check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml",
   "actionlint",
   "yamllint .github lefthook.yml .golangci.yml",
   "gitleaks dir . --config .gitleaks.toml --no-banner --redact --verbose",

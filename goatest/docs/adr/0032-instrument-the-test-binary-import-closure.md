@@ -10,6 +10,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 Accepted, 2026-09-05. Implemented by `internal/assure` and the package model in
 `internal/golang`.
 
+Accepted as goatest ADR 0019 and renumbered 0032 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 Baseline coverage maps each top-level test to the mutants it can reach. The

@@ -10,6 +10,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 Accepted, 2026-09-01. Implemented by `internal/trace`, `internal/app/trace.go`,
 and the trace wiring of `internal/assure`.
 
+Accepted as goatest ADR 0002 and renumbered 0015 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 goatest is fail-closed about assurance. An input it cannot identify, a metadata

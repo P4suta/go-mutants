@@ -8,7 +8,11 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 ## Status
 
 Accepted, 2026-09-06. Supersedes the timeout calibration and classification in
-[ADR 0008](0008-controls-before-timeouts.md).
+[ADR 0008](0021-controls-before-timeouts.md).
+
+Accepted as goatest ADR 0018 and renumbered 0031 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
 
 ## Context
 

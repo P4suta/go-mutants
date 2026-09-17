@@ -10,6 +10,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 Accepted, 2026-09-05. Implemented by `internal/buildcache` and the command
 routing in `internal/assure`.
 
+Accepted as goatest ADR 0017 and renumbered 0030 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 The owned two-layer `GOCACHEPROG` cache prevents test fixtures from filling the
@@ -100,7 +104,7 @@ timeout or a second unbounded cache.
    program may validate the one requested action and content-addressed output
    from cmd/go's host cache, copy it into an owned layer, and answer from that
    copy. It never scans or returns the host directory. The selection and
-   validation argument is [ADR 0020](0020-bootstrap-cold-preparation-with-verified-local-work.md).
+   validation argument is [ADR 0020](0033-bootstrap-cold-preparation-with-verified-local-work.md).
 
 ## Projection soundness
 

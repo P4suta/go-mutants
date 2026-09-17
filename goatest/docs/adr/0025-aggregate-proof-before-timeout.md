@@ -10,6 +10,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 Accepted, 2026-09-05. Revised, 2026-09-06. Implemented by the mutation
 execution planner in `internal/assure`.
 
+Accepted as goatest ADR 0012 and renumbered 0025 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 A mutation kill is existential: one completed failing execution against a

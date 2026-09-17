@@ -12,6 +12,10 @@ suite schedulers in `internal/assure`, concurrent exact-original preflights over
 prepared sessions, concurrent pre-preparation execution in go-mutants, and
 overlapped session preparation and structural baseline checks.
 
+Accepted as goatest ADR 0009 and renumbered 0022 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 A clean dogfood run spent 1,013.739 seconds in baseline. Its 1,088 independent
@@ -45,7 +49,7 @@ must not silently change the program mutation discovery measures.
    input order and sorts checkpoint sets by identity. Scheduler order therefore
    changes neither durable bytes nor report semantics, while an interruption
    loses no completed suffix behind a still-running earlier target. The revision
-   is specified by [ADR 0016](0016-publish-every-baseline-control.md).
+   is specified by [ADR 0016](0029-publish-every-baseline-control.md).
 3. **The earliest target owns an error.** All already-started workers are
    joined, then the error belonging to the earliest target in input order is
    returned. Scheduler timing cannot decide which failure the user sees.

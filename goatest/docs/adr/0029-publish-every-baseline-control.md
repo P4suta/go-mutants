@@ -11,6 +11,10 @@ Accepted, 2026-09-05. Revised to package-batched publication, 2026-09-06.
 Implemented by the baseline schedulers, checkpoint controller, and append-only
 checkpoint journal.
 
+Accepted as goatest ADR 0016 and renumbered 0029 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 Baseline targets execute concurrently but used to become durable only as the

@@ -30,7 +30,7 @@ every word of the difference is in
   at all. A non-verbose `go test` prints `ok` for a package whose every test was
   skipped, which is how a lost toolchain becomes a green run.
 - **Seams are arguments, not package-level variables.**
-  [ADR 0001](docs/adr/0001-seam-policy.md). The ledger at
+  [ADR 0014](docs/adr/0014-seam-policy.md). The ledger at
   `internal/devgates/seam_allowlist.txt` may shrink and never grow, and a stale
   entry fails as loudly as a new offender. It holds 69 lines. One seam holds a
   whole package serial: three of them cost `internal/app` 184 seconds, and
@@ -42,7 +42,7 @@ every word of the difference is in
   paid rather than a debt.
 - **Goldens fail closed.** A missing golden is a failure, never a silent first
   recording.
-- **A trace is not evidence.** [ADR 0002](docs/adr/0002-trace-is-not-evidence.md).
+- **A trace is not evidence.** [ADR 0015](docs/adr/0015-trace-is-not-evidence.md).
   Tracing changes no verdict and no cache identity, a sink failure costs a note
   rather than the run, and nothing is dropped in silence.
 - **Every workspace command runs with `GOWORK=off`**, set once in
@@ -80,7 +80,7 @@ Adding a page that enumerates something means adding its ledger in the same
 change. Each ledger carries a test proving it can fail, because two agreeing
 lists is also what it looks like when one of them was read as empty.
 
-[ADR 0021](docs/adr/0021-what-a-ledger-cannot-check.md) records what this
+[ADR 0034](docs/adr/0034-what-a-ledger-cannot-check.md) records what this
 discipline does not cover: a ledger checks that a claim matches a set, and
 nothing mechanical checks that the set covers what happens, or that the reason
 written beside a choice is correct.

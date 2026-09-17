@@ -10,6 +10,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 Accepted, 2026-09-01. The scripted fakes it prefers are `internal/testkit`; the
 recording it declines to consume is [trace v1](../trace-v1.md).
 
+Accepted as goatest ADR 0003 and renumbered 0016 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 *This record is about record/replay of process execution as a test technique.
 It is unrelated to the `goatest replay ID` command, which re-runs a recorded
 finding through the real toolchain and stays exactly as it is.*
@@ -43,7 +47,7 @@ line.
 
 There is also a gap that no amount of engineering closes: a trace records
 environment variable *names* and never values (see
-[ADR 0002](0002-trace-is-not-evidence.md)), and preserved output is capped at
+[ADR 0002](0015-trace-is-not-evidence.md)), and preserved output is capped at
 1 MiB. A recording is a faithful description of an execution, not a substitute
 for the environment that produced it.
 

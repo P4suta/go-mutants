@@ -8,10 +8,14 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 ## Status
 
 Accepted, 2026-09-02; its coverage-blind consequence was amended by
-[ADR 0008](0008-controls-before-timeouts.md) and
-[ADR 0010](0010-whole-suite-reach-before-fallback.md). Implemented by the block
+[ADR 0008](0021-controls-before-timeouts.md) and
+[ADR 0010](0023-whole-suite-reach-before-fallback.md). Implemented by the block
 routing of `internal/assure` (`routeMutant`, #18), the branch-never-taken
 discharge it performs with go-mutants' branch proof (`dischargeNarrowedBranch`,
+
+Accepted as goatest ADR 0004 and renumbered 0017 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
 
 ## 23), the `route` events of `internal/trace` that name what each layer decided
 

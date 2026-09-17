@@ -14,6 +14,10 @@ the target and suite behaviour keys, and the store's shape rule),
 provenance a checkpoint carries), `internal/golang/readers.go` (the
 repository-reader rule), and the reuse classes in `internal/devtools`.
 
+Accepted as goatest ADR 0007 and renumbered 0020 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 ADR 0004 committed the project to speed by proof: no budget, no sampling, no
@@ -23,7 +27,7 @@ across runs is such a rule. What an earlier run observed about a mutant is
 evidence, and re-observing it is work that establishes nothing new — provided
 the claim the earlier run made is still a claim about this run.
 
-[ADR 0002](0002-trace-is-not-evidence.md) and the assurance contract fixed the
+[ADR 0002](0015-trace-is-not-evidence.md) and the assurance contract fixed the
 first half of that: a kill is reused when every target in the recorded witness
 set still reaches the mutant in one compatible group, still has the same
 behaviour key, and passed this run's own baseline.

@@ -75,7 +75,7 @@ type Service struct {
 	// Git runs one git command in a directory and returns its standard output.
 	//
 	// The zero value runs the real git, like the two filesystems above it. It
-	// is a field rather than a package-level variable because ADR 0001 wants
+	// is a field rather than a package-level variable because ADR 0014 wants
 	// replaceable behaviour to travel as an argument, and it is on Service
 	// rather than passed to each call because the operations that need it are
 	// reached through Service.Execute and nothing else.

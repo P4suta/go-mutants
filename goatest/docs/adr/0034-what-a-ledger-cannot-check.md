@@ -12,6 +12,10 @@ Accepted, 2026-09-17. The ledgers it is about are listed in
 `internal/cli`, `internal/report`, `internal/assure` and
 `internal/devtools/testaudit`.
 
+Accepted as goatest ADR 0021 and renumbered 0034 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 This repository gained twelve documentation ledgers in a day. Each pins a set

@@ -9,6 +9,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Accepted, 2026-09-05. Implemented by the mutation checkpoint controller.
 
+Accepted as goatest ADR 0014 and renumbered 0027 when the two
+products came into one repository; the sequence is one because the products
+are. Nothing else about this record changed.
+
 ## Context
 
 Mutation preparation produces a semantics-preserving probe tree, then goatest
