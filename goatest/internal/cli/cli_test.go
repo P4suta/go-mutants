@@ -193,6 +193,10 @@ func TestSubcommandsRequireTheirDocumentedArguments(t *testing.T) {
 		{[]string{"accept", "finding-c", "--reason=reviewed", "--expires=2026-12-01T00:00:00Z"}, cli.CommandAccept, "finding-c"},
 		{[]string{"report"}, cli.CommandReport, ""},
 		{[]string{"cache", "flush"}, cli.CommandCache, "flush"},
+		{[]string{"cache", "status"}, cli.CommandCache, "status"},
+		{[]string{"cache", "gc"}, cli.CommandCache, "gc"},
+		{[]string{"report", "--latest-full"}, cli.CommandReport, ""},
+		{[]string{"report", "--run=run-a"}, cli.CommandReport, ""},
 		{[]string{"trace", "summary"}, cli.CommandTrace, "summary"},
 		{[]string{"trace", "diff", "run-a", "run-b"}, cli.CommandTrace, "diff"},
 	} {
@@ -212,6 +216,15 @@ func TestSubcommandsRequireTheirDocumentedArguments(t *testing.T) {
 		{"plan", "--", "-short"}, {"doctor", "--", "-short"}, {"report", "--", "-short"},
 		{"init", "extra"}, {"report", "extra"}, {"replay", ""}, {"accept", "finding-c"},
 		{"trace"}, {"trace", "summary", "a", "b"}, {"trace", "diff", "a"}, {"trace", "unknown"},
+		{"--json", "--ui=jsonl"}, {"--ui=bad"},
+		{"report", "--latest-full", "--run=run-a"},
+		{"accept", "finding-c", "--reason=reviewed"},
+		{"accept", "finding-c", "--expires=2026-12-01T00:00:00Z"},
+		{"accept", "finding-c", "--reason=  ", "--expires=2026-12-01T00:00:00Z"},
+		{"accept", "finding-c", "--reason=reviewed", "--expires=  "},
+		{"cache"}, {"cache", "bad"}, {"cache", "status", "extra"},
+		{"verify", "--owner=me"}, {"verify", "--ticket=T-1"}, {"verify", "--expires=2026-12-01T00:00:00Z"},
+		{"verify", "--", "-test.run=TestX"},
 	} {
 		var stderr bytes.Buffer
 		if exit := cli.Run(t.Context(), args, &bytes.Buffer{}, &stderr, &service{}); exit != cli.ExitError || stderr.Len() == 0 {
@@ -392,5 +405,111 @@ func TestInfrastructureErrorsRenderTheirErrorReportBeforeTheDiagnostic(t *testin
 				t.Fatalf("stderr = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestHelpReadsOnlyTheArgumentsBeforeTheSeparator(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	fake := &service{report: report.Report{Schema: report.SchemaV1, Verdict: report.VerdictAssured}}
+	if exit := cli.Run(t.Context(), []string{"verify", "--", "--help"}, &stdout, &stderr, fake); exit != cli.ExitAssured {
+		t.Fatalf("exit = %d, stderr = %q", exit, stderr.String())
+	}
+	if fake.command != cli.CommandVerify {
+		t.Errorf("command = %q, want a verify: --help after the separator is the test binary's", fake.command)
+	}
+	if strings.Contains(stdout.String(), "Usage") {
+		t.Error("the help text was printed for a --help that belongs to the test binary")
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	bare := &service{report: report.Report{Schema: report.SchemaV1, Verdict: report.VerdictAssured}}
+	if exit := cli.Run(t.Context(), []string{"--", "--help"}, &stdout, &stderr, bare); exit != cli.ExitAssured {
+		t.Fatalf("exit = %d, stderr = %q", exit, stderr.String())
+	}
+	if bare.command != cli.CommandVerify {
+		t.Errorf("command = %q, want a verify: a separator at the front leaves nothing before it", bare.command)
+	}
+}
+
+func TestHelpForAnUnknownCommandSaysSoAndFails(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	if exit := cli.Run(t.Context(), []string{"help", "nonesuch"}, &stdout, &stderr, &service{}); exit != cli.ExitError {
+		t.Fatalf("exit = %d, want ExitError", exit)
+	}
+	if !strings.Contains(stderr.String(), `unknown command "nonesuch"`) {
+		t.Errorf("stderr = %q, want it to name the command", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want no help text for a command there is none for", stdout.String())
+	}
+	if lines := strings.Count(strings.TrimRight(stderr.String(), "\n"), "\n") + 1; lines != 2 {
+		t.Errorf("stderr holds %d lines:\n%s\nwant the refusal and where to look, said once", lines, stderr.String())
+	}
+}
+
+func TestAnInterruptedRunRendersOnlyAReportThatHasARunID(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		result   report.Report
+		rendered bool
+	}{
+		{"a run that started", report.Report{Schema: report.SchemaV1, RunID: "run-a", Verdict: report.VerdictError}, true},
+		{"a run that never did", report.Report{Schema: report.SchemaV1, Verdict: report.VerdictError}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout, stderr bytes.Buffer
+			fake := &service{report: test.result, err: context.Canceled}
+			if exit := cli.Run(t.Context(), []string{"verify"}, &stdout, &stderr, fake); exit != cli.ExitInterrupted {
+				t.Fatalf("exit = %d, want ExitInterrupted", exit)
+			}
+			if rendered := stdout.Len() != 0; rendered != test.rendered {
+				t.Errorf("rendered = %t, want %t; stdout = %q", rendered, test.rendered, stdout.String())
+			}
+		})
+	}
+}
+
+func TestAFailedRunRendersOnlyAnErrorVerdict(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		verdict  report.Verdict
+		rendered bool
+	}{
+		{report.VerdictError, true},
+		{report.VerdictInsufficient, false},
+	} {
+		var stdout, stderr bytes.Buffer
+		fake := &service{report: report.Report{Schema: report.SchemaV1, RunID: "run-a", Verdict: test.verdict}, err: errors.New("stopped")}
+		if exit := cli.Run(t.Context(), []string{"verify"}, &stdout, &stderr, fake); exit != cli.ExitError {
+			t.Fatalf("%s exit = %d", test.verdict, exit)
+		}
+		if rendered := stdout.Len() != 0; rendered != test.rendered {
+			t.Errorf("%s rendered = %t, want %t", test.verdict, rendered, test.rendered)
+		}
+	}
+}
+
+func TestTheJSONLRenderingIsChosenByTheUIFlag(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		args  []string
+		jsonl bool
+	}{
+		{[]string{"verify", "--ui=jsonl"}, true},
+		{[]string{"verify", "--ui=plain"}, false},
+	} {
+		var stdout, stderr bytes.Buffer
+		fake := &service{report: report.Report{Schema: report.SchemaV1, RunID: "run-a", Verdict: report.VerdictAssured}}
+		if exit := cli.Run(t.Context(), test.args, &stdout, &stderr, fake); exit != cli.ExitAssured {
+			t.Fatalf("%v exit = %d, stderr = %q", test.args, exit, stderr.String())
+		}
+		if jsonl := strings.Contains(stdout.String(), `"report"`); jsonl != test.jsonl {
+			t.Errorf("%v rendered jsonl = %t, want %t; stdout = %q", test.args, jsonl, test.jsonl, stdout.String())
+		}
 	}
 }
