@@ -182,17 +182,42 @@ var memoryWarmUp = []time.Duration{
 	10 * time.Millisecond, 15 * time.Millisecond, 25 * time.Millisecond, 50 * time.Millisecond,
 }
 
+// sampleOutcome is what one sample settled, and it has three values rather than
+// two for the reason every check in this repository does: "I could not measure"
+// is not "everything is fine" and it is not "stop". Collapsing the first into
+// the last is what made a child the kernel had not published under /proc yet
+// end its own sampler, on the one platform where the sampler is the only
+// witness.
+type sampleOutcome int
+
+const (
+	// sampleTaken is a measurement under the limit: go on.
+	sampleTaken sampleOutcome = iota
+	// sampleUnanswered is no measurement. It may be a platform that can never
+	// answer, or a child that is not visible yet, and one sample cannot tell
+	// them apart — [memoryWatchdog.sample] decides that over the warm-up.
+	sampleUnanswered
+	// sampleExceeded is a measurement past the limit: the tree is over budget
+	// and there is nothing further to sample.
+	sampleExceeded
+)
+
 // watchMemory takes one sample of sup's tree at once, then keeps sampling it:
 // on the [memoryWarmUp] schedule, then every [MemorySampleInterval]. A limit of
 // zero means the sampler only measures: it remembers the highest sample and
 // trips on nothing.
+//
+// Only a tree already over its limit ends it here. A first sample that answered
+// nothing is not a verdict about the platform — the child is a few microseconds
+// old and may not be in /proc yet — so the loop starts anyway and the warm-up
+// is what decides.
 func watchMemory(sup supervisor, limit int64) *memoryWatchdog {
 	w := &memoryWatchdog{
 		exceeded: make(chan struct{}),
 		done:     make(chan struct{}),
 		stopped:  make(chan struct{}),
 	}
-	if !w.take(sup, limit, false) {
+	if w.take(sup, limit, false) == sampleExceeded {
 		close(w.stopped)
 		return w
 	}
@@ -200,22 +225,20 @@ func watchMemory(sup supervisor, limit int64) *memoryWatchdog {
 	return w
 }
 
-// take is one sample; it reports whether the sampler should go on. A platform
-// that cannot answer ends it (see [memoryWatchdog.sample]), and so does the
-// sample that passes the limit. A thorough sample may scan the whole process
-// table and is what the steady ticks take; the quick ones are for a child's
-// first milliseconds.
-func (w *memoryWatchdog) take(sup supervisor, limit int64, thorough bool) bool {
+// take is one sample. A thorough sample may scan the whole process table and is
+// what the steady ticks take; the quick ones are for a child's first
+// milliseconds.
+func (w *memoryWatchdog) take(sup supervisor, limit int64, thorough bool) sampleOutcome {
 	used, ok := sup.usedMemory(thorough)
 	if !ok {
-		return false
+		return sampleUnanswered
 	}
 	w.record(used)
 	if limit > 0 && used > limit {
 		close(w.exceeded)
-		return false
+		return sampleExceeded
 	}
-	return true
+	return sampleTaken
 }
 
 // sample is the watchdog's loop.
@@ -230,6 +253,14 @@ func (w *memoryWatchdog) take(sup supervisor, limit int64, thorough bool) bool {
 func (w *memoryWatchdog) sample(sup supervisor, limit int64) {
 	defer close(w.stopped)
 
+	// The warm-up is where "cannot" is told from "not yet". An unanswered
+	// sample is carried rather than obeyed until the schedule is out, and only
+	// a warm-up that answered nothing at all is read as a platform that never
+	// will. That costs an unmeasurable platform nine quick calls over fifty
+	// milliseconds instead of one, and it is what keeps a child that the kernel
+	// had not published for the opening look from being reported as having
+	// used no memory at all.
+	answered := false
 	started := time.Now()
 	for _, at := range memoryWarmUp {
 		select {
@@ -237,11 +268,21 @@ func (w *memoryWatchdog) sample(sup supervisor, limit int64) {
 			return
 		case <-time.After(time.Until(started.Add(at))):
 		}
-		if !w.take(sup, limit, false) {
+		switch w.take(sup, limit, false) {
+		case sampleExceeded:
 			return
+		case sampleTaken:
+			answered = true
+		case sampleUnanswered:
 		}
 	}
+	if !answered {
+		return
+	}
 
+	// Past the warm-up the platform has answered at least once, so an
+	// unanswered sample is the tree being gone rather than the question being
+	// unanswerable, and there is nothing left to watch.
 	ticker := time.NewTicker(MemorySampleInterval)
 	defer ticker.Stop()
 	for {
@@ -250,7 +291,7 @@ func (w *memoryWatchdog) sample(sup supervisor, limit int64) {
 			return
 		case <-ticker.C:
 		}
-		if !w.take(sup, limit, true) {
+		if w.take(sup, limit, true) != sampleTaken {
 			return
 		}
 	}

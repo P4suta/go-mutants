@@ -28,6 +28,11 @@ type scriptedSupervisor struct {
 	// unmeasurable makes the platform unable to answer at all, which is not the
 	// same as an empty tree and has to end the sampler rather than stall it.
 	unmeasurable bool
+	// unanswerableFirst is how many opening samples report no measurement
+	// before the platform starts answering, which is what a child that is not
+	// in /proc yet looks like from here. It is not the same as unmeasurable,
+	// and the whole point of it is that the two must not be treated alike.
+	unanswerableFirst int
 	// accounted is what the platform's own accounting reports for the reaped
 	// child; zero means it reports nothing.
 	accounted int64
@@ -51,6 +56,11 @@ func (s *scriptedSupervisor) usedMemory(bool) (int64, bool) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.unanswerableFirst > 0 {
+		s.unanswerableFirst--
+		s.taken++
+		return 0, false
+	}
 	if len(s.samples) == 0 {
 		return 0, true
 	}
@@ -255,5 +265,38 @@ func TestTheAccountedPeakIsConsultedOnlyWhereItBelongsToTheChild(t *testing.T) {
 				t.Errorf("peakOf(sampled %d, accounted %d) = %d, want %d", c.sampled, c.accounted, got, want)
 			}
 		})
+	}
+}
+
+// TestAChildNotVisibleYetDoesNotEndTheSamplerForever pins the difference
+// between "this platform cannot measure" and "this child is not there yet".
+//
+// The first sample is taken the instant the child is started, and on Linux that
+// is a race with the kernel publishing the process under /proc: the walk finds
+// nothing and reports no measurement. Treating that like an unmeasurable
+// platform ended the sampler before it had sampled anything, and since Linux
+// ignores the kernel's accounted peak -- see peakOf -- the sampler is the only
+// witness there. The call then reported a peak of zero for a process that had
+// plainly run, which is what
+// `session_memory_integration_test.go: Probe reports no peak, and it started a
+// process` was, intermittently, on ubuntu and nowhere else.
+func TestAChildNotVisibleYetDoesNotEndTheSamplerForever(t *testing.T) {
+	t.Parallel()
+
+	sup := &scriptedSupervisor{unanswerableFirst: 1, samples: []int64{9 << 20}}
+	w := watchMemory(sup, 0)
+	t.Cleanup(w.stop)
+
+	deadline := time.After(5 * MemorySampleInterval)
+	for w.observedPeak() == 0 {
+		select {
+		case <-deadline:
+			t.Fatalf("observedPeak() = 0 after %d samples; a child that was not in /proc for the"+
+				" opening look was treated as a platform that can never answer", sup.takenCount())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if got := w.observedPeak(); got != 9<<20 {
+		t.Errorf("observedPeak() = %d, want the first sample the platform could answer %d", got, 9<<20)
 	}
 }
