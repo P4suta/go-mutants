@@ -372,3 +372,27 @@ func TestQuiet(t *testing.T) {
 		t.Fatalf("a package inherited %+v from a dependency only its test reads a path in", candidate)
 	}
 }
+
+func TestARepositoryReadCandidateIgnoresAnInitializationIntoAQuietDependency(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeGo(t, root, "quiet/quiet.go", "package quiet\n\nfunc Quiet() int { return 1 }\n")
+	writeGo(t, root, "subject/subject.go", `package subject
+
+import "example.com/module/quiet"
+
+func init() { _ = quiet.Quiet() }
+`)
+	candidates := gotest.RepositoryReadCandidates(root, []gotest.Package{
+		{ImportPath: "example.com/module/quiet", RelativeDir: "quiet"},
+		{
+			ImportPath: "example.com/module/subject", RelativeDir: "subject",
+			Dependencies: []string{"example.com/module/quiet"},
+		},
+	})
+
+	if candidate, named := candidates["example.com/module/subject"]; named {
+		t.Fatalf("a package whose initialization calls one that reads nothing answered %+v, want none",
+			candidate)
+	}
+}

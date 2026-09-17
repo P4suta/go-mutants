@@ -92,6 +92,12 @@ func bareCheckpoint() checkpoint.State {
 	}
 }
 
+func probeOnlyCheckpoint() checkpoint.State {
+	state := bareCheckpoint()
+	state.Mutation.Probe = &checkpoint.MutationProbe{IndexFingerprint: strings.Repeat("c", digestHexDigits)}
+	return state
+}
+
 func TestACheckpointWritesNoNullWhereACollectionBelongs(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
@@ -99,6 +105,7 @@ func TestACheckpointWritesNoNullWhereACollectionBelongs(t *testing.T) {
 		state checkpoint.State
 	}{
 		{name: "a checkpoint that has recorded nothing yet", state: bareCheckpoint()},
+		{name: "a probe pass that measured nothing yet", state: probeOnlyCheckpoint()},
 		{name: "a partial checkpoint", state: everyStructureCheckpoint(false)},
 		{name: "a complete one", state: everyStructureCheckpoint(true)},
 	} {

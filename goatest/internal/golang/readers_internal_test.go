@@ -441,6 +441,7 @@ func TestAnalyzeRepositoryReadsKeepsEveryFunctionsAnswerAndFollowsWhatRunsFirst(
 		source       string
 		candidate    bool
 		unobservable bool
+		preRun       bool
 	}{
 		{
 			name: "one observable reader beside one nothing can observe",
@@ -464,7 +465,7 @@ func init() { helper() }
 
 func helper() (string, error) { return os.Readlink(name) }
 `,
-			candidate: true, unobservable: true,
+			candidate: true, unobservable: true, preRun: true,
 		},
 		{
 			name: "an initialization that reaches nothing that reads",
@@ -483,6 +484,38 @@ func init() { absent.Helper() }
 `,
 		},
 		{
+			name: "an initialization that reaches a reader through a value",
+			source: `package subject
+
+import "os"
+
+func init() { _ = read }
+
+var read = os.Readlink
+`,
+			candidate: true, unobservable: true, preRun: true,
+		},
+		{
+			name: "a value that names a reader without calling it",
+			source: `package subject
+
+import "os"
+
+var read = os.Readlink
+`,
+			candidate: true, unobservable: true,
+		},
+		{
+			name: "a read in a value and no function at all",
+			source: `package subject
+
+import "os"
+
+var listing, _ = os.Readlink(name)
+`,
+			candidate: true, unobservable: true, preRun: true,
+		},
+		{
 			name: "a value an initialization reads through",
 			source: `package subject
 
@@ -492,7 +525,7 @@ func init() { _ = listing }
 
 var listing, _ = os.Readlink(name)
 `,
-			candidate: true, unobservable: true,
+			candidate: true, unobservable: true, preRun: true,
 		},
 		{
 			name: "a constant declaration beside a reader",
@@ -514,6 +547,10 @@ func Seen() ([]byte, error) { return os.ReadFile(name) }
 			if scan.candidate != test.candidate || scan.unobservable != test.unobservable {
 				t.Fatalf("analyzeRepositoryReads = candidate %t, unobservable %t, want %t and %t",
 					scan.candidate, scan.unobservable, test.candidate, test.unobservable)
+			}
+			if _, stated := scan.reasons[reasonPreRun]; stated != test.preRun {
+				t.Fatalf("the scan states %q, want it to name the initialization: %t",
+					sortedKeys(scan.reasons), test.preRun)
 			}
 		})
 	}
