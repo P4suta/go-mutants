@@ -27,4 +27,20 @@ useDefault = true
 
 [[allowlists]]
 description = "Run artefacts git ignores, which cannot reach the repository"
-paths = ['''(^|/)reports/mutation/''']
+paths = [
+  '''(^|/)reports/mutation/''',
+  # The runner's own, for the reason above and found the same way: the first
+  # full-scope `mise run dogfood-runner` to finish in this repository left a
+  # 450 MB evidence cache, and the next `mise run check` reported a hundred and
+  # eighty thousand leaks. Every one is a suite key -- a content hash, which is
+  # what a high-entropy generic rule is built to notice.
+  #
+  # Three directories rather than one, because goatest/.gitignore names three
+  # and each is written by a different part of a run: .goatest/ is the evidence
+  # cache and the diagnostics, reports/ is the assurance report, dist/ is the
+  # binary the run measured with. A run that wrote into one and not the others
+  # would otherwise leave the scan red for whichever was missed.
+  '''(^|/)goatest/.goatest/''',
+  '''(^|/)goatest/reports/''',
+  '''(^|/)goatest/dist/''',
+]
