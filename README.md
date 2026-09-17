@@ -619,6 +619,7 @@ results, and not-run mutants are excluded from the score denominator.
 - [Run trace v1](docs/trace-v1.md)
 - [Stryker report ecosystem compatibility](docs/stryker-compatibility.md)
 - [Architecture decision records](docs/adr/README.md)
+- [The runner, and its own documentation](goatest/docs/README.md)
 - [Development guide](docs/development.md)
 - [Continuous integration](docs/ci.md)
 - [Release checklist](docs/release-checklist.md)

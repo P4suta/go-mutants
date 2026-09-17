@@ -59,3 +59,16 @@ What go-mutants is, what it produces, and what it will refuse to do.
 it: setup, the gates to run before submitting, and the rules a change has to
 keep. [SECURITY.md](../SECURITY.md) is how to report something that should not
 be an issue in public.
+
+## The runner
+
+`goatest/` is the second module of this repository, and its documentation has
+its own index at [`goatest/docs/README.md`](../goatest/docs/README.md), pinned
+to its own directory by `goatest/internal/devgates` in both directions.
+
+It is linked rather than merged. The two products publish different contracts —
+`goatest-trace-v1` and `gomutants-trace-v1` reject each other by design, and so
+do their reports — so a single index would have to say which product each page
+was about on every line, which is what a directory already says. What one
+repository buys is that a change to both lands together, not that the two
+describe themselves in one voice.
