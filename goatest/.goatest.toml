@@ -229,3 +229,21 @@ id = '1c459b60e2397eb4'
 reason = 'this is the second half of the same race: os.Root.Stat(".") on a root just opened, against a directory Lstat has already identified, cannot answer differently unless another process replaced it between the two calls'
 expires = '2027-09-17T00:00:00Z'
 owner = 'goatest'
+
+[[acceptance]]
+id = '5cd496ebbd621ebd'
+reason = 'this returns true only for a writer that is a terminal, and a test process that has been given one has a controlling terminal the test did not create and cannot rely on; every rule it applies is decided by terminalInteractivity, which is measured against both answers'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '44f4d529c65eecba'
+reason = 'the same absent terminal: a test writes to a buffer or a pipe, so this probe has no true to return, and the rule that consumes it is measured against both answers'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '5dda53d6f080fd60'
+reason = 'on every platform but Windows this is the constant true, and on Windows it is true for any writer that is not a console handle, so no writer a test can supply distinguishes the two'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
