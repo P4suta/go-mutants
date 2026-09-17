@@ -453,3 +453,171 @@ func TestAMutationResultIsTerminalWhenItsEvidenceOrAFindingSaysSo(t *testing.T) 
 		})
 	}
 }
+
+func TestACheckpointAcceptsEveryValueAtTheEdgeOfARule(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		change func(*checkpoint.State)
+	}{
+		{name: "one attempt", change: func(s *checkpoint.State) { s.Attempts = 1 }},
+		{
+			name:   "a baseline target that took no time",
+			change: func(s *checkpoint.State) { s.Baseline.Targets[0].Inventory.DurationMS = 0 },
+		},
+		{
+			name:   "target evidence that took no time",
+			change: func(s *checkpoint.State) { s.Baseline.Targets[0].Target.DurationNS = 0 },
+		},
+		{
+			name: "a coverage block that opens and closes on one line",
+			change: func(s *checkpoint.State) {
+				block := &s.Baseline.Targets[0].Target.Coverage.Files[0].Blocks[0]
+				block.StartLine, block.StartColumn, block.EndLine, block.EndColumn = 1, 1, 1, 1
+			},
+		},
+		{
+			name:   "a partial baseline suite that took no time",
+			change: func(s *checkpoint.State) { s.Baseline.Suites[0].DurationNS = 0 },
+		},
+		{
+			name:   "a probed target that took no time",
+			change: func(s *checkpoint.State) { s.Mutation.Probe.Targets[0].DurationNS = 0 },
+		},
+		{
+			name:   "a probed suite that took no time",
+			change: func(s *checkpoint.State) { s.Mutation.Probe.Suites[0].DurationNS = 0 },
+		},
+		{name: "no race phase at all", change: func(s *checkpoint.State) { s.Race = nil }},
+		{name: "no mutation phase at all", change: func(s *checkpoint.State) { s.Mutation = nil }},
+		{name: "no probe pass at all", change: func(s *checkpoint.State) { s.Mutation.Probe = nil }},
+		{
+			name:   "a race phase that has recorded nothing",
+			change: func(s *checkpoint.State) { s.Race = &checkpoint.Race{} },
+		},
+		{
+			name: "a probed target nothing measured that carries nothing",
+			change: func(s *checkpoint.State) {
+				s.Mutation.Probe.Targets[0] = checkpoint.TargetProbe{ID: "t1"}
+			},
+		},
+		{
+			name: "a probed suite nothing measured that carries nothing",
+			change: func(s *checkpoint.State) {
+				s.Mutation.Probe.Suites[0] = checkpoint.SuiteProbe{Package: "example.test/fixture"}
+			},
+		},
+		{
+			name: "a partial baseline suite nothing measured that carries nothing",
+			change: func(s *checkpoint.State) {
+				s.Baseline.Suites[0] = checkpoint.BaselineSuite{Package: "example.test/fixture"}
+			},
+		},
+		{
+			name: "target evidence nothing probed that carries nothing",
+			change: func(s *checkpoint.State) {
+				s.Baseline.Targets[0].Target.Probed = false
+				s.Baseline.Targets[0].Target.ProbeDurationNS = 0
+				s.Baseline.Targets[0].Target.Infected = nil
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			state := validCheckpoint()
+			test.change(&state)
+			if err := checkpoint.Validate(state); err != nil {
+				t.Fatalf("Validate refused a checkpoint with %s: %v", test.name, err)
+			}
+		})
+	}
+}
+
+func TestACompleteCheckpointIsHeldToWhatCompletionMeans(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		change func(*checkpoint.State)
+		want   string
+	}{
+		{
+			name:   "a completed baseline that kept its partial suites",
+			change: func(s *checkpoint.State) { s.Baseline.Suites = []checkpoint.BaselineSuite{{Package: "p"}} },
+			want:   "retains partial baseline suites",
+		},
+		{
+			name:   "a completed baseline with no routing",
+			change: func(s *checkpoint.State) { s.Baseline.Routing = nil },
+			want:   "completion and routing disagree",
+		},
+		{
+			name: "a completed baseline whose target still carries instrumentation",
+			change: func(s *checkpoint.State) {
+				s.Baseline.Targets[0].Target.Instrumented = &checkpoint.Coverage{}
+			},
+			want: "duplicates routing instrumentation",
+		},
+		{
+			name:   "a routing suite for no package",
+			change: func(s *checkpoint.State) { s.Baseline.Routing.Suites[0].Package = "" },
+			want:   "invalid identity",
+		},
+		{
+			name:   "a routing suite that took less than no time",
+			change: func(s *checkpoint.State) { s.Baseline.Routing.Suites[0].DurationNS = -1 },
+			want:   "invalid identity",
+		},
+		{
+			name: "two routing suites for one package",
+			change: func(s *checkpoint.State) {
+				s.Baseline.Routing.Suites = append(s.Baseline.Routing.Suites, s.Baseline.Routing.Suites[0])
+			},
+			want: "duplicate baseline suite",
+		},
+		{
+			name: "routing instrumentation of a file with no path",
+			change: func(s *checkpoint.State) {
+				s.Baseline.Routing.Instrumented.Files = []checkpoint.FileCoverage{{}}
+			},
+			want: "baseline instrumentation is invalid",
+		},
+		{
+			name: "a routing suite whose coverage names no file",
+			change: func(s *checkpoint.State) {
+				s.Baseline.Routing.Suites[0].Covered.Files = []checkpoint.FileCoverage{{}}
+			},
+			want: "invalid covered blocks",
+		},
+		{
+			name: "a routing suite whose instrumentation names no file",
+			change: func(s *checkpoint.State) {
+				s.Baseline.Routing.Suites[0].Instrumented.Files = []checkpoint.FileCoverage{{}}
+			},
+			want: "invalid instrumentation",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			state := completeCheckpoint()
+			test.change(&state)
+			err := checkpoint.Validate(state)
+			if err == nil {
+				t.Fatalf("Validate accepted a complete checkpoint with %s", test.name)
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Validate reported %v, want it to say %q", err, test.want)
+			}
+		})
+	}
+}
+
+func completeCheckpoint() checkpoint.State {
+	state := validCheckpoint()
+	state.Baseline.Complete = true
+	state.Baseline.Suites = nil
+	state.Baseline.Targets[0].Target.Instrumented = nil
+	state.Baseline.Routing = &checkpoint.BaselineRouting{
+		Suites: []checkpoint.SuiteCoverage{{Package: "example.test/fixture"}},
+	}
+	return state
+}

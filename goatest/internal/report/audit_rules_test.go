@@ -281,3 +281,117 @@ func TestAPersistedReportIsAuditedFieldByFieldAndSaysWhichOneFailed(t *testing.T
 		})
 	}
 }
+
+func TestAReportAcceptsEveryValueAtTheEdgeOfARule(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		change func(*report.Report)
+	}{
+		{name: "one attempt", change: func(value *report.Report) { value.Resume.Attempts = 1 }},
+		{
+			name:   "a resume that reused every selected target",
+			change: func(value *report.Report) { value.Resume.ReusedTargets = value.Accounting.Targets.Selected },
+		},
+		{
+			name:   "a resume that reused no target at all",
+			change: func(value *report.Report) { value.Resume.ReusedTargets = 0 },
+		},
+		{
+			name:   "a target on the first line",
+			change: func(value *report.Report) { value.Targets[0].Line = 0 },
+		},
+		{
+			name:   "a target that took no time",
+			change: func(value *report.Report) { value.Targets[0].DurationMS = 0 },
+		},
+		{name: "no resume metadata at all", change: func(value *report.Report) { value.Resume = nil }},
+		{
+			name:   "an acceptance that expires the moment after the run started",
+			change: func(value *report.Report) { value.Acceptances[0].Expires = "2026-01-01T00:00:01Z" },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			input := auditedFixture()
+			test.change(&input)
+			if err := report.Validate(input); err != nil {
+				t.Fatalf("Validate refused a report with %s: %v", test.name, err)
+			}
+		})
+	}
+}
+
+func TestAPersistedReportAcceptsEveryValueAtTheEdgeOfARule(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		change func(*report.Report)
+	}{
+		{name: "no mutation job at all", change: func(value *report.Report) { value.Execution.MutationJobs = 0 }},
+		{
+			name:   "no command timeout at all",
+			change: func(value *report.Report) { value.Execution.CommandTimeoutNS = 0 },
+		},
+		{
+			name:   "no target timeout at all",
+			change: func(value *report.Report) { value.Execution.TargetTimeoutNS = 0 },
+		},
+		{
+			name: "a run that took no time",
+			change: func(value *report.Report) {
+				value.Timing.FinishedAt = value.Timing.StartedAt
+				value.Timing.DurationMS = 0
+			},
+		},
+		{
+			name: "a cache-derived report that names its source",
+			change: func(value *report.Report) {
+				value.Cache.Derived = true
+				value.Cache.SourceRunID = "run-before"
+			},
+		},
+		{
+			name: "unavailable Git metadata that says so",
+			change: func(value *report.Report) {
+				value.Repository.Git = report.Git{Commit: "unavailable", MergeBase: "unavailable"}
+				value.Limitations = append(value.Limitations, report.Limitation{
+					Code: report.LimitationGitMetadataUnavailable, Summary: "Git metadata is unavailable",
+				})
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			input := persistedFixture()
+			test.change(&input)
+			if err := report.ValidateForPersistence(input); err != nil {
+				t.Fatalf("ValidateForPersistence refused a report with %s: %v", test.name, err)
+			}
+		})
+	}
+}
+
+func TestACountThatNamesOneNumberIsHeldToItsEquations(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		count report.CountAccounting
+	}{
+		{name: "a discovery alone", count: report.CountAccounting{Discovered: 1}},
+		{name: "a selection alone", count: report.CountAccounting{Selected: 1}},
+		{name: "an execution alone", count: report.CountAccounting{Executed: 1}},
+		{name: "a skip alone", count: report.CountAccounting{Skipped: 1}},
+		{name: "an exclusion alone", count: report.CountAccounting{Excluded: 1}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			input := auditedFixture()
+			input.Accounting.Race = test.count
+			err := report.Validate(input)
+			if err == nil || !strings.Contains(err.Error(), "race accounting mismatch") {
+				t.Fatalf("Validate reported %v, want it to refuse the race count that does not add up", err)
+			}
+		})
+	}
+}

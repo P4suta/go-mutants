@@ -283,6 +283,16 @@ func TestTargetCapabilitiesReadsTheResourcesADocCommentDeclares(t *testing.T) {
 	}
 }
 
+func integrationNode(t *testing.T, body string) ast.Node {
+	t.Helper()
+	file := parseTargetSource(t, "package sample\nfunc target() { "+body+" }\n")
+	statement, ok := findTargetFunction(t, file, "target").Body.List[0].(*ast.ExprStmt)
+	if !ok {
+		t.Fatal("the fixture body does not hold an expression")
+	}
+	return statement.X
+}
+
 func TestAnIntegrationScopeNamesOnlyResourcesItCanRead(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
@@ -295,6 +305,18 @@ func TestAnIntegrationScopeNamesOnlyResourcesItCanRead(t *testing.T) {
 			name: "a scope of one resource", body: `gt.Run(t, gt.Integration("postgres"), callback)`,
 			want: []string{"postgres"}, scoped: true,
 		},
+		{
+			name: "a scope of two resources", body: `gt.Run(t, gt.Integration("postgres", "redis"), callback)`,
+			want: []string{"postgres", "redis"}, scoped: true,
+		},
+		{name: "a run of two arguments", body: `gt.Run(t, gt.Integration("postgres"))`},
+		{name: "a call that is not a run", body: `gt.Other(t, gt.Integration("postgres"), callback)`},
+		{name: "a run under another alias", body: `other.Run(t, gt.Integration("postgres"), callback)`},
+		{name: "a scope that is not a call", body: `gt.Run(t, scope, callback)`},
+		{name: "a scope of no argument", body: `gt.Run(t, gt.Integration(), callback)`},
+		{name: "a scope that is not an integration", body: `gt.Run(t, gt.Unit(), callback)`},
+		{name: "a scope naming an identifier", body: `gt.Run(t, gt.Integration(name), callback)`},
+		{name: "a scope naming a rune", body: `gt.Run(t, gt.Integration('x'), callback)`},
 		{name: "a scope naming an empty resource", body: `gt.Run(t, gt.Integration(""), callback)`},
 		{name: "a scope naming only whitespace", body: `gt.Run(t, gt.Integration("  "), callback)`},
 		{
@@ -304,13 +326,7 @@ func TestAnIntegrationScopeNamesOnlyResourcesItCanRead(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			file := parseTargetSource(t, "package sample\nfunc target() { "+test.body+" }\n")
-			function := findTargetFunction(t, file, "target")
-			statement, ok := function.Body.List[0].(*ast.ExprStmt)
-			if !ok {
-				t.Fatal("the fixture body does not hold a call")
-			}
-			values, scoped := integrationCapabilities(statement.X, map[string]bool{"gt": true})
+			values, scoped := integrationCapabilities(integrationNode(t, test.body), map[string]bool{"gt": true})
 			if scoped != test.scoped || !slices.Equal(values, test.want) {
 				t.Fatalf("integrationCapabilities = (%q, %t), want (%q, %t)",
 					values, scoped, test.want, test.scoped)
@@ -319,6 +335,9 @@ func TestAnIntegrationScopeNamesOnlyResourcesItCanRead(t *testing.T) {
 				t.Errorf("a scope it refused answered with %q, want nothing at all", values)
 			}
 		})
+	}
+	if values, scoped := integrationCapabilities(ast.NewIdent("name"), map[string]bool{"gt": true}); scoped || values != nil {
+		t.Fatalf("a node that is not a call answered (%q, %t), want nothing at all", values, scoped)
 	}
 }
 
