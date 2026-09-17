@@ -110,9 +110,6 @@ func (layer Layer) Prepare() error { return layer.prepareWithHooks(layerHooks{})
 
 func (layer Layer) prepareWithHooks(hooks layerHooks) error {
 	hooks = hooks.resolved()
-	if layer.Dir == "" {
-		return errors.New("goatest: build cache layer has no directory")
-	}
 	if err := layer.claim(hooks); err != nil {
 		return err
 	}
@@ -198,30 +195,30 @@ func (layer Layer) ensureWithHooks(hooks layerHooks) error {
 	return nil
 }
 
-func (layer Layer) readAction(actionID []byte, hooks layerHooks) (actionRecord, time.Time, bool, error) {
+func (layer Layer) readAction(actionID []byte, hooks layerHooks) (actionRecord, time.Time, error) {
 	if layer.Dir == "" || len(actionID) == 0 {
-		return actionRecord{}, time.Time{}, false, nil
+		return actionRecord{}, time.Time{}, nil
 	}
 	path := layer.actionPath(actionID)
 	info, err := hooks.stat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return actionRecord{}, time.Time{}, false, nil
+		return actionRecord{}, time.Time{}, nil
 	}
 	if err != nil {
-		return actionRecord{}, time.Time{}, false, fmt.Errorf("goatest: read build cache action: %w", err)
+		return actionRecord{}, time.Time{}, fmt.Errorf("goatest: read build cache action: %w", err)
 	}
 	data, err := hooks.readFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return actionRecord{}, time.Time{}, false, nil
+		return actionRecord{}, time.Time{}, nil
 	}
 	if err != nil {
-		return actionRecord{}, time.Time{}, false, fmt.Errorf("goatest: read build cache action: %w", err)
+		return actionRecord{}, time.Time{}, fmt.Errorf("goatest: read build cache action: %w", err)
 	}
 	var record actionRecord
 	if err := json.Unmarshal(data, &record); err != nil || record.Output == "" || record.Size < 0 {
-		return actionRecord{}, time.Time{}, false, nil
+		return actionRecord{}, time.Time{}, nil
 	}
-	return record, info.ModTime(), true, nil
+	return record, info.ModTime(), nil
 }
 
 func (layer Layer) object(outputID []byte, hooks layerHooks) (string, int64, bool, error) {

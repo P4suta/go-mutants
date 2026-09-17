@@ -52,12 +52,9 @@ func (layers Layers) getWithHooks(actionID []byte, now time.Time, hooks layerHoo
 	hooks = hooks.resolved()
 	for _, source := range []Source{SourceScratch, SourceBase} {
 		layer := layers.layer(source)
-		record, modified, found, err := layer.readAction(actionID, hooks)
+		record, modified, err := layer.readAction(actionID, hooks)
 		if err != nil {
 			return Entry{}, SourceNone, err
-		}
-		if !found {
-			continue
 		}
 		outputID, err := hex.DecodeString(record.Output)
 		if err != nil || len(outputID) == 0 {

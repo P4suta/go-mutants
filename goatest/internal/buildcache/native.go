@@ -323,11 +323,11 @@ func PersistNative(base, source string, baseline NativeSeed, now time.Time) (res
 				result.Skipped++
 				continue
 			}
-			existing, _, found, err := layer.readAction(actionID, hooks)
+			existing, _, err := layer.readAction(actionID, hooks)
 			if err != nil {
 				return result, err
 			}
-			if found && existing.Output == action.output && existing.Size == action.size {
+			if existing.Output == action.output && existing.Size == action.size {
 				valid, err := regularFileWithSize(layer.objectPath(outputID), action.size)
 				if err != nil {
 					return result, err

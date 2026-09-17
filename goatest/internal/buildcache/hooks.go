@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"time"
+
+	"github.com/P4suta/go-mutants/goatest/internal/advisorylock"
 )
 
 type layerWritableFile interface {
@@ -37,6 +39,10 @@ type layerHooks struct {
 	rename func(oldPath, newPath string) error
 
 	now func() time.Time
+
+	lockFile func(file *os.File) (bool, error)
+
+	unlockFile func(file *os.File) error
 }
 
 func (hooks layerHooks) resolved() layerHooks {
@@ -71,6 +77,12 @@ func (hooks layerHooks) resolved() layerHooks {
 	}
 	if hooks.now == nil {
 		hooks.now = time.Now
+	}
+	if hooks.lockFile == nil {
+		hooks.lockFile = advisorylock.Try
+	}
+	if hooks.unlockFile == nil {
+		hooks.unlockFile = advisorylock.Release
 	}
 	return hooks
 }

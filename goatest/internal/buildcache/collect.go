@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/P4suta/go-mutants/goatest/internal/advisorylock"
 	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
@@ -19,6 +18,11 @@ func (layer Layer) collectionMarkerPath() string {
 }
 
 func (layer Layer) HoldCollection() (func() error, bool, error) {
+	return layer.holdCollectionWithHooks(layerHooks{})
+}
+
+func (layer Layer) holdCollectionWithHooks(hooks layerHooks) (func() error, bool, error) {
+	hooks = hooks.resolved()
 	if layer.Dir == "" {
 		return func() error { return nil }, false, nil
 	}
@@ -26,7 +30,7 @@ func (layer Layer) HoldCollection() (func() error, bool, error) {
 	if err != nil {
 		return func() error { return nil }, false, fmt.Errorf("goatest: open build cache collection lock: %w", err)
 	}
-	locked, err := advisorylock.Try(file)
+	locked, err := hooks.lockFile(file)
 	if err != nil {
 		_ = file.Close()
 		return func() error { return nil }, false, fmt.Errorf("goatest: lock build cache collection: %w", err)
@@ -36,7 +40,7 @@ func (layer Layer) HoldCollection() (func() error, bool, error) {
 		return func() error { return nil }, false, nil
 	}
 	return func() error {
-		unlockErr := advisorylock.Release(file)
+		unlockErr := hooks.unlockFile(file)
 		closeErr := file.Close()
 		if joined := errors.Join(unlockErr, closeErr); joined != nil {
 			return fmt.Errorf("goatest: release build cache collection lock: %w", joined)
@@ -54,14 +58,7 @@ func (layer Layer) collectLockedWithHooks(policy Policy, interval time.Duration,
 	if err := policy.validate(); err != nil {
 		return Collected{}, false, err
 	}
-	if layer.Dir == "" {
-		return Collected{}, false, nil
-	}
-
-	if layer.collectedRecently(interval, now, hooks) {
-		return Collected{}, false, nil
-	}
-	release, held, err := layer.HoldCollection()
+	release, held, err := layer.holdCollectionWithHooks(hooks)
 	if errors.Is(err, os.ErrNotExist) {
 		return Collected{}, false, nil
 	}

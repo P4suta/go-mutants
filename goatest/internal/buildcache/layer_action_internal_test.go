@@ -55,15 +55,12 @@ func TestReadingALayerActionRefusesEveryRecordItCannotUse(t *testing.T) {
 			if !test.absent {
 				writeLayerAction(t, layer, actionID, test.contents)
 			}
-			record, _, found, err := layer.readAction(actionID, layerHooks{}.resolved())
+			record, _, err := layer.readAction(actionID, layerHooks{}.resolved())
 			if err != nil {
 				t.Fatalf("readAction reported %v, want none", err)
 			}
-			if found != test.found {
+			if found := record != (actionRecord{}); found != test.found {
 				t.Fatalf("readAction = (%+v, %t), want %t", record, found, test.found)
-			}
-			if !found && record != (actionRecord{}) {
-				t.Errorf("a record it refused answered with %+v, want none", record)
 			}
 		})
 	}
@@ -72,12 +69,12 @@ func TestReadingALayerActionRefusesEveryRecordItCannotUse(t *testing.T) {
 func TestReadingALayerActionAnswersNothingWithoutADirectoryOrAnIdentity(t *testing.T) {
 	t.Parallel()
 	actionID := layerActionID(t)
-	if _, _, found, err := (Layer{}).readAction(actionID, layerHooks{}.resolved()); found || err != nil {
-		t.Fatalf("a layer with no directory found an action (%t, %v)", found, err)
+	if record, _, err := (Layer{}).readAction(actionID, layerHooks{}.resolved()); record != (actionRecord{}) || err != nil {
+		t.Fatalf("a layer with no directory found an action (%+v, %v)", record, err)
 	}
 	layer := Layer{Dir: t.TempDir()}
-	if _, _, found, err := layer.readAction(nil, layerHooks{}.resolved()); found || err != nil {
-		t.Fatalf("an action with no identity was found (%t, %v)", found, err)
+	if record, _, err := layer.readAction(nil, layerHooks{}.resolved()); record != (actionRecord{}) || err != nil {
+		t.Fatalf("an action with no identity was found (%+v, %v)", record, err)
 	}
 }
 
@@ -96,9 +93,9 @@ func TestReadingALayerActionReportsAFailureThatIsNotAbsence(t *testing.T) {
 			} else {
 				hooks.readFile = func(string) ([]byte, error) { return nil, sentinel }
 			}
-			_, _, found, err := layer.readAction(actionID, hooks)
-			if found || !errors.Is(err, sentinel) {
-				t.Fatalf("readAction = (%t, %v), want the %s failure", found, err, stage)
+			record, _, err := layer.readAction(actionID, hooks)
+			if record != (actionRecord{}) || !errors.Is(err, sentinel) {
+				t.Fatalf("readAction = (%+v, %v), want the %s failure", record, err, stage)
 			}
 		})
 	}
