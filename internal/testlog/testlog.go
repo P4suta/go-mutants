@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+// Package testlog reads the action log a Go test binary writes when it is given.
 package testlog
 
 import (

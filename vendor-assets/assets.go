@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+// Package vendorassets carries the third-party browser assets the HTML report.
 package vendorassets
 
 import (

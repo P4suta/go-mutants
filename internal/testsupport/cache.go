@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+// Package testsupport is the previous home of the shared test helpers, kept as.
 package testsupport
 
 import (

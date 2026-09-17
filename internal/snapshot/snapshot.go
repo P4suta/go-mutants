@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+// Package snapshot copies a source tree into a disposable working directory so.
 package snapshot
 
 import (

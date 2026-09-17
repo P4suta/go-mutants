@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+// Package operatorselect resolves profiles, families and rule names.
 package operatorselect
 
 import "github.com/P4suta/go-mutants/internal/mutation"

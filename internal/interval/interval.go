@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+// Package interval composes overlapping byte spans into a forest of nested sites.
 package interval
 
 import (

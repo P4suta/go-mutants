@@ -313,7 +313,7 @@ func copyTree(t *testing.T, from, to string) {
 	}
 }
 
-const copiedKey = "0123456789abcdef"
+const copiedKey = "0123456789abcdef" //gitleaks:allow
 
 func withACopiedWorkspace(t *testing.T) (root, entry string) {
 	t.Helper()
