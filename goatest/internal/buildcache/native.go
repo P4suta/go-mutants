@@ -86,12 +86,9 @@ func (layers Layers) importNative(actionID []byte, now time.Time, hooks layerHoo
 		return Entry{}, false, nil
 	}
 	actionName := hex.EncodeToString(actionID)
-	action, valid := readNativeAction(nativeCachePath(layers.NativeSource, actionName, "a"), actionName, hooks)
-	if !valid {
-		return Entry{}, false, nil
-	}
-	outputID, valid := nativeIdentifier(action.output)
-	if !valid {
+	action := readNativeAction(nativeCachePath(layers.NativeSource, actionName, "a"), actionName, hooks)
+	outputID := action.outputID
+	if len(outputID) == 0 {
 		return Entry{}, false, nil
 	}
 	for _, holder := range layers.holders() {
@@ -122,7 +119,7 @@ func (layers Layers) importNative(actionID []byte, now time.Time, hooks layerHoo
 
 func openNativeObject(path string, size int64) (*os.File, bool) {
 	linked, err := os.Lstat(path)
-	if err != nil || !linked.Mode().IsRegular() || linked.Size() != size {
+	if err != nil {
 		return nil, false
 	}
 	file, err := os.Open(path)
@@ -221,8 +218,8 @@ func projectNative(base, destination string, now time.Time, repair bool, hooks l
 			stamp = 0
 		}
 		actionPath := nativeCachePath(destinationPath, action.name, "a")
-		if current, valid := readNativeAction(actionPath, action.name, hooks); valid &&
-			current.output == action.output && current.size == size {
+		if current := readNativeAction(actionPath, action.name, hooks); current.output == action.output &&
+			current.size == size {
 			seed.Actions++
 			seed.actions[action.name] = true
 			continue
@@ -277,7 +274,7 @@ func persistNativeWithHooks(base, source string, baseline NativeSeed, now time.T
 		return NativePersisted{}, fmt.Errorf("goatest: native build cache persistence source %s is not a directory", sourcePath)
 	}
 	layer := Layer{Dir: basePath}
-	release, held, err := layer.HoldCollection()
+	release, held, err := layer.holdCollectionWithHooks(hooks)
 	if err != nil {
 		return NativePersisted{}, err
 	}
@@ -316,17 +313,13 @@ func persistNativeWithHooks(base, source string, baseline NativeSeed, now time.T
 			if baseline.actions[actionName] {
 				continue
 			}
-			action, valid := readNativeAction(filepath.Join(directory, name), actionName, hooks)
-			if !valid {
-				result.Skipped++
-				continue
-			}
+			action := readNativeAction(filepath.Join(directory, name), actionName, hooks)
 			actionID, actionOK := nativeIdentifier(actionName)
-			outputID, outputOK := nativeIdentifier(action.output)
-			if !actionOK || !outputOK {
+			if !actionOK || len(action.outputID) == 0 {
 				result.Skipped++
 				continue
 			}
+			outputID := action.outputID
 			existing, _, err := layer.readAction(actionID, hooks)
 			if err != nil {
 				return result, err
@@ -441,9 +434,6 @@ func prepareNativeCache(destination string, now time.Time, hooks layerHooks) err
 }
 
 func nativeIdentifier(value string) ([]byte, bool) {
-	if len(value) != hex.EncodedLen(nativeCacheIdentifierBytes) {
-		return nil, false
-	}
 	decoded, err := hex.DecodeString(value)
 	if err != nil || len(decoded) != nativeCacheIdentifierBytes {
 		return nil, false
@@ -508,14 +498,11 @@ func collectNativeWithHooks(directory string, maxBytes int64, hooks layerHooks) 
 		result.BeforeBytes += object.size
 	}
 	result.AfterBytes = result.BeforeBytes
-	if maxBytes == 0 || result.AfterBytes <= maxBytes {
+	if maxBytes == 0 {
 		return result, nil
 	}
-	slices.SortFunc(objects, func(left, right nativeObject) int {
-		if compared := left.modified.Compare(right.modified); compared != 0 {
-			return compared
-		}
-		return strings.Compare(left.name, right.name)
+	slices.SortStableFunc(objects, func(left, right nativeObject) int {
+		return left.modified.Compare(right.modified)
 	})
 	for _, object := range objects {
 		if result.AfterBytes <= maxBytes {
@@ -568,8 +555,7 @@ func inspectNativeCache(directory string, hooks layerHooks) (map[string][]string
 			path := filepath.Join(subdirectory, name)
 			switch {
 			case strings.HasSuffix(name, "-a") && !entry.IsDir():
-				action, valid := readNativeAction(path, strings.TrimSuffix(name, "-a"), hooks)
-				if valid {
+				if action := readNativeAction(path, strings.TrimSuffix(name, "-a"), hooks); action.output != "" {
 					actions[action.output] = append(actions[action.output], path)
 				}
 			case strings.HasSuffix(name, "-d"):
@@ -611,46 +597,48 @@ func inspectNativeCache(directory string, hooks layerHooks) (map[string][]string
 }
 
 type nativeAction struct {
-	output string
-	size   int64
+	output   string
+	outputID []byte
+	size     int64
 }
 
-func readNativeAction(path, name string, hooks layerHooks) (nativeAction, bool) {
+func readNativeAction(path, name string, hooks layerHooks) nativeAction {
 	if _, valid := nativeIdentifier(name); !valid {
-		return nativeAction{}, false
+		return nativeAction{}
 	}
 	info, err := hooks.lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
-		return nativeAction{}, false
+		return nativeAction{}
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return nativeAction{}, false
+		return nativeAction{}
 	}
 	defer func() { _ = file.Close() }()
 	scanner := bufio.NewScanner(file)
 	if !scanner.Scan() {
-		return nativeAction{}, false
+		return nativeAction{}
 	}
 	line := scanner.Text()
 	if scanner.Scan() || scanner.Err() != nil {
-		return nativeAction{}, false
+		return nativeAction{}
 	}
 	fields := strings.Fields(line)
 	if len(fields) != nativeActionFieldCount || fields[nativeActionFormatField] != nativeActionFormat || fields[nativeActionKeyField] != name {
-		return nativeAction{}, false
+		return nativeAction{}
 	}
-	if _, valid := nativeIdentifier(fields[nativeActionOutputField]); !valid {
-		return nativeAction{}, false
+	outputID, valid := nativeIdentifier(fields[nativeActionOutputField])
+	if !valid {
+		return nativeAction{}
 	}
 	size, err := strconv.ParseInt(fields[nativeActionSizeField], nativeActionDecimalRadix, nativeActionIntegerBits)
 	if err != nil || size < 0 {
-		return nativeAction{}, false
+		return nativeAction{}
 	}
 	if stamp, err := strconv.ParseInt(fields[nativeActionTimestampField], nativeActionDecimalRadix, nativeActionIntegerBits); err != nil || stamp < 0 {
-		return nativeAction{}, false
+		return nativeAction{}
 	}
-	return nativeAction{output: fields[nativeActionOutputField], size: size}, true
+	return nativeAction{output: fields[nativeActionOutputField], outputID: outputID, size: size}
 }
 
 func nativeObjectSize(path string, info fs.FileInfo) (int64, error) {

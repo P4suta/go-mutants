@@ -4,6 +4,8 @@
 package buildcache
 
 import (
+	"bufio"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,7 +46,9 @@ func TestANativeIdentifierIsThirtyTwoBytesWrittenInHex(t *testing.T) {
 		{name: "an identity in capitals", value: nativeIdentity("A"), want: true},
 		{name: "nothing at all"},
 		{name: "one digit short", value: nativeIdentity("a")[1:]},
+		{name: "two digits short", value: nativeIdentity("a")[2:]},
 		{name: "one digit long", value: nativeIdentity("a") + "a"},
+		{name: "two digits long", value: nativeIdentity("a") + "aa"},
 		{name: "a digit past f", value: nativeIdentity("a")[1:] + "g"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -124,6 +128,18 @@ func TestANativeActionIsOneLineOfFiveFieldsThatAgreeWithItsName(t *testing.T) {
 			contents: strings.Replace(sound, "1700000000", "-1", 1),
 		},
 		{name: "a name that is no identity", contents: sound, key: "short"},
+		{
+			name:     "an action of no size at all",
+			contents: strings.Replace(sound, " 12 ", " 0 ", 1), want: true,
+		},
+		{
+			name:     "an action stamped at the epoch",
+			contents: strings.Replace(sound, "1700000000", "0", 1), want: true,
+		},
+		{
+			name:     "an action followed by a line no reader can hold",
+			contents: sound + strings.Repeat("x", bufio.MaxScanTokenSize+1),
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -131,17 +147,25 @@ func TestANativeActionIsOneLineOfFiveFieldsThatAgreeWithItsName(t *testing.T) {
 			if key == "" {
 				key = name
 			}
-			action, read := readNativeAction(writeNativeAction(t, test.contents), key, layerHooks{}.resolved())
+			action := readNativeAction(writeNativeAction(t, test.contents), key, layerHooks{}.resolved())
+			read := action.output != ""
 			if read != test.want {
 				t.Fatalf("readNativeAction = (%+v, %t), want %t", action, read, test.want)
 			}
 			if !read {
-				if action != (nativeAction{}) {
+				if action.size != 0 || len(action.outputID) != 0 {
 					t.Errorf("an action it refused answered with %+v, want none", action)
 				}
 				return
 			}
-			if action.output != output || action.size != nativeActionObjectSize {
+			if hex.EncodeToString(action.outputID) != action.output {
+				t.Errorf("the action decoded %x, want the output %q it names", action.outputID, action.output)
+			}
+			wantSize := int64(nativeActionObjectSize)
+			if strings.Contains(test.contents, " 0 ") {
+				wantSize = 0
+			}
+			if action.output != output || action.size != wantSize {
 				t.Fatalf("readNativeAction = %+v, want the output %q of %d bytes",
 					action, output, nativeActionObjectSize)
 			}
@@ -156,10 +180,10 @@ func TestANativeActionThatIsNoRegularFileIsNotRead(t *testing.T) {
 	if err := os.MkdirAll(directory, filemode.ReadableDirectory); err != nil {
 		t.Fatal(err)
 	}
-	if action, read := readNativeAction(directory, nativeIdentity("a"), layerHooks{}.resolved()); read {
+	if action := readNativeAction(directory, nativeIdentity("a"), layerHooks{}.resolved()); action.output != "" {
 		t.Fatalf("a directory was read as the action %+v", action)
 	}
-	if action, read := readNativeAction(filepath.Join(root, "absent"), nativeIdentity("a"), layerHooks{}.resolved()); read {
+	if action := readNativeAction(filepath.Join(root, "absent"), nativeIdentity("a"), layerHooks{}.resolved()); action.output != "" {
 		t.Fatalf("a file that is not there was read as the action %+v", action)
 	}
 }

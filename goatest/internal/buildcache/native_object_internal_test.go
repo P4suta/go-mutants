@@ -16,7 +16,11 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
-const nativeObjectBody = "0123456789"
+const (
+	nativeObjectBody = "0123456789"
+
+	inspectionsBeforeTheLink = 2
+)
 
 func nativeSourceFile(t *testing.T, body string) string {
 	t.Helper()
@@ -159,6 +163,13 @@ func TestPersistingAnObjectReportsEveryStepItCouldNotTake(t *testing.T) {
 			want: "inspect persistent build cache object",
 		},
 		{
+			name: "a destination it cannot inspect",
+			hooks: func(_, destination string) layerHooks {
+				return failingLstat(failure, func(path string) bool { return path == destination })
+			},
+			want: "inspect build cache object",
+		},
+		{
 			name: "a directory it cannot make",
 			hooks: func(string, string) layerHooks {
 				return layerHooks{mkdirAll: func(string, os.FileMode) error { return failure }}
@@ -233,7 +244,7 @@ func TestPersistingAnObjectReportsASecondInspectionItCouldNotFinish(t *testing.T
 				return os.Lstat(path)
 			}
 			seen++
-			if seen > 2 {
+			if seen > inspectionsBeforeTheLink {
 				return nil, failure
 			}
 			return nil, os.ErrNotExist
