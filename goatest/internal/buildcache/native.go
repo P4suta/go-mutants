@@ -95,11 +95,11 @@ func (layers Layers) importNative(actionID []byte, now time.Time, hooks layerHoo
 		return Entry{}, false, nil
 	}
 	for _, holder := range layers.holders() {
-		path, stored, found, err := layers.layer(holder).object(outputID, hooks)
+		path, stored, err := layers.layer(holder).object(outputID, hooks)
 		if err != nil {
 			return Entry{}, false, err
 		}
-		if found && stored == action.size {
+		if path != "" && stored == action.size {
 			entry, err := layers.target().putAction(actionID, outputID, action.size, now, path, hooks)
 			return entry, err == nil, err
 		}
@@ -199,11 +199,11 @@ func projectNative(base, destination string, now time.Time, repair bool) (Native
 			seed.Skipped++
 			continue
 		}
-		source, size, found, objectErr := (Layer{Dir: basePath}).object(outputID, hooks)
+		source, size, objectErr := (Layer{Dir: basePath}).object(outputID, hooks)
 		if objectErr != nil {
 			return NativeSeed{}, objectErr
 		}
-		if !found || size != action.size {
+		if source == "" || size != action.size {
 			seed.Skipped++
 			continue
 		}

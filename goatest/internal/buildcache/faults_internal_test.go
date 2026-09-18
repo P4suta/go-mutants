@@ -82,14 +82,27 @@ func TestPutPropagatesEveryWriteStage(t *testing.T) {
 			t.Parallel()
 			failure := errors.New(stage + " failure")
 			object := strings.HasPrefix(stage, "object-")
-			file := &stubLayerFile{name: filepath.Join(t.TempDir(), "temporary")}
+			directory := t.TempDir()
+			file := &stubLayerFile{name: filepath.Join(directory, "object-temporary")}
+			actionFile := &stubLayerFile{name: filepath.Join(directory, "action-temporary")}
+			staged := file
+			if !object {
+				staged = actionFile
+			}
+			opened := 0
 			hooks := layerHooks{
-				createTemporary: func(string, string) (layerWritableFile, error) { return file, nil },
-				stat:            func(string) (fs.FileInfo, error) { return nil, os.ErrNotExist },
-				remove:          func(string) error { return nil },
-				rename:          func(string, string) error { return nil },
-				copyBody:        func(io.Writer, io.Reader) (int64, error) { return stubCopiedBytes, nil },
-				mkdirAll:        func(string, os.FileMode) error { return nil },
+				createTemporary: func(string, string) (layerWritableFile, error) {
+					opened++
+					if opened == 1 {
+						return file, nil
+					}
+					return actionFile, nil
+				},
+				stat:     func(string) (fs.FileInfo, error) { return nil, os.ErrNotExist },
+				remove:   func(string) error { return nil },
+				rename:   func(string, string) error { return nil },
+				copyBody: func(io.Writer, io.Reader) (int64, error) { return stubCopiedBytes, nil },
+				mkdirAll: func(string, os.FileMode) error { return nil },
 			}
 			switch stage {
 			case "object-mkdir":
@@ -118,11 +131,11 @@ func TestPutPropagatesEveryWriteStage(t *testing.T) {
 			case "object-copy":
 				hooks.copyBody = func(io.Writer, io.Reader) (int64, error) { return 0, failure }
 			case "action-write":
-				file.writeErr = failure
+				staged.writeErr = failure
 			case "object-sync", "action-sync":
-				file.syncErr = failure
+				staged.syncErr = failure
 			case "object-close", "action-close":
-				file.closeErr = failure
+				staged.closeErr = failure
 			case "object-rename", "action-rename":
 				renamed := 0
 				hooks.rename = func(string, string) error {

@@ -61,11 +61,11 @@ func (layers Layers) getWithHooks(actionID []byte, now time.Time, hooks layerHoo
 			continue
 		}
 		for _, holder := range []Source{SourceScratch, SourceBase} {
-			path, size, found, err := layers.layer(holder).object(outputID, hooks)
+			path, size, err := layers.layer(holder).object(outputID, hooks)
 			if err != nil {
 				return Entry{}, SourceNone, err
 			}
-			if !found || size != record.Size {
+			if path == "" || size != record.Size {
 				continue
 			}
 			layer.touch(actionID, modified, now, hooks)
@@ -90,11 +90,11 @@ func (layers Layers) putWithHooks(actionID, outputID []byte, body io.Reader, siz
 	hooks = hooks.resolved()
 	target := layers.target()
 	for _, holder := range layers.holders() {
-		path, stored, found, err := layers.layer(holder).object(outputID, hooks)
+		path, stored, err := layers.layer(holder).object(outputID, hooks)
 		if err != nil {
 			return Entry{}, err
 		}
-		if !found || stored != size {
+		if path == "" || stored != size {
 			continue
 		}
 		return target.putAction(actionID, outputID, size, now, path, hooks)

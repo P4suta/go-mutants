@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/P4suta/go-mutants/goatest/internal/filemode"
@@ -48,6 +49,7 @@ func TestReadingALayerActionRefusesEveryRecordItCannotUse(t *testing.T) {
 		{name: "a record that is not JSON", contents: "{"},
 		{name: "a record that names no output", contents: `{"size":12}`},
 		{name: "a record of a size below zero", contents: `{"output":"abcd","size":-1}`},
+		{name: "a record whose size is not a number", contents: `{"output":"abcd","size":"twelve"}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -82,20 +84,34 @@ func TestReadingALayerActionReportsAFailureThatIsNotAbsence(t *testing.T) {
 	t.Parallel()
 	actionID := layerActionID(t)
 	sentinel := errors.New("the layer would not answer")
-	for _, stage := range []string{"stat", "read"} {
+	for _, stage := range []string{"stat", "read", "stat-absent", "read-absent"} {
 		t.Run(stage, func(t *testing.T) {
 			t.Parallel()
 			layer := Layer{Dir: t.TempDir()}
 			writeLayerAction(t, layer, actionID, `{"output":"abcd","size":12}`)
+			absent := strings.HasSuffix(stage, "-absent")
+			answer := sentinel
+			if absent {
+				answer = os.ErrNotExist
+			}
 			hooks := layerHooks{}.resolved()
-			if stage == "stat" {
-				hooks.stat = func(string) (os.FileInfo, error) { return nil, sentinel }
+			if strings.HasPrefix(stage, "stat") {
+				hooks.stat = func(string) (os.FileInfo, error) { return nil, answer }
 			} else {
-				hooks.readFile = func(string) ([]byte, error) { return nil, sentinel }
+				hooks.readFile = func(string) ([]byte, error) { return nil, answer }
 			}
 			record, _, err := layer.readAction(actionID, hooks)
-			if record != (actionRecord{}) || !errors.Is(err, sentinel) {
-				t.Fatalf("readAction = (%+v, %v), want the %s failure", record, err, stage)
+			if record != (actionRecord{}) {
+				t.Fatalf("readAction answered %+v for the %s failure, want no record", record, stage)
+			}
+			if absent {
+				if err != nil {
+					t.Fatalf("readAction reported %v for a record that is not there, want nothing", err)
+				}
+				return
+			}
+			if !errors.Is(err, sentinel) {
+				t.Fatalf("readAction reported %v, want the %s failure", err, stage)
 			}
 		})
 	}
