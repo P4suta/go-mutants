@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -45,6 +46,9 @@ func TestNoOtherFileCarriesACommentThatIsNotAllowed(t *testing.T) {
 	binary, err := exec.LookPath("ocomment")
 	if err != nil {
 		t.Fatalf("ocomment is not on PATH: %v", err)
+	}
+	if _, err := os.ReadFile(binary); err != nil {
+		t.Fatalf("read the comment gate's own tool: %v", err)
 	}
 	root := moduleRoot(t)
 	if engine, found := engineRoot(t); found {
