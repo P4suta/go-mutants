@@ -4,6 +4,7 @@
 package buildcache
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,5 +161,114 @@ func TestABaseDirectoryIsWhereTheConfigurationSaysOrTheFallback(t *testing.T) {
 				t.Fatalf("BaseDirectory = %q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestMainRefusesTheFlagsItCannotParseWithoutGoingFurther(t *testing.T) {
+	t.Parallel()
+	var stderr strings.Builder
+	code := Main([]string{"--no-such-flag"}, strings.NewReader(""), io.Discard, &stderr)
+	if code != CacheProgramUsageExitCode {
+		t.Fatalf("an unparsable invocation exited %d, want %d", code, CacheProgramUsageExitCode)
+	}
+	if strings.Contains(stderr.String(), "requires --scratch") {
+		t.Errorf("an unparsable invocation went on to check its flags: %q", stderr.String())
+	}
+}
+
+func TestMainRefusesACeilingBelowZero(t *testing.T) {
+	t.Parallel()
+	var stderr strings.Builder
+	code := Main([]string{"--scratch", t.TempDir(), "--max-bytes", "-1"},
+		strings.NewReader(""), io.Discard, &stderr)
+	if code != CacheProgramUsageExitCode {
+		t.Fatalf("a ceiling below zero exited %d, want %d", code, CacheProgramUsageExitCode)
+	}
+	if !strings.Contains(stderr.String(), "must not be negative") {
+		t.Errorf("a ceiling below zero reported %q, want it named", stderr.String())
+	}
+}
+
+func TestOpeningLayersLeavesTheBaseAloneUntilItIsNamedAndWrittenTo(t *testing.T) {
+	t.Parallel()
+	t.Run("no base at all", func(t *testing.T) {
+		t.Parallel()
+		layers, err := openLayers("", t.TempDir(), "", false, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if layers.Base.Dir != "" {
+			t.Fatalf("opening without a base named %q, want no base layer", layers.Base.Dir)
+		}
+	})
+	for _, test := range []struct {
+		name    string
+		persist bool
+		created bool
+	}{
+		{name: "a base that is only read", persist: false},
+		{name: "a base that is written to", persist: true, created: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			base := filepath.Join(t.TempDir(), "base")
+			layers, err := openLayers(base, t.TempDir(), "", test.persist, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if layers.Base.Dir != base {
+				t.Fatalf("opening named %q as its base, want %q", layers.Base.Dir, base)
+			}
+			_, statErr := os.Stat(base)
+			if created := statErr == nil; created != test.created {
+				t.Fatalf("%s was created=%t, want %t", test.name, created, test.created)
+			}
+		})
+	}
+}
+
+func TestOpeningLayersReportsABaseItCannotCreate(t *testing.T) {
+	t.Parallel()
+	base := filepath.Join(t.TempDir(), "base")
+	if err := os.WriteFile(base, nil, filemode.ReadableFile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openLayers(base, t.TempDir(), "", true, 0); err == nil {
+		t.Fatal("a base that is a file was opened")
+	}
+}
+
+func TestResolvingANativeSourceIgnoresAnExclusionThatNamesNothing(t *testing.T) {
+	t.Parallel()
+	working, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(working)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveNativeSource(working, ""); got != resolved {
+		t.Fatalf("resolving against an exclusion that names nothing answered %q, want %q", got, resolved)
+	}
+}
+
+func TestResolvingANativeSourceExcludesALayerReachedByAnotherName(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	native := filepath.Join(root, "native")
+	if err := os.MkdirAll(native, filemode.ReadableDirectory); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(native, link); err != nil {
+		t.Skipf("this platform does not make symbolic links: %v", err)
+	}
+	if got := resolveNativeSource(native, link); got != "" {
+		t.Fatalf("resolving a source another name already covers answered %q, want none", got)
+	}
+	other := filepath.Join(root, "other")
+	if got := resolveNativeSource(native, other); got == "" {
+		t.Fatalf("resolving against an exclusion that is not there answered none, want the source")
 	}
 }
