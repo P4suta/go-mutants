@@ -86,7 +86,7 @@ func (layers Layers) importNative(actionID []byte, now time.Time, hooks layerHoo
 		return Entry{}, false, nil
 	}
 	actionName := hex.EncodeToString(actionID)
-	action, valid := readNativeAction(nativeCachePath(layers.NativeSource, actionName, "a"), actionName)
+	action, valid := readNativeAction(nativeCachePath(layers.NativeSource, actionName, "a"), actionName, hooks)
 	if !valid {
 		return Entry{}, false, nil
 	}
@@ -160,14 +160,14 @@ func (reader *verifiedNativeReader) Read(destination []byte) (int, error) {
 }
 
 func SeedNative(base, destination string, now time.Time) (NativeSeed, error) {
-	return projectNative(base, destination, now, false)
+	return projectNative(base, destination, now, false, layerHooks{})
 }
 
 func RefreshNative(base, destination string, now time.Time) (NativeSeed, error) {
-	return projectNative(base, destination, now, true)
+	return projectNative(base, destination, now, true, layerHooks{})
 }
 
-func projectNative(base, destination string, now time.Time, repair bool) (NativeSeed, error) {
+func projectNative(base, destination string, now time.Time, repair bool, hooks layerHooks) (NativeSeed, error) {
 	if base == "" || destination == "" {
 		return NativeSeed{}, errors.New("goatest: native build cache seed requires source and destination")
 	}
@@ -182,10 +182,10 @@ func projectNative(base, destination string, now time.Time, repair bool) (Native
 	if basePath == destinationPath {
 		return NativeSeed{}, errors.New("goatest: native build cache source and destination are the same directory")
 	}
-	if err := prepareNativeCache(destinationPath, now); err != nil {
+	hooks = hooks.resolved()
+	if err := prepareNativeCache(destinationPath, now, hooks); err != nil {
 		return NativeSeed{}, err
 	}
-	hooks := layerHooks{}.resolved()
 	actions, _, err := (Layer{Dir: basePath}).list(hooks)
 	if err != nil {
 		return NativeSeed{}, err
@@ -209,7 +209,7 @@ func projectNative(base, destination string, now time.Time, repair bool) (Native
 		}
 		outputPath := nativeCachePath(destinationPath, action.output, "d")
 		if !linked[action.output] {
-			if err := linkNativeObject(source, outputPath, size, repair); err != nil {
+			if err := linkNativeObject(source, outputPath, size, repair, hooks); err != nil {
 				return NativeSeed{}, err
 			}
 			seed.Objects++
@@ -221,17 +221,17 @@ func projectNative(base, destination string, now time.Time, repair bool) (Native
 			stamp = 0
 		}
 		actionPath := nativeCachePath(destinationPath, action.name, "a")
-		if current, valid := readNativeAction(actionPath, action.name); valid &&
+		if current, valid := readNativeAction(actionPath, action.name, hooks); valid &&
 			current.output == action.output && current.size == size {
 			seed.Actions++
 			seed.actions[action.name] = true
 			continue
 		}
-		if _, err := os.Lstat(actionPath); err == nil {
+		if _, err := hooks.lstat(actionPath); err == nil {
 			if !repair {
 				return NativeSeed{}, fmt.Errorf("goatest: native build cache action %s is not the expected projection", actionPath)
 			}
-			if err := os.RemoveAll(actionPath); err != nil {
+			if err := hooks.removeAll(actionPath); err != nil {
 				return NativeSeed{}, fmt.Errorf("goatest: replace native build cache action: %w", err)
 			}
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -240,7 +240,7 @@ func projectNative(base, destination string, now time.Time, repair bool) (Native
 		record := fmt.Appendf(nil, "%s %s %s %*d %*d\n", nativeActionFormat, action.name, action.output,
 			nativeActionDecimalWidth, size, nativeActionDecimalWidth, stamp)
 
-		if err := os.WriteFile(actionPath, record, filemode.PrivateFile); err != nil {
+		if err := hooks.writeFile(actionPath, record, filemode.PrivateFile); err != nil {
 			return NativeSeed{}, fmt.Errorf("goatest: write native build cache action: %w", err)
 		}
 		seed.Actions++
@@ -249,7 +249,12 @@ func projectNative(base, destination string, now time.Time, repair bool) (Native
 	return seed, nil
 }
 
-func PersistNative(base, source string, baseline NativeSeed, now time.Time) (result NativePersisted, resultErr error) {
+func PersistNative(base, source string, baseline NativeSeed, now time.Time) (NativePersisted, error) {
+	return persistNativeWithHooks(base, source, baseline, now, layerHooks{})
+}
+
+func persistNativeWithHooks(base, source string, baseline NativeSeed, now time.Time, hooks layerHooks) (result NativePersisted, resultErr error) {
+	hooks = hooks.resolved()
 	if base == "" || source == "" {
 		return NativePersisted{}, errors.New("goatest: native build cache persistence requires source and destination")
 	}
@@ -264,7 +269,7 @@ func PersistNative(base, source string, baseline NativeSeed, now time.Time) (res
 	if basePath == sourcePath {
 		return NativePersisted{}, errors.New("goatest: native build cache persistence source and destination are the same directory")
 	}
-	root, err := os.Lstat(sourcePath)
+	root, err := hooks.lstat(sourcePath)
 	if err != nil {
 		return NativePersisted{}, fmt.Errorf("goatest: inspect native build cache persistence source: %w", err)
 	}
@@ -286,10 +291,9 @@ func PersistNative(base, source string, baseline NativeSeed, now time.Time) (res
 	if baseline.actions == nil {
 		baseline.actions = make(map[string]bool)
 	}
-	hooks := layerHooks{}.resolved()
 	for prefix := 0; prefix < nativeCachePrefixCount; prefix++ {
 		directory := filepath.Join(sourcePath, fmt.Sprintf("%02x", prefix))
-		info, err := os.Lstat(directory)
+		info, err := hooks.lstat(directory)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -299,7 +303,7 @@ func PersistNative(base, source string, baseline NativeSeed, now time.Time) (res
 		if !info.IsDir() {
 			return result, fmt.Errorf("goatest: native build cache persistence prefix %s is not a directory", directory)
 		}
-		entries, err := os.ReadDir(directory)
+		entries, err := hooks.readDir(directory)
 		if err != nil {
 			return result, fmt.Errorf("goatest: inspect native build cache persistence source: %w", err)
 		}
@@ -312,7 +316,7 @@ func PersistNative(base, source string, baseline NativeSeed, now time.Time) (res
 			if baseline.actions[actionName] {
 				continue
 			}
-			action, valid := readNativeAction(filepath.Join(directory, name), actionName)
+			action, valid := readNativeAction(filepath.Join(directory, name), actionName, hooks)
 			if !valid {
 				result.Skipped++
 				continue
@@ -328,7 +332,7 @@ func PersistNative(base, source string, baseline NativeSeed, now time.Time) (res
 				return result, err
 			}
 			if existing.Output == action.output && existing.Size == action.size {
-				valid, err := regularFileWithSize(layer.objectPath(outputID), action.size)
+				valid, err := regularFileWithSize(layer.objectPath(outputID), action.size, hooks)
 				if err != nil {
 					return result, err
 				}
@@ -338,11 +342,11 @@ func PersistNative(base, source string, baseline NativeSeed, now time.Time) (res
 				}
 			}
 			sourceObject := nativeCachePath(sourcePath, action.output, "d")
-			created, valid, err := persistNativeObject(sourceObject, layer.objectPath(outputID), action.size, now)
+			persisted, err := persistNativeObject(sourceObject, layer.objectPath(outputID), action.size, now, hooks)
 			if err != nil {
 				return result, err
 			}
-			if !valid {
+			if persisted == objectUnusable {
 				result.Skipped++
 				continue
 			}
@@ -350,7 +354,7 @@ func PersistNative(base, source string, baseline NativeSeed, now time.Time) (res
 				return result, err
 			}
 			result.Actions++
-			if created {
+			if persisted == objectLinked {
 				result.Objects++
 				result.Bytes += action.size
 			}
@@ -360,44 +364,54 @@ func PersistNative(base, source string, baseline NativeSeed, now time.Time) (res
 	return result, nil
 }
 
-func persistNativeObject(source, destination string, size int64, now time.Time) (bool, bool, error) {
-	valid, err := regularFileWithSize(source, size)
-	if (false && (err != nil)) || !valid {
-		return false, valid, err
+type persistedObject int
+
+const (
+	objectUnusable persistedObject = iota
+
+	objectPresent
+
+	objectLinked
+)
+
+func persistNativeObject(source, destination string, size int64, now time.Time, hooks layerHooks) (persistedObject, error) {
+	valid, err := regularFileWithSize(source, size, hooks)
+	if !valid {
+		return objectUnusable, err
 	}
-	valid, err = regularFileWithSize(destination, size)
+	valid, err = regularFileWithSize(destination, size, hooks)
 	if err != nil {
-		return false, false, err
+		return objectUnusable, err
 	}
 	if valid {
-		return false, true, nil
+		return objectPresent, nil
 	}
-	if _, err := os.Lstat(destination); err == nil {
-		return false, false, fmt.Errorf("goatest: persistent build cache object %s has unexpected contents", destination)
+	if _, err := hooks.lstat(destination); err == nil {
+		return objectUnusable, fmt.Errorf("goatest: persistent build cache object %s has unexpected contents", destination)
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return false, false, fmt.Errorf("goatest: inspect persistent build cache object: %w", err)
+		return objectUnusable, fmt.Errorf("goatest: inspect persistent build cache object: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(destination), filemode.ReadableDirectory); err != nil {
-		return false, false, fmt.Errorf("goatest: create persistent build cache object directory: %w", err)
+	if err := hooks.mkdirAll(filepath.Dir(destination), filemode.ReadableDirectory); err != nil {
+		return objectUnusable, fmt.Errorf("goatest: create persistent build cache object directory: %w", err)
 	}
-	if err := os.Chtimes(source, now, now); err != nil {
-		return false, false, fmt.Errorf("goatest: retain native build cache object: %w", err)
+	if err := hooks.chtimes(source, now, now); err != nil {
+		return objectUnusable, fmt.Errorf("goatest: retain native build cache object: %w", err)
 	}
-	if err := os.Link(source, destination); err != nil {
-		valid, inspectErr := regularFileWithSize(destination, size)
+	if err := hooks.link(source, destination); err != nil {
+		valid, inspectErr := regularFileWithSize(destination, size, hooks)
 		if inspectErr != nil {
-			return false, false, inspectErr
+			return objectUnusable, inspectErr
 		}
 		if valid {
-			return false, true, nil
+			return objectPresent, nil
 		}
-		return false, false, fmt.Errorf("goatest: persist native build cache object: %w", err)
+		return objectUnusable, fmt.Errorf("goatest: persist native build cache object: %w", err)
 	}
-	return true, true, nil
+	return objectLinked, nil
 }
 
-func regularFileWithSize(path string, size int64) (bool, error) {
-	info, err := os.Lstat(path)
+func regularFileWithSize(path string, size int64, hooks layerHooks) (bool, error) {
+	info, err := hooks.lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -407,12 +421,12 @@ func regularFileWithSize(path string, size int64) (bool, error) {
 	return info.Mode().IsRegular() && info.Size() == size, nil
 }
 
-func prepareNativeCache(destination string, now time.Time) error {
-	if err := os.MkdirAll(destination, filemode.PrivateDirectory); err != nil {
+func prepareNativeCache(destination string, now time.Time, hooks layerHooks) error {
+	if err := hooks.mkdirAll(destination, filemode.PrivateDirectory); err != nil {
 		return fmt.Errorf("goatest: create native build cache: %w", err)
 	}
 	for prefix := 0; prefix < nativeCachePrefixCount; prefix++ {
-		if err := os.MkdirAll(filepath.Join(destination, fmt.Sprintf("%02x", prefix)), filemode.PrivateDirectory); err != nil {
+		if err := hooks.mkdirAll(filepath.Join(destination, fmt.Sprintf("%02x", prefix)), filemode.PrivateDirectory); err != nil {
 			return fmt.Errorf("goatest: create native build cache: %w", err)
 		}
 	}
@@ -420,7 +434,7 @@ func prepareNativeCache(destination string, now time.Time) error {
 		now = time.Now()
 	}
 
-	if err := os.WriteFile(filepath.Join(destination, "trim.txt"), fmt.Appendf(nil, "%d", now.Unix()), filemode.PrivateFile); err != nil {
+	if err := hooks.writeFile(filepath.Join(destination, "trim.txt"), fmt.Appendf(nil, "%d", now.Unix()), filemode.PrivateFile); err != nil {
 		return fmt.Errorf("goatest: initialize native build cache trim record: %w", err)
 	}
 	return nil
@@ -441,9 +455,9 @@ func nativeCachePath(root, identifier, kind string) string {
 	return filepath.Join(root, identifier[:nativeCachePrefixHexDigits], identifier+"-"+kind)
 }
 
-func linkNativeObject(source, destination string, size int64, repair bool) error {
-	if info, err := os.Lstat(destination); err == nil {
-		sourceInfo, sourceErr := os.Lstat(source)
+func linkNativeObject(source, destination string, size int64, repair bool, hooks layerHooks) error {
+	if info, err := hooks.lstat(destination); err == nil {
+		sourceInfo, sourceErr := hooks.lstat(source)
 		if sourceErr != nil {
 			return fmt.Errorf("goatest: inspect native build cache source object: %w", sourceErr)
 		}
@@ -457,13 +471,13 @@ func linkNativeObject(source, destination string, size int64, repair bool) error
 			return fmt.Errorf("goatest: native build cache object %s is not the expected projection", destination)
 		}
 
-		if err := os.RemoveAll(destination); err != nil {
+		if err := hooks.removeAll(destination); err != nil {
 			return fmt.Errorf("goatest: replace native build cache object: %w", err)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("goatest: inspect native build cache object: %w", err)
 	}
-	if err := os.Link(source, destination); err != nil {
+	if err := hooks.link(source, destination); err != nil {
 		return fmt.Errorf("goatest: hard-link native build cache object: %w", err)
 	}
 	return nil
@@ -477,10 +491,15 @@ type nativeObject struct {
 }
 
 func CollectNative(directory string, maxBytes int64) (NativeCollected, error) {
+	return collectNativeWithHooks(directory, maxBytes, layerHooks{})
+}
+
+func collectNativeWithHooks(directory string, maxBytes int64, hooks layerHooks) (NativeCollected, error) {
+	hooks = hooks.resolved()
 	if maxBytes < 0 {
 		return NativeCollected{}, errors.New("goatest: native build cache bound must not be negative")
 	}
-	actions, objects, err := inspectNativeCache(directory)
+	actions, objects, err := inspectNativeCache(directory, hooks)
 	if err != nil {
 		return NativeCollected{}, err
 	}
@@ -502,14 +521,14 @@ func CollectNative(directory string, maxBytes int64) (NativeCollected, error) {
 		if result.AfterBytes <= maxBytes {
 			break
 		}
-		if err := os.RemoveAll(object.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := hooks.removeAll(object.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return NativeCollected{}, fmt.Errorf("goatest: collect native build cache object: %w", err)
 		}
 		result.RemovedObjects++
 		result.RemovedBytes += object.size
 		result.AfterBytes -= object.size
 		for _, action := range actions[object.name] {
-			if err := os.Remove(action); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if err := hooks.remove(action); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return NativeCollected{}, fmt.Errorf("goatest: collect native build cache action: %w", err)
 			}
 			result.RemovedActions++
@@ -518,8 +537,8 @@ func CollectNative(directory string, maxBytes int64) (NativeCollected, error) {
 	return result, nil
 }
 
-func inspectNativeCache(directory string) (map[string][]string, []nativeObject, error) {
-	root, err := os.Lstat(directory)
+func inspectNativeCache(directory string, hooks layerHooks) (map[string][]string, []nativeObject, error) {
+	root, err := hooks.lstat(directory)
 	if err != nil {
 		return nil, nil, fmt.Errorf("goatest: inspect native build cache root: %w", err)
 	}
@@ -530,7 +549,7 @@ func inspectNativeCache(directory string) (map[string][]string, []nativeObject, 
 	var objects []nativeObject
 	for prefix := 0; prefix < nativeCachePrefixCount; prefix++ {
 		subdirectory := filepath.Join(directory, fmt.Sprintf("%02x", prefix))
-		info, err := os.Lstat(subdirectory)
+		info, err := hooks.lstat(subdirectory)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -540,7 +559,7 @@ func inspectNativeCache(directory string) (map[string][]string, []nativeObject, 
 		if !info.IsDir() {
 			return nil, nil, fmt.Errorf("goatest: native build cache prefix %s is not a directory", subdirectory)
 		}
-		entries, err := os.ReadDir(subdirectory)
+		entries, err := hooks.readDir(subdirectory)
 		if err != nil {
 			return nil, nil, fmt.Errorf("goatest: inspect native build cache: %w", err)
 		}
@@ -549,7 +568,7 @@ func inspectNativeCache(directory string) (map[string][]string, []nativeObject, 
 			path := filepath.Join(subdirectory, name)
 			switch {
 			case strings.HasSuffix(name, "-a") && !entry.IsDir():
-				action, valid := readNativeAction(path, strings.TrimSuffix(name, "-a"))
+				action, valid := readNativeAction(path, strings.TrimSuffix(name, "-a"), hooks)
 				if valid {
 					actions[action.output] = append(actions[action.output], path)
 				}
@@ -576,7 +595,7 @@ func inspectNativeCache(directory string) (map[string][]string, []nativeObject, 
 
 	for index := range objects {
 		for _, action := range actions[objects[index].name] {
-			info, err := os.Stat(action)
+			info, err := hooks.stat(action)
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
@@ -596,11 +615,11 @@ type nativeAction struct {
 	size   int64
 }
 
-func readNativeAction(path, name string) (nativeAction, bool) {
+func readNativeAction(path, name string, hooks layerHooks) (nativeAction, bool) {
 	if _, valid := nativeIdentifier(name); !valid {
 		return nativeAction{}, false
 	}
-	info, err := os.Lstat(path)
+	info, err := hooks.lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return nativeAction{}, false
 	}

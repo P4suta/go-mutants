@@ -131,7 +131,7 @@ func TestANativeActionIsOneLineOfFiveFieldsThatAgreeWithItsName(t *testing.T) {
 			if key == "" {
 				key = name
 			}
-			action, read := readNativeAction(writeNativeAction(t, test.contents), key)
+			action, read := readNativeAction(writeNativeAction(t, test.contents), key, layerHooks{}.resolved())
 			if read != test.want {
 				t.Fatalf("readNativeAction = (%+v, %t), want %t", action, read, test.want)
 			}
@@ -156,10 +156,10 @@ func TestANativeActionThatIsNoRegularFileIsNotRead(t *testing.T) {
 	if err := os.MkdirAll(directory, filemode.ReadableDirectory); err != nil {
 		t.Fatal(err)
 	}
-	if action, read := readNativeAction(directory, nativeIdentity("a")); read {
+	if action, read := readNativeAction(directory, nativeIdentity("a"), layerHooks{}.resolved()); read {
 		t.Fatalf("a directory was read as the action %+v", action)
 	}
-	if action, read := readNativeAction(filepath.Join(root, "absent"), nativeIdentity("a")); read {
+	if action, read := readNativeAction(filepath.Join(root, "absent"), nativeIdentity("a"), layerHooks{}.resolved()); read {
 		t.Fatalf("a file that is not there was read as the action %+v", action)
 	}
 }

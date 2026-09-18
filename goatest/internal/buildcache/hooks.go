@@ -30,11 +30,19 @@ type layerHooks struct {
 
 	stat func(path string) (fs.FileInfo, error)
 
+	lstat func(path string) (fs.FileInfo, error)
+
 	readDir func(path string) ([]os.DirEntry, error)
 
 	chtimes func(path string, accessed, modified time.Time) error
 
 	remove func(path string) error
+
+	removeAll func(path string) error
+
+	link func(oldPath, newPath string) error
+
+	writeFile func(path string, data []byte, perm os.FileMode) error
 
 	rename func(oldPath, newPath string) error
 
@@ -71,6 +79,18 @@ func (hooks layerHooks) resolved() layerHooks {
 	}
 	if hooks.remove == nil {
 		hooks.remove = os.Remove
+	}
+	if hooks.lstat == nil {
+		hooks.lstat = func(path string) (fs.FileInfo, error) { return os.Lstat(path) }
+	}
+	if hooks.removeAll == nil {
+		hooks.removeAll = os.RemoveAll
+	}
+	if hooks.link == nil {
+		hooks.link = os.Link
+	}
+	if hooks.writeFile == nil {
+		hooks.writeFile = os.WriteFile
 	}
 	if hooks.rename == nil {
 		hooks.rename = os.Rename
