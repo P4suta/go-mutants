@@ -10,7 +10,9 @@ import (
 	"os"
 	"runtime"
 	"slices"
+	"time"
 
+	gomutants "github.com/P4suta/go-mutants"
 	"github.com/P4suta/go-mutants/goatest/internal/config"
 	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
 	"github.com/P4suta/go-mutants/goatest/internal/mutationbridge"
@@ -19,20 +21,96 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/testargs"
 )
 
-func Plan(ctx context.Context, options Options) (result report.Report, resultErr error) {
-	goMutants, err := goMutantsIdentity()
-	if err != nil {
-		return report.Report{}, err
+type planMutationSession interface {
+	Catalog() gomutants.Catalog
+}
+
+type planWorkspace interface {
+	CommandWorkspace
+	ToolchainVersion() string
+	Swept() gomutants.SweepResult
+	Close() error
+	PreparePlan(context.Context, mutationbridge.PrepareOptions) (planMutationSession, error)
+}
+
+type productionPlanWorkspace struct{ *mutationbridge.Workspace }
+
+func (workspace productionPlanWorkspace) PreparePlan(
+	ctx context.Context, options mutationbridge.PrepareOptions,
+) (planMutationSession, error) {
+	return workspace.Prepare(ctx, options)
+}
+
+type planDependencies struct {
+	goMutantsIdentity func() (string, error)
+	repositoryRoot    func(string) (string, error)
+	loadConfig        func(string) (config.Config, error)
+	normalizeTestArgs func([]string) ([]string, error)
+	sweepTemporaries  func(Options, time.Time)
+	openScratch       func(string, string, time.Time) (runScratch, error)
+	releaseScratch    func(Options, runScratch, time.Time)
+	openBuildCache    func(string, string, string, runScratch, int64) (runBuildCache, error)
+	collectBuildCache func(Options, config.Config, runBuildCache, time.Time)
+	releaseBuildCache func(Options, runBuildCache, runScratch, time.Time) error
+	openWorkspace     func(context.Context, string, mutationbridge.Options) (planWorkspace, error)
+	inspectWorkspace  func(context.Context, CommandWorkspace, string, []string, []string, time.Duration) (roundMetadata, error)
+	discoverTargets   func(string, []goanalysis.Package) ([]goanalysis.Target, error)
+	selectImpact      func(context.Context, string, goanalysis.Model, []goanalysis.Target, Options) impactSelection
+}
+
+func productionPlanDependencies() planDependencies {
+	return planDependencies{
+		goMutantsIdentity: goMutantsIdentity,
+		repositoryRoot:    repositoryRoot,
+		loadConfig:        config.Load,
+		normalizeTestArgs: testargs.Normalize,
+		sweepTemporaries: func(options Options, now time.Time) {
+			sweepRunTemporaries(options, tempowner.Sweep, now)
+		},
+		openScratch: func(temporary, root string, now time.Time) (runScratch, error) {
+			return openRunScratch(os.MkdirTemp, os.RemoveAll, temporary, root, now)
+		},
+		releaseScratch: func(options Options, scratch runScratch, now time.Time) {
+			releaseRunScratch(options, os.RemoveAll, scratch, now)
+		},
+		openBuildCache:    openRunBuildCache,
+		collectBuildCache: collectRunBuildCache,
+		releaseBuildCache: releaseBuildCache,
+		openWorkspace: func(ctx context.Context, root string, options mutationbridge.Options) (planWorkspace, error) {
+			workspace, err := mutationbridge.Open(ctx, root, options)
+			if err != nil {
+				return nil, err
+			}
+			return productionPlanWorkspace{Workspace: workspace}, nil
+		},
+		inspectWorkspace: inspectWorkspace,
+		discoverTargets:  goanalysis.DiscoverTargets,
+		selectImpact:     selectImpact,
 	}
-	return planWithGoMutantsVersion(ctx, options, goMutants)
+}
+
+func Plan(ctx context.Context, options Options) (result report.Report, resultErr error) {
+	return planWithDependencies(ctx, options, productionPlanDependencies())
 }
 
 func planWithGoMutantsVersion(ctx context.Context, options Options, goMutants string) (result report.Report, resultErr error) {
-	root, err := repositoryRoot(options.Root)
+	dependencies := productionPlanDependencies()
+	dependencies.goMutantsIdentity = func() (string, error) { return goMutants, nil }
+	return planWithDependencies(ctx, options, dependencies)
+}
+
+func planWithDependencies(
+	ctx context.Context, options Options, dependencies planDependencies,
+) (result report.Report, resultErr error) {
+	goMutants, err := dependencies.goMutantsIdentity()
 	if err != nil {
 		return report.Report{}, err
 	}
-	loaded, err := config.Load(root)
+	root, err := dependencies.repositoryRoot(options.Root)
+	if err != nil {
+		return report.Report{}, err
+	}
+	loaded, err := dependencies.loadConfig(root)
 	if err != nil {
 		return report.Report{}, err
 	}
@@ -44,7 +122,7 @@ func planWithGoMutantsVersion(ctx context.Context, options Options, goMutants st
 	if contract != "standard-v1" && contract != "deep-v1" {
 		return report.Report{}, fmt.Errorf("goatest: contract %q is unknown", contract)
 	}
-	normalizedTestArgs, err := testargs.Normalize(options.TestArgs)
+	normalizedTestArgs, err := dependencies.normalizeTestArgs(options.TestArgs)
 	if err != nil {
 		return report.Report{}, err
 	}
@@ -52,23 +130,23 @@ func planWithGoMutantsVersion(ctx context.Context, options Options, goMutants st
 
 	options.KeepTemp = false
 
-	sweepRunTemporaries(options, tempowner.Sweep, planMoment(options))
-	scratch, err := openRunScratch(os.MkdirTemp, os.RemoveAll, options.TempDirectory, root, planMoment(options))
+	dependencies.sweepTemporaries(options, planMoment(options))
+	scratch, err := dependencies.openScratch(options.TempDirectory, root, planMoment(options))
 	if err != nil {
 		emit(options, "temp-unavailable", err.Error())
 		return report.Report{}, err
 	}
-	buildCache, err := openRunBuildCache(
+	buildCache, err := dependencies.openBuildCache(
 		options.BuildCacheProgram, options.BuildCacheDir, options.BuildCacheNativeSource, scratch, loaded.Cache.BuildMaxBytes)
 	if err != nil {
 		emit(options, "build-cache-unavailable", err.Error())
 	}
 	defer func() {
-		collectRunBuildCache(options, loaded, buildCache, planMoment(options))
-		resultErr = errors.Join(resultErr, releaseBuildCache(options, buildCache, scratch, planMoment(options)))
-		releaseRunScratch(options, os.RemoveAll, scratch, planMoment(options))
+		dependencies.collectBuildCache(options, loaded, buildCache, planMoment(options))
+		resultErr = errors.Join(resultErr, dependencies.releaseBuildCache(options, buildCache, scratch, planMoment(options)))
+		dependencies.releaseScratch(options, scratch, planMoment(options))
 	}()
-	workspace, err := mutationbridge.Open(ctx, root, mutationbridge.Options{
+	workspace, err := dependencies.openWorkspace(ctx, root, mutationbridge.Options{
 		GoBinary: options.GoBinary, TempDirectory: scratch.dir,
 		ReportDirectory: internalOutputDirectory, SnapshotExclude: assuranceSnapshotExclusions(),
 		Environment: overlayEnvironment(mutationEnvironment(options.Environment, options.BuildTags), buildCache.persistingEnvironment()),
@@ -80,16 +158,16 @@ func planWithGoMutantsVersion(ctx context.Context, options Options, goMutants st
 	reportMutationSweep(options, workspace.Swept())
 	defer func() { resultErr = errors.Join(resultErr, workspace.Close()) }()
 	commands := withBuildCache(workspace, buildCache)
-	metadata, err := inspectWorkspace(ctx, commands, workspace.ToolchainVersion(), options.Packages, options.BuildTags, options.CommandTimeout)
+	metadata, err := dependencies.inspectWorkspace(ctx, commands, workspace.ToolchainVersion(), options.Packages, options.BuildTags, options.CommandTimeout)
 	if err != nil {
 		return report.Report{}, err
 	}
-	targets, err := goanalysis.DiscoverTargets(root, metadata.model.Packages)
+	targets, err := dependencies.discoverTargets(root, metadata.model.Packages)
 	if err != nil {
 		return report.Report{}, err
 	}
 	targets = includedProjectTargets(targets, loaded.Project.Exclude)
-	selection := selectImpact(ctx, root, metadata.model, targets, options)
+	selection := dependencies.selectImpact(ctx, root, metadata.model, targets, options)
 	targets = selection.targets
 	evidenceItems := make([]report.Evidence, 0, len(targets)+1)
 	for _, target := range targets {
@@ -114,7 +192,7 @@ func planWithGoMutantsVersion(ctx context.Context, options Options, goMutants st
 			packages = slices.Clone(options.Packages)
 		}
 		discoveryPackages := mutationDiscoveryPackages(include, packages)
-		session, prepareErr := workspace.Prepare(ctx, mutationbridge.PrepareOptions{
+		session, prepareErr := workspace.PreparePlan(ctx, mutationbridge.PrepareOptions{
 			Contract: contract, Operators: slices.Clone(options.MutationOperators), Include: include, Exclude: slices.Clone(loaded.Project.Exclude),
 			DiscoveryPackages: discoveryPackages, Packages: packages, Jobs: mutationJobLimit(options, loaded),
 			BuildTimeout: options.CommandTimeout, MutantTimeout: options.CommandTimeout, SkipVerify: true,
