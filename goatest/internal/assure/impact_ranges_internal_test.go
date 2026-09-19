@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -300,6 +301,65 @@ func TestMutationSelectionKeepsOnlyTheGoSourceItWasGiven(t *testing.T) {
 				if _, named := narrowed.Lines[path]; !named {
 					t.Errorf("selection does not name %q: %+v", path, narrowed.Lines)
 				}
+			}
+		})
+	}
+}
+
+func TestChangedLineRangesAsksGitAboutTheReferenceItWasGivenOrTheHead(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		reference string
+		want      string
+	}{
+		{name: "a reference it was given", reference: "origin/main", want: "origin/main"},
+		{name: "no reference at all", want: "HEAD"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTrackedFixture(t, root, "value.go")
+			var asked []string
+			previous := gitNamesOutput
+			t.Cleanup(func() { gitNamesOutput = previous })
+			gitNamesOutput = func(_ context.Context, _ string, arguments []string) ([]byte, error) {
+				if len(arguments) != 0 && arguments[0] == "ls-files" {
+					return []byte("value.go"), nil
+				}
+				asked = arguments
+				return []byte("+++ b/value.go\n@@ -1 +1 @@\n"), nil
+			}
+			if _, ok := changedLineRanges(t.Context(), root, test.reference, []string{"value.go"}); !ok {
+				t.Fatal("the diff was refused")
+			}
+			if !slices.Contains(asked, test.want) {
+				t.Fatalf("git was asked %q, want it to name %q", asked, test.want)
+			}
+		})
+	}
+}
+
+func TestAHunkSpanRefusesACountThatIsNoNumberAndAcceptsOneOfNone(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		first string
+		count string
+		read  bool
+	}{
+		{name: "a first line and a count", first: "12", count: "3", read: true},
+		{name: "a first line and no count at all", first: "12", read: true},
+		{name: "a count of none", first: "12", count: "0", read: true},
+		{name: "a first line that is no number", first: "twelve", count: "3"},
+		{name: "a count that is no number", first: "12", count: "three"},
+		{name: "a count below zero", first: "12", count: "-1"},
+		{name: "a first line below one", first: "0", count: "3"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			span, read := hunkSpan([]string{"", test.first, test.count})
+			if read != test.read {
+				t.Fatalf("%s read=%t, want %t (%+v)", test.name, read, test.read, span)
 			}
 		})
 	}
