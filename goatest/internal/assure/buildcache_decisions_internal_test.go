@@ -75,6 +75,17 @@ func TestOpenRunBuildCacheReportsAndCleansEveryFailedStage(t *testing.T) {
 	}
 }
 
+func TestMakeBuildCacheFallbackReturnsTheFilesystemFailure(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "fallback")
+	if err := os.Mkdir(path, filemode.PrivateDirectory); err != nil {
+		t.Fatal(err)
+	}
+	if err := makeBuildCacheFallback(path); err == nil {
+		t.Fatal("making an existing fallback directory succeeded")
+	}
+}
+
 func nativeCacheTestOwner(t *testing.T) *tempowner.Owner {
 	t.Helper()
 	owner, err := tempowner.Claim(t.TempDir(), nativeCacheMarker(t.Name()), nativeCacheMoment)
@@ -122,11 +133,20 @@ func TestOpenNativeBuildCacheCarriesSweepFailuresOnBothSuccessRoutes(t *testing.
 		})
 	}
 
-	owner := nativeCacheTestOwner(t)
-	dependencies := nativeOpenDependencies(owner)
-	directory, gotOwner, shared, swept, err := openNativeBuildCacheWith("base", runScratch{id: "run"}, nativeCacheMoment, dependencies)
-	if err != nil || directory != "shared-native" || gotOwner != owner || !shared || len(swept.Errors) != 0 {
-		t.Fatalf("clean shared open = (%q, %p, %t, %+v, %v)", directory, gotOwner, shared, swept, err)
+	for _, shared := range []bool{true, false} {
+		owner := nativeCacheTestOwner(t)
+		dependencies := nativeOpenDependencies(owner)
+		dependencies.claimShared = func(string, string, tempowner.Marker, time.Time) (string, *tempowner.Owner, bool, error) {
+			return "shared-native", owner, shared, nil
+		}
+		directory, gotOwner, gotShared, swept, err := openNativeBuildCacheWith("base", runScratch{id: "run"}, nativeCacheMoment, dependencies)
+		wantDirectory := "shared-native"
+		if !shared {
+			wantDirectory = "private-native"
+		}
+		if err != nil || directory != wantDirectory || gotOwner != owner || gotShared != shared || len(swept.Errors) != 0 {
+			t.Fatalf("clean open = (%q, %p, %t, %+v, %v)", directory, gotOwner, gotShared, swept, err)
+		}
 	}
 }
 
@@ -276,6 +296,28 @@ func TestNativeCollectionDecisionsCoverEveryBoundary(t *testing.T) {
 	}
 }
 
+func TestCollectNativeLockedStopsAtEveryUnavailableProjection(t *testing.T) {
+	cause := errors.New("projection failed")
+	for _, test := range []struct {
+		name       string
+		maxBytes   int64
+		projection *nativeCacheProjection
+	}{
+		{name: "no bound", projection: &nativeCacheProjection{}},
+		{name: "projection error", maxBytes: 1, projection: &nativeCacheProjection{err: cause}},
+		{name: "disabled", maxBytes: 1, projection: &nativeCacheProjection{disabled: true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			projection := test.projection
+			cache := runBuildCache{native: filepath.Join(t.TempDir(), "missing"), projection: projection, maxBytes: test.maxBytes}
+			cache.collectNativeLocked(true, nativeCacheMoment)
+			if projection.collectErr != nil || !projection.lastCollect.IsZero() {
+				t.Fatalf("unavailable collection = %+v", projection)
+			}
+		})
+	}
+}
+
 type failingBuildCacheWorkspace struct {
 	err      error
 	commands []gomutants.Command
@@ -340,6 +382,9 @@ func TestOverlayEnvironmentPreservesMalformedEntriesExactly(t *testing.T) {
 	if got := overlayEnvironment([]string{"BROKEN"}, []string{"BROKEN=value"}); !slices.Equal(got, []string{"BROKEN", "BROKEN=value"}) {
 		t.Fatalf("malformed existing environment = %q", got)
 	}
+	if got := overlayEnvironment([]string{"BROKEN=value"}, []string{"BROKEN"}); !slices.Equal(got, []string{"BROKEN=value", "BROKEN"}) {
+		t.Fatalf("malformed replacement environment = %q", got)
+	}
 }
 
 func TestUnwrapBuildCacheWorkspaceReturnsOnlyAConcreteWrappersInnerWorkspace(t *testing.T) {
@@ -397,6 +442,18 @@ func TestBeginNativeDisablesAProjectionAfterRefreshFailure(t *testing.T) {
 	release, admitted := cache.beginNative()
 	if admitted || release != nil || !projection.disabled || projection.refreshErr == nil {
 		t.Fatalf("refresh failure = (release %v, admitted %t, projection %+v)", release != nil, admitted, projection)
+	}
+}
+
+func TestBeginSeededNativeStopsAtAConcurrentlyDisabledProjection(t *testing.T) {
+	drained := false
+	projection := &nativeCacheProjection{
+		disabled: true, generation: 2, seededGeneration: 1,
+		beforeDrain: func() { drained = true },
+	}
+	release, admitted := (runBuildCache{projection: projection, maxBytes: 1}).beginSeededNative()
+	if release != nil || admitted || drained {
+		t.Fatalf("disabled admission = (release %v, admitted %t, drained %t)", release != nil, admitted, drained)
 	}
 }
 
@@ -481,8 +538,8 @@ func TestBuildCacheSummaryDistinguishesSweepAndProjectionStates(t *testing.T) {
 	}
 	base := runBuildCache{plain: "plain", scratch: scratch}
 	plain := base.summarize()
-	if plain == "" {
-		t.Fatal("plain summary is empty")
+	if plain == "" || strings.Contains(plain, "native-sweep-") {
+		t.Fatalf("plain summary = %q", plain)
 	}
 	if got := (runBuildCache{plain: "plain", scratch: scratch, projection: &nativeCacheProjection{}}).summarize(); got != plain {
 		t.Fatalf("unattempted projection summary = %q, want %q", got, plain)

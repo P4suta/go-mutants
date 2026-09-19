@@ -83,11 +83,13 @@ type runBuildCacheOpenDependencies struct {
 func openRunBuildCache(program, base, source string, runScratch runScratch, maxBytes int64) (runBuildCache, error) {
 	return openRunBuildCacheWith(program, base, source, runScratch, maxBytes, runBuildCacheOpenDependencies{
 		prepare: func(layer buildcache.Layer) error { return layer.Prepare() },
-		mkdir: func(path string) error {
-			return os.Mkdir(path, filemode.PrivateDirectory)
-		},
+		mkdir:   makeBuildCacheFallback,
 		program: buildcache.Program, openNative: openNativeBuildCache, now: time.Now,
 	})
+}
+
+func makeBuildCacheFallback(path string) error {
+	return os.Mkdir(path, filemode.PrivateDirectory)
 }
 
 func openRunBuildCacheWith(
@@ -340,6 +342,10 @@ func (cache runBuildCache) beginNative() (nativeExecutionRelease, bool) {
 	if cache.projection == nil {
 		return releaseUntrackedNativeExecution, true
 	}
+	return cache.beginSeededNative()
+}
+
+func (cache runBuildCache) beginSeededNative() (nativeExecutionRelease, bool) {
 	projection := cache.projection
 	projection.admission.Lock()
 	defer projection.admission.Unlock()
@@ -350,8 +356,7 @@ func (cache runBuildCache) beginNative() (nativeExecutionRelease, bool) {
 	}
 	now := time.Now()
 	refresh := projection.seededGeneration != projection.generation
-	collect := cache.maxBytes > 0 && (projection.lastCollect.IsZero() ||
-		now.Sub(projection.lastCollect) >= buildcache.NativeCollectInterval)
+	collect := cache.maxBytes > 0 && nativeCollectionDue(false, projection.lastCollect, now)
 	if refresh || collect {
 		projection.mutex.Unlock()
 		projection.beforeDrain()
