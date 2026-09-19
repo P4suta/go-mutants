@@ -6,6 +6,7 @@ package assure
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -123,5 +124,118 @@ func TestRemovingABuildCacheScratchTakesBackOnlyWhatItWasGiven(t *testing.T) {
 	}
 	if _, err := os.Stat(directory); !os.IsNotExist(err) {
 		t.Fatalf("the scratch it says it removed is still there: %v", err)
+	}
+}
+
+func TestABuildCacheEnvironmentNamesAFallbackOnlyWhereThereIsOne(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		cache    runBuildCache
+		plain    []string
+		persists []string
+	}{
+		{
+			name:     "a cache with a fallback directory",
+			cache:    runBuildCache{plain: "plain", persisting: "persisting", fallback: "/cache/go-build"},
+			plain:    []string{goCacheVariable + "=/cache/go-build", cacheProgramVariable + "=plain"},
+			persists: []string{goCacheVariable + "=/cache/go-build", cacheProgramVariable + "=persisting"},
+		},
+		{
+			name:     "a cache with none",
+			cache:    runBuildCache{plain: "plain", persisting: "persisting"},
+			plain:    []string{cacheProgramVariable + "=plain"},
+			persists: []string{cacheProgramVariable + "=persisting"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := test.cache.environment(); !slices.Equal(got, test.plain) {
+				t.Errorf("%s answers %q, want %q", test.name, got, test.plain)
+			}
+			if got := test.cache.persistingEnvironment(); !slices.Equal(got, test.persists) {
+				t.Errorf("%s persists with %q, want %q", test.name, got, test.persists)
+			}
+		})
+	}
+	var none runBuildCache
+	if none.environment() != nil || none.persistingEnvironment() != nil || none.nativeEnvironment() != nil {
+		t.Fatal("a cache that serves nothing named an environment")
+	}
+}
+
+func TestANativeEnvironmentTurnsTheProgramOffOnlyWhereThereIsANativeCache(t *testing.T) {
+	t.Parallel()
+	with := runBuildCache{plain: "plain", native: "/cache/native"}
+	want := []string{goCacheVariable + "=/cache/native", cacheProgramVariable + "="}
+	if got := with.nativeEnvironment(); !slices.Equal(got, want) {
+		t.Fatalf("a cache with a native projection answers %q, want %q", got, want)
+	}
+	without := runBuildCache{plain: "plain"}
+	if got := without.nativeEnvironment(); !slices.Equal(got, []string{cacheProgramVariable + "=plain"}) {
+		t.Fatalf("a cache with no native projection answers %q, want the program alone", got)
+	}
+}
+
+func TestAPlanReadsTheMomentItWasGivenOrTheOneItRuns(t *testing.T) {
+	t.Parallel()
+	given := planMoment(Options{Now: func() time.Time { return nativeCacheMoment }})
+	if !given.Equal(nativeCacheMoment) {
+		t.Fatalf("a plan read %s, want the moment it was given", given)
+	}
+	if planMoment(Options{}).IsZero() {
+		t.Fatal("a plan with no clock read no moment at all")
+	}
+}
+
+func TestACacheThatServesNothingSeedsNothingAndCompilesNothingPersistently(t *testing.T) {
+	t.Parallel()
+	var none runBuildCache
+	if none.serves() || none.seedNative() || none.needsPersistentCompile() {
+		t.Fatal("a cache that serves nothing claimed to seed or to need a persistent compile")
+	}
+	noNative := runBuildCache{plain: "plain"}
+	if !noNative.serves() || noNative.seedNative() {
+		t.Fatalf("a cache with no native projection seeds=%t, want it not to", noNative.seedNative())
+	}
+	if !noNative.needsPersistentCompile() {
+		t.Fatal("a serving cache that seeds nothing does not need a persistent compile")
+	}
+}
+
+func TestMarkingANativeCacheDirtyCountsOnlyWhereThereIsOneToMark(t *testing.T) {
+	t.Parallel()
+	projection := &nativeCacheProjection{}
+	for _, test := range []struct {
+		name  string
+		cache runBuildCache
+		marks bool
+	}{
+		{
+			name:  "a cache with a projection and a native directory",
+			cache: runBuildCache{plain: "plain", native: "/cache/native", projection: projection}, marks: true,
+		},
+		{
+			name:  "a cache with a projection and no native directory",
+			cache: runBuildCache{plain: "plain", projection: projection},
+		},
+		{
+			name:  "a cache with a native directory and no projection",
+			cache: runBuildCache{plain: "plain", native: "/cache/native"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			projection.mutex.Lock()
+			before := projection.generation
+			projection.mutex.Unlock()
+			test.cache.markNativeDirty()
+			projection.mutex.Lock()
+			after := projection.generation
+			projection.mutex.Unlock()
+			if marked := after == before+1; marked != test.marks {
+				t.Fatalf("%s moved the generation from %d to %d, want marked=%t",
+					test.name, before, after, test.marks)
+			}
+		})
 	}
 }
