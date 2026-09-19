@@ -14,6 +14,7 @@ import (
 	gomutants "github.com/P4suta/go-mutants"
 	"github.com/P4suta/go-mutants/goatest/internal/evidence"
 	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
 	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
@@ -49,6 +50,46 @@ func TestMutationSchedulerNeverCheckpointsAProtocolError(t *testing.T) {
 	}, MutationOptions{Checkpoint: func(string, MutationEvaluation) { checkpoints++ }})
 	if err == nil || checkpoints != 0 {
 		t.Fatalf("protocol error = %v, checkpoints = %d", err, checkpoints)
+	}
+}
+
+func TestOnlyResolvedSuccessfulMutationSeedsCanBeCheckpointed(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("seed failed")
+	for _, test := range []struct {
+		name string
+		seed mutationSeed
+		want bool
+	}{
+		{name: "unresolved"},
+		{name: "resolved", seed: mutationSeed{resolved: true}, want: true},
+		{name: "failed", seed: mutationSeed{err: cause}},
+		{name: "resolved failure", seed: mutationSeed{resolved: true, err: cause}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := mutationSeedCheckpointable(test.seed); got != test.want {
+				t.Fatalf("checkpointable = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestEvaluateMutationsResumesACompileRejectionWithoutCheckpointingItAgain(t *testing.T) {
+	t.Parallel()
+	const id = "compile-rejected"
+	saved := MutationEvaluation{Evidence: []report.Evidence{{Kind: "mutation", ID: id, Status: "compile-rejected", Detail: "saved"}}}
+	checkpoints := 0
+	evaluation, err := EvaluateMutations(t.Context(), &mutationUnitSession{catalog: gomutants.Catalog{
+		Mutants: []gomutants.Mutant{{ID: id}}, Rejections: []gomutants.Rejection{{ID: id, Diagnostic: "fresh"}},
+	}}, nil, MutationOptions{
+		Resume: map[string]MutationEvaluation{id: saved},
+		Checkpoint: func(string, MutationEvaluation) {
+			checkpoints++
+		},
+	})
+	if err != nil || !reflect.DeepEqual(evaluation.Evidence, saved.Evidence) || len(evaluation.Findings) != 0 || checkpoints != 0 {
+		t.Fatalf("resumed rejection = (%+v, %v), checkpoints %d", evaluation, err, checkpoints)
 	}
 }
 
@@ -204,7 +245,7 @@ func TestContainmentAfterHealthyControlRejectsEveryUnhealthyBoundary(t *testing.
 		{name: "no request budget", control: func(context.Context, gomutants.ExecRequest) (gomutants.ControlResult, error) { return healthy, nil }},
 		{name: "request at ceiling", request: limit, control: func(context.Context, gomutants.ExecRequest) (gomutants.ControlResult, error) { return healthy, nil }},
 		{name: "control error", request: time.Second, control: func(context.Context, gomutants.ExecRequest) (gomutants.ControlResult, error) {
-			return gomutants.ControlResult{}, cause
+			return healthy, cause
 		}},
 		{name: "control timeout", request: time.Second, control: func(context.Context, gomutants.ExecRequest) (gomutants.ControlResult, error) {
 			return gomutants.ControlResult{TimedOut: true, Duration: time.Second}, nil
@@ -426,6 +467,14 @@ func TestProbeRoutingStopsOnlyForPositiveSuiteEvidence(t *testing.T) {
 		if len(got.reaching) != 1 || len(got.probeReaching) != 1 {
 			t.Fatalf("non-positive suite route did not recover target: %+v", got)
 		}
+	}
+
+	existing := routedTarget("existing", true, mutant.Index)
+	got := applyProbeRouting(mutant, []TargetEvidence{target}, mutationRoute{
+		reaching: []TargetEvidence{existing}, suiteInfected: true,
+	}, nil)
+	if len(got.reaching) != 2 || len(got.probeReaching) != 1 {
+		t.Fatalf("nonempty route stopped on suite evidence: %+v", got)
 	}
 }
 

@@ -457,6 +457,20 @@ func TestBeginSeededNativeStopsAtAConcurrentlyDisabledProjection(t *testing.T) {
 	}
 }
 
+func TestBeginSeededNativeDoesNotDrainForARecentCollection(t *testing.T) {
+	drains := 0
+	projection := &nativeCacheProjection{
+		attempted: true, generation: 1, seededGeneration: 1, lastCollect: time.Now(),
+		beforeDrain: func() { drains++ },
+	}
+	projection.once.Do(func() {})
+	release, admitted := (runBuildCache{projection: projection, maxBytes: 1}).beginSeededNative()
+	if !admitted || release == nil || drains != 0 {
+		t.Fatalf("recent admission = (release %v, admitted %t, drains %d)", release != nil, admitted, drains)
+	}
+	release()
+}
+
 func TestBeginNativeRefreshDoesNotForceAnImmediateCollection(t *testing.T) {
 	base := t.TempDir()
 	if err := (buildcache.Layer{Dir: base}).Prepare(); err != nil {

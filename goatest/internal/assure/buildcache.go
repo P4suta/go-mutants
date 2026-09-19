@@ -356,7 +356,7 @@ func (cache runBuildCache) beginSeededNative() (nativeExecutionRelease, bool) {
 	}
 	now := time.Now()
 	refresh := projection.seededGeneration != projection.generation
-	collect := cache.maxBytes > 0 && nativeCollectionDue(false, projection.lastCollect, now)
+	collect := cache.maxBytes > 0 && nativeCollectionScheduled(projection.lastCollect, now)
 	if refresh || collect {
 		projection.mutex.Unlock()
 		projection.beforeDrain()
@@ -458,7 +458,11 @@ func nativeCollectionReady(maxBytes int64, projectionErr error, disabled bool) b
 }
 
 func nativeCollectionDue(force bool, lastCollect, now time.Time) bool {
-	return force || lastCollect.IsZero() || now.Sub(lastCollect) >= buildcache.NativeCollectInterval
+	return force || nativeCollectionScheduled(lastCollect, now)
+}
+
+func nativeCollectionScheduled(lastCollect, now time.Time) bool {
+	return lastCollect.IsZero() || now.Sub(lastCollect) >= buildcache.NativeCollectInterval
 }
 
 func (cache runBuildCache) persistingEnvironment() []string {

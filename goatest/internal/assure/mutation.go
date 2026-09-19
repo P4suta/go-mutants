@@ -380,7 +380,7 @@ func evaluateMutationSeeds(ctx context.Context, session MutationSession, mutants
 			defer workers.Done()
 			for index := range indexes {
 				results[index] = evaluateMutationSeed(ctx, session, mutants[index], targets, options)
-				if results[index].err == nil && results[index].resolved {
+				if mutationSeedCheckpointable(results[index]) {
 					checkpointMutation(options, mutants[index].ID, results[index].evaluation)
 				}
 				progress.Lock()
@@ -398,6 +398,10 @@ func evaluateMutationSeeds(ctx context.Context, session MutationSession, mutants
 	close(indexes)
 	workers.Wait()
 	return results
+}
+
+func mutationSeedCheckpointable(seed mutationSeed) bool {
+	return seed.err == nil && seed.resolved
 }
 
 func evaluateMutationSeed(ctx context.Context, session MutationSession, mutant gomutants.Mutant, targets []TargetEvidence, options MutationOptions) mutationSeed {
@@ -602,9 +606,6 @@ func mutationSurvivalSummary(discharged []trace.Discharge) string {
 
 func mutationDischargedSummary(discharged []trace.Discharge) string {
 	counts := countMutationDischarges(discharged)
-	if counts.infection == 0 {
-		return mutationFullyDischargedSummary
-	}
 	return mutationFullyDischargedOpening + counts.clause()
 }
 
