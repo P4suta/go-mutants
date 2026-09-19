@@ -17,6 +17,11 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
+const (
+	untrackedFixtureLineCount = 2
+	overflowingDecimalDigits  = 100
+)
+
 func scriptedDiff(t *testing.T, output string, err error, tracked ...string) {
 	t.Helper()
 	previous := gitNamesOutput
@@ -82,10 +87,47 @@ func TestChangedLineRangesFailsClosed(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			scriptedDiff(t, test.output, test.err, "value.go")
-			if _, ok := changedLineRanges(t.Context(), root, "", []string{"value.go"}); ok {
-				t.Fatal("a diff that could not be trusted was accepted")
+			if ranges, ok := changedLineRanges(t.Context(), root, "", []string{"value.go"}); ok || ranges != nil {
+				t.Fatalf("a diff that could not be trusted was accepted: (%+v, %t)", ranges, ok)
 			}
 		})
+	}
+}
+
+func TestChangedLineRangesFailsClosedWhenAnUntrackedFileCannotBeRead(t *testing.T) {
+	root := t.TempDir()
+	writeTrackedFixture(t, root, "untracked.go")
+	scriptedDiff(t, "", nil)
+	ranges, ok := changedLineRangesWithLineCount(t.Context(), root, "", []string{"untracked.go"}, func(string) (int, bool) {
+		return 1, false
+	})
+	if ok || ranges != nil {
+		t.Fatalf("unreadable untracked file = (%+v, %t)", ranges, ok)
+	}
+}
+
+func TestChangedLineRangesReturnsTheOnlyUntrackedFileWithoutAskingForADiff(t *testing.T) {
+	root := t.TempDir()
+	writeTrackedFixture(t, root, "untracked.go")
+	scriptedDiff(t, "", nil)
+	ranges, ok := changedLineRangesWithLineCount(t.Context(), root, "", []string{"untracked.go"}, func(string) (int, bool) {
+		return untrackedFixtureLineCount, true
+	})
+	want := map[string][]gomutants.LineRange{"untracked.go": {{First: 1, Last: 2}}}
+	if !ok || !reflect.DeepEqual(ranges, want) {
+		t.Fatalf("untracked-only ranges = (%+v, %t), want %+v", ranges, ok, want)
+	}
+}
+
+func TestChangedLineRangesRejectsACanceledDiffEvenWhenGitReturnsOutput(t *testing.T) {
+	root := t.TempDir()
+	writeTrackedFixture(t, root, "value.go")
+	scriptedDiff(t, "+++ b/value.go\n@@ -1 +1 @@\n", nil, "value.go")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	ranges, ok := changedLineRanges(ctx, root, "", []string{"value.go"})
+	if ok || ranges != nil {
+		t.Fatalf("canceled diff = (%+v, %t)", ranges, ok)
 	}
 }
 
@@ -111,6 +153,12 @@ func TestMutationSelectionNarrowsNothingWithoutRanges(t *testing.T) {
 	}
 	if narrowed := mutationSelection(impactSelection{changed: []string{"value.go"}}); narrowed != nil {
 		t.Fatalf("selection = %+v, want none when the diff was not read", narrowed)
+	}
+	if narrowed := mutationSelection(impactSelection{
+		changed: []string{"value.go"}, broad: true,
+		ranges: map[string][]gomutants.LineRange{"value.go": {{First: 1, Last: 1}}},
+	}); narrowed != nil {
+		t.Fatalf("selection = %+v, want none for a broad scope with diagnostic ranges", narrowed)
 	}
 }
 
@@ -351,6 +399,7 @@ func TestAHunkSpanRefusesACountThatIsNoNumberAndAcceptsOneOfNone(t *testing.T) {
 		{name: "a first line and no count at all", first: "12", read: true},
 		{name: "a count of none", first: "12", count: "0", read: true},
 		{name: "a first line that is no number", first: "twelve", count: "3"},
+		{name: "a first line that overflows", first: strings.Repeat("9", overflowingDecimalDigits), count: "3"},
 		{name: "a count that is no number", first: "12", count: "three"},
 		{name: "a count below zero", first: "12", count: "-1"},
 		{name: "a first line below one", first: "0", count: "3"},
@@ -360,6 +409,36 @@ func TestAHunkSpanRefusesACountThatIsNoNumberAndAcceptsOneOfNone(t *testing.T) {
 			span, read := hunkSpan([]string{"", test.first, test.count})
 			if read != test.read {
 				t.Fatalf("%s read=%t, want %t (%+v)", test.name, read, test.read, span)
+			}
+		})
+	}
+}
+
+func TestSplitTrackedChangesPreservesItsThreeFailureShapes(t *testing.T) {
+	root := t.TempDir()
+	missingTracked, missingUntracked, listed := splitTrackedChanges(t.Context(), root, []string{"absent.go"})
+	if !listed || missingTracked != nil || missingUntracked != nil {
+		t.Fatalf("absent changes = (%v, %v, %t)", missingTracked, missingUntracked, listed)
+	}
+
+	writeTrackedFixture(t, root, "value.go")
+	previous := gitNamesOutput
+	t.Cleanup(func() { gitNamesOutput = previous })
+	for _, test := range []struct {
+		name   string
+		output []byte
+		err    error
+	}{
+		{name: "listing failure", err: errors.New("git failed")},
+		{name: "unsafe listing", output: []byte("../value.go\x00")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			gitNamesOutput = func(context.Context, string, []string) ([]byte, error) {
+				return test.output, test.err
+			}
+			tracked, untracked, ok := splitTrackedChanges(t.Context(), root, []string{"value.go"})
+			if ok || tracked != nil || untracked != nil {
+				t.Fatalf("failed split = (%v, %v, %t)", tracked, untracked, ok)
 			}
 		})
 	}

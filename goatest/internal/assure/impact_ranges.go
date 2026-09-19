@@ -20,13 +20,22 @@ var hunkHeader = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
 const diffPathPrefix = "+++ b/"
 
 func changedLineRanges(ctx context.Context, root, reference string, changed []string) (map[string][]gomutants.LineRange, bool) {
+	return changedLineRangesWithLineCount(ctx, root, reference, changed, fileLineCount)
+}
+
+func changedLineRangesWithLineCount(
+	ctx context.Context,
+	root, reference string,
+	changed []string,
+	lineCount func(string) (int, bool),
+) (map[string][]gomutants.LineRange, bool) {
 	tracked, untracked, listed := splitTrackedChanges(ctx, root, changed)
 	if !listed {
 		return nil, false
 	}
 	ranges := make(map[string][]gomutants.LineRange, len(changed))
 	for _, path := range untracked {
-		lines, ok := fileLineCount(filepath.Join(root, filepath.FromSlash(path)))
+		lines, ok := lineCount(filepath.Join(root, filepath.FromSlash(path)))
 		if !ok {
 			return nil, false
 		}
@@ -94,9 +103,6 @@ func hunkSpan(match []string) (gomutants.LineRange, bool) {
 			return gomutants.LineRange{}, false
 		}
 	}
-	if count == 0 {
-		return gomutants.LineRange{First: first, Last: first - 1}, true
-	}
 	return gomutants.LineRange{First: first, Last: first + count - 1}, true
 }
 
@@ -135,17 +141,18 @@ func splitTrackedChanges(ctx context.Context, root string, changed []string) (tr
 
 func fileLineCount(path string) (int, bool) {
 	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0, false
-	}
+	return fileDataLineCount(data), err == nil
+}
+
+func fileDataLineCount(data []byte) int {
 	if len(data) == 0 {
-		return 0, true
+		return 0
 	}
 	lines := strings.Count(string(data), "\n")
 	if !strings.HasSuffix(string(data), "\n") {
 		lines++
 	}
-	return lines, true
+	return lines
 }
 
 func mutationSelection(selection impactSelection) *gomutants.Selection {
