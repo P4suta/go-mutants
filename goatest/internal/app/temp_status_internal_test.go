@@ -6,6 +6,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 	"github.com/P4suta/go-mutants/goatest/internal/keptledger"
 	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/tempowner"
 )
 
 const keptLedgerItemCount = 3
@@ -168,5 +170,103 @@ func TestKeptTemporaryStatusSaysWhenItCannotReadTheLedger(t *testing.T) {
 	items := keptTemporaryStatus(root)
 	if len(items) != 1 || items[0].Status != "unavailable" {
 		t.Fatalf("a ledger nobody can read stated %+v, want one unavailable item", items)
+	}
+}
+
+func TestATemporarySweepSaysWhenItCouldNotReadWhereItWasPointed(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	file := filepath.Join(root, "not-a-directory")
+	if err := os.WriteFile(file, nil, filemode.PrivateFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".goatest.toml"),
+		[]byte("version = 1\ncontract = \"standard-v1\"\n[cache]\nbuild_dir = "+
+			strconv.Quote(filepath.Join(file, "build"))+"\n"), filemode.PrivateFile); err != nil {
+		t.Fatal(err)
+	}
+	service := Service{Root: root, TempDirectory: file}
+	for name, item := range map[string]report.Evidence{
+		"orphans":              service.temporaryStatus(temporaryMoment()),
+		"sweep":                service.temporarySweep(temporaryMoment()),
+		"native-cache-orphans": service.nativeCacheStatus(root, temporaryMoment()),
+		"native-cache-sweep":   service.nativeCacheSweep(root, temporaryMoment()),
+	} {
+		if !strings.Contains(item.Detail, "errors=") {
+			t.Errorf("%s over a directory it cannot read says %q, want it to count the failure", name, item.Detail)
+		}
+	}
+}
+
+func TestATemporarySweepCountsNoErrorWhereThereIsNone(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".goatest.toml"),
+		[]byte("version = 1\ncontract = \"standard-v1\"\n[cache]\nbuild_dir = \"build\"\n"),
+		filemode.PrivateFile); err != nil {
+		t.Fatal(err)
+	}
+	service := Service{Root: root, TempDirectory: t.TempDir()}
+	for name, item := range map[string]report.Evidence{
+		"orphans":              service.temporaryStatus(temporaryMoment()),
+		"sweep":                service.temporarySweep(temporaryMoment()),
+		"native-cache-orphans": service.nativeCacheStatus(root, temporaryMoment()),
+		"native-cache-sweep":   service.nativeCacheSweep(root, temporaryMoment()),
+	} {
+		if strings.Contains(item.Detail, "errors=") {
+			t.Errorf("%s over a directory it can read says %q, want no failure counted", name, item.Detail)
+		}
+	}
+}
+
+func TestAKeptEntryIsCollectedOnlyOnceItIsAsOldAsTheTimeToLive(t *testing.T) {
+	t.Parallel()
+	const ttl = time.Hour
+	for _, test := range []struct {
+		name      string
+		ttl       time.Duration
+		aged      time.Duration
+		collected bool
+	}{
+		{name: "one nanosecond inside its time", ttl: ttl, aged: ttl - 1},
+		{name: "exactly as old as its time", ttl: ttl, aged: ttl, collected: true},
+		{name: "one nanosecond past its time", ttl: ttl, aged: ttl + 1, collected: true},
+		{name: "a time to live of none at all", aged: ttl * 2},
+		{name: "a time to live below zero", ttl: -ttl, aged: ttl * 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			kept := filepath.Join(t.TempDir(), "kept")
+			if err := os.MkdirAll(kept, filemode.ReadableDirectory); err != nil {
+				t.Fatal(err)
+			}
+			owner, err := tempowner.Claim(kept, tempowner.Marker{RunID: "run-a", Root: root}, temporaryMoment())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := owner.Keep(); err != nil {
+				t.Fatal(err)
+			}
+			if err := keptledger.Update(keptledger.Path(root), func(ledger *keptledger.Ledger) error {
+				ledger.Entries = []keptledger.Entry{{
+					RunID: "run-a", Path: kept, Bytes: 1, KeptAt: temporaryMoment().Add(-test.aged),
+				}}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			item := collectKeptTemporaries(root, test.ttl, temporaryMoment())
+			want := "removed-entries=0"
+			if test.collected {
+				want = "removed-entries=1"
+			}
+			if !strings.Contains(item.Detail, want) {
+				t.Fatalf("%s says %q, want %q", test.name, item.Detail, want)
+			}
+			if strings.Contains(item.Detail, "errors=") {
+				t.Errorf("%s counted a failure: %q", test.name, item.Detail)
+			}
+		})
 	}
 }
