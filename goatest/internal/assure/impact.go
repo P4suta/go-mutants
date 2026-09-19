@@ -263,11 +263,7 @@ func mutationScope(selection impactSelection) (include, packages []string) {
 }
 
 func packageDirectoryOfPath(name string) string {
-	directory := path.Dir(filepath.ToSlash(name))
-	if directory == "" {
-		return "."
-	}
-	return directory
+	return path.Dir(filepath.ToSlash(name))
 }
 
 func mutationDiscoveryPackages(include, tests []string) []string {

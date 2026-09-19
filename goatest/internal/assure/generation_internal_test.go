@@ -359,6 +359,14 @@ func TestGenerationPathAllowedRequiresSafeCandidateAndMatchingPattern(t *testing
 		{name: "absolute", candidate: "/value_test.go", allowed: []string{"**/*_test.go"}},
 		{name: "traversal", candidate: "../value_test.go", allowed: []string{"**/*_test.go"}},
 		{name: "backslash candidate", candidate: `pkg\value_test.go`, allowed: []string{"**/*_test.go"}},
+		{
+			name:      "a fuzz seed against the test pattern",
+			candidate: "testdata/fuzz/FuzzValue/seed", allowed: []string{"**/*_test.go"},
+		},
+		{
+			name:      "a test against the fuzz pattern",
+			candidate: "value_test.go", allowed: []string{"**/testdata/fuzz/**"},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := generationPathAllowed(test.candidate, test.allowed); got != test.want {
