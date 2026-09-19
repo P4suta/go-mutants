@@ -15,6 +15,8 @@ import (
 	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
 )
 
+const aCompileAndARun = 2
+
 func TestASnapshotExcludesWhatARunItselfWrites(t *testing.T) {
 	t.Parallel()
 	excluded := assuranceSnapshotExclusions()
@@ -86,7 +88,7 @@ func TestARaceRunCarriesBuildTagsAndTestArgumentsOnlyWhereThereAreSome(t *testin
 				[]string{"fixture/app"}, "standard-v1", test.options); err != nil {
 				t.Fatal(err)
 			}
-			if len(workspace.commands) != 2 {
+			if len(workspace.commands) != aCompileAndARun {
 				t.Fatalf("a race run started %d commands, want a compile and a run", len(workspace.commands))
 			}
 			for _, command := range workspace.commands {
