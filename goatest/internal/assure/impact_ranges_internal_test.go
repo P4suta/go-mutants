@@ -109,7 +109,7 @@ func TestChangedLineRangesFailsClosedWhenAnUntrackedFileCannotBeRead(t *testing.
 func TestChangedLineRangesReturnsTheOnlyUntrackedFileWithoutAskingForADiff(t *testing.T) {
 	root := t.TempDir()
 	writeTrackedFixture(t, root, "untracked.go")
-	scriptedDiff(t, "", nil)
+	scriptedDiff(t, "", errors.New("unexpected diff"))
 	ranges, ok := changedLineRangesWithLineCount(t.Context(), root, "", []string{"untracked.go"}, func(string) (int, bool) {
 		return untrackedFixtureLineCount, true
 	})
@@ -122,9 +122,16 @@ func TestChangedLineRangesReturnsTheOnlyUntrackedFileWithoutAskingForADiff(t *te
 func TestChangedLineRangesRejectsACanceledDiffEvenWhenGitReturnsOutput(t *testing.T) {
 	root := t.TempDir()
 	writeTrackedFixture(t, root, "value.go")
-	scriptedDiff(t, "+++ b/value.go\n@@ -1 +1 @@\n", nil, "value.go")
 	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
+	previous := gitNamesOutput
+	t.Cleanup(func() { gitNamesOutput = previous })
+	gitNamesOutput = func(_ context.Context, _ string, arguments []string) ([]byte, error) {
+		if len(arguments) != 0 && arguments[0] == "ls-files" {
+			return []byte("value.go"), nil
+		}
+		cancel()
+		return []byte("+++ b/value.go\n@@ -1 +1 @@\n"), nil
+	}
 	ranges, ok := changedLineRanges(ctx, root, "", []string{"value.go"})
 	if ok || ranges != nil {
 		t.Fatalf("canceled diff = (%+v, %t)", ranges, ok)

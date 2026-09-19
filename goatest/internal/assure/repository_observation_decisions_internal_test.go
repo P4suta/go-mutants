@@ -219,6 +219,22 @@ func TestRepositoryWholeTreeSuiteReasonsDistinguishUnknownPackages(t *testing.T)
 	}
 }
 
+func TestRepositoryWholeTreeSuiteDelegatesKnownPackages(t *testing.T) {
+	t.Parallel()
+	const pkg = "fixture.example/module"
+	observer := &RepositoryObserver{
+		candidates: map[string]goanalysis.RepositoryReadCandidate{pkg: {}},
+		packages:   map[string]goanalysis.Package{pkg: {ImportPath: pkg, RelativeDir: "."}},
+		sources: newTargetKeySources(
+			evidence.Inputs{}, goanalysis.Model{Packages: []goanalysis.Package{{ImportPath: pkg, RelativeDir: "."}}},
+			"standard-v1", Options{}, nil,
+		),
+	}
+	if got := observer.wholeTreeSuiteReason(pkg, repositoryObservation{}); got != wholeTreeObserved {
+		t.Fatalf("known suite reason = %q, want observed", got)
+	}
+}
+
 func TestWholeTreeWideningCountsEachTrueFact(t *testing.T) {
 	t.Parallel()
 	targets, suites := wholeTreeWideningCounts(

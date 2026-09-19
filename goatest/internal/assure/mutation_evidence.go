@@ -176,9 +176,7 @@ func (sources targetKeySources) wholeTreeInputsFor(target goanalysis.Target) evi
 			inputs.Files[name] = digest
 			continue
 		}
-		if digest, known := sources.inputs.Corpus[name]; known {
-			inputs.Files[name] = digest
-		}
+		inputs.Files[name] = sources.inputs.Corpus[name]
 	}
 	return inputs
 }
@@ -400,11 +398,7 @@ func (collected *MutationEvidence) wholeTargetKeyLocked(identity targetIdentity)
 	if key, generated := collected.wholeKeys[identity]; generated {
 		return key
 	}
-	target, known := collected.targetByID[identity]
-	if !known {
-		collected.wholeKeys[identity] = ""
-		return ""
-	}
+	target := collected.targetByID[identity]
 	key := collected.sources.targetKey(target.Target, target.Environment, true)
 	collected.wholeKeys[identity] = key
 	return key
@@ -428,7 +422,7 @@ func (collected *MutationEvidence) wholeSuiteKey(pkg string) string {
 		}
 		key := collected.wholeTargetKeyLocked(identity)
 		keys = append(keys, evidence.TargetKey{
-			Package: identity.pkg, Name: identity.name, Kind: identity.kind, Key: key, WholeTree: true,
+			Package: identity.pkg, Name: identity.name, Kind: identity.kind, Key: key,
 		})
 	}
 	key := collected.sources.suiteKey(pkg, keys, collected.suiteEnvironment, true)
