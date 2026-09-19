@@ -12,6 +12,8 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
+const twoLimitations = 2
+
 func selectionReport() report.Report {
 	return report.Report{
 		Findings: []report.Finding{
@@ -69,10 +71,10 @@ func TestALimitationIsStatedOnceHoweverOftenItIsReached(t *testing.T) {
 	if again := appendLimitation(stated, same); len(again) != 1 {
 		t.Fatalf("the same limitation was stated twice: %+v", again)
 	}
-	if bySummary := appendLimitation(stated, otherSummary); len(bySummary) != 2 {
+	if bySummary := appendLimitation(stated, otherSummary); len(bySummary) != twoLimitations {
 		t.Errorf("a limitation of the same code and another summary was folded away: %+v", bySummary)
 	}
-	if byCode := appendLimitation(stated, otherCode); len(byCode) != 2 {
+	if byCode := appendLimitation(stated, otherCode); len(byCode) != twoLimitations {
 		t.Errorf("a limitation of another code and the same summary was folded away: %+v", byCode)
 	}
 }
