@@ -165,7 +165,7 @@ func TestBaselineResumeSkipsTerminalPackageSuite(t *testing.T) {
 		Duration: 25 * time.Millisecond,
 	}
 	unit := baselineClassifiedUnit(
-		BaselineTarget{Target: target}, "passed", "", evidence.Duration, true, false, &evidence,
+		BaselineTarget{Target: target}, "passed", "", evidence.Duration, &evidence,
 		[]report.Evidence{{Kind: "target", ID: target.ID, Status: "passed"}}, nil,
 	)
 	for _, test := range []struct {

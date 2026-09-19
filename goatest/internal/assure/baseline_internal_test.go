@@ -776,18 +776,22 @@ func TestBaselineClassifiedUnitUsesTheExactNotRunEmptyEvidenceCase(t *testing.T)
 		status   string
 		evidence []report.Evidence
 		want     []report.Evidence
+		executed bool
+		skipped  bool
 	}{
-		{name: "not run empty", status: "not-run", want: []report.Evidence{{
+		{name: "not run empty", status: "not-run", skipped: true, want: []report.Evidence{{
 			Kind: "target", ID: target.Target.ID, Status: "not-run", Detail: "detail",
 		}}},
-		{name: "passed empty", status: "passed"},
-		{name: "not run existing", status: "not-run", evidence: []report.Evidence{existing}, want: []report.Evidence{existing}},
-		{name: "passed existing", status: "passed", evidence: []report.Evidence{existing}, want: []report.Evidence{existing}},
+		{name: "passed empty", status: "passed", executed: true},
+		{name: "skipped empty", status: "skipped", executed: true, skipped: true},
+		{name: "failed empty", status: "failed", executed: true},
+		{name: "not run existing", status: "not-run", skipped: true, evidence: []report.Evidence{existing}, want: []report.Evidence{existing}},
+		{name: "passed existing", status: "passed", executed: true, evidence: []report.Evidence{existing}, want: []report.Evidence{existing}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			unit := baselineClassifiedUnit(target, test.status, "detail", 0, false, false, nil, test.evidence, nil)
-			if !reflect.DeepEqual(unit.Evidence, test.want) {
-				t.Fatalf("evidence = %+v, want %+v", unit.Evidence, test.want)
+			unit := baselineClassifiedUnit(target, test.status, "detail", 0, nil, test.evidence, nil)
+			if !reflect.DeepEqual(unit.Evidence, test.want) || unit.Executed != test.executed || unit.Skipped != test.skipped {
+				t.Fatalf("unit = %+v, want evidence %+v executed=%t skipped=%t", unit, test.want, test.executed, test.skipped)
 			}
 		})
 	}
