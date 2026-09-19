@@ -1093,11 +1093,22 @@ func dependencyDigests(data []byte) (map[string]string, error) {
 }
 
 func assuranceInputs(root, contract string, options Options, loaded config.Config, metadata roundMetadata) (evidence.Inputs, string, error) {
-	goMutants, err := goMutantsIdentity()
+	return assuranceInputsWithIdentityResolvers(
+		root, contract, options, loaded, metadata, goMutantsIdentity, goatestBuildIdentity)
+}
+
+func assuranceInputsWithIdentityResolvers(
+	root, contract string,
+	options Options,
+	loaded config.Config,
+	metadata roundMetadata,
+	resolveGoMutants, resolveGoatestBuild func() (string, error),
+) (evidence.Inputs, string, error) {
+	goMutants, err := resolveGoMutants()
 	if err != nil {
 		return evidence.Inputs{}, "", err
 	}
-	goatestBuild, err := goatestBuildIdentity()
+	goatestBuild, err := resolveGoatestBuild()
 	if err != nil {
 		return evidence.Inputs{}, "", err
 	}
@@ -1547,7 +1558,11 @@ func executionEnvironment(input []string) []string {
 }
 
 func mutationEnvironment(input, buildTags []string) []string {
-	environment := executionEnvironment(input)
+	return environmentWithBuildTags(executionEnvironment(input), buildTags)
+}
+
+func environmentWithBuildTags(environment, buildTags []string) []string {
+	environment = slices.Clone(environment)
 	if len(buildTags) == 0 {
 		return environment
 	}
