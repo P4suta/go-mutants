@@ -6,12 +6,15 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
+
+const traceReadEventCount = 3
 
 func TestAllZeroHoldsOnlyWhenEveryValueIsTheZeroOfItsType(t *testing.T) {
 	t.Parallel()
@@ -134,5 +137,91 @@ func TestReadingTheLatestTraceIgnoresEveryEntryThatIsNotARun(t *testing.T) {
 	}
 	if name != "" || summary.Events != 0 {
 		t.Fatalf("a trace root holding nothing readable named %q with %d events", name, summary.Events)
+	}
+}
+
+func writeTraceRun(t *testing.T, traceRoot, name string, events int) {
+	t.Helper()
+	directory := filepath.Join(traceRoot, name)
+	if err := os.MkdirAll(directory, filemode.ReadableDirectory); err != nil {
+		t.Fatal(err)
+	}
+	var stream strings.Builder
+	for index := range events {
+		stream.WriteString(`{"seq":` + strconv.Itoa(index+1) +
+			`,"type":"` + trace.TypeProgress +
+			`","timestamp":"2026-01-01T00:00:00Z","elapsed_ms":0,"progress":{"kind":"note"}}` + "\n")
+	}
+	if err := os.WriteFile(filepath.Join(directory, trace.FileName),
+		[]byte(stream.String()), filemode.ReadableFile); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadingTheLatestTraceTakesTheNewestRunItCanTrust(t *testing.T) {
+	traceRoot := filepath.Join(t.TempDir(), "trace")
+	writeTraceRun(t, traceRoot, "20260901T120000Z-1", 1)
+	writeTraceRun(t, traceRoot, "20260902T120000Z-2", traceReadEventCount)
+	if err := os.MkdirAll(filepath.Join(traceRoot, "20260903T120000Z-0"), filemode.ReadableDirectory); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, name, err := readNamedTrace(traceRoot, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "20260902T120000Z-2" {
+		t.Fatalf("the latest trace is %q, want the newest run whose name is one", name)
+	}
+	if summary.Events != traceReadEventCount {
+		t.Errorf("the latest trace holds %d events, want %d", summary.Events, traceReadEventCount)
+	}
+}
+
+func TestATraceDiffNeedsExactlyTwoRuns(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	traceRoot := filepath.Join(root, ".goatest", "trace")
+	writeTraceRun(t, traceRoot, "20260901T120000Z-1", 1)
+	writeTraceRun(t, traceRoot, "20260902T120000Z-2", traceReadEventCount)
+	service := Service{Root: root}
+	for _, test := range []struct {
+		name string
+		runs []string
+		want string
+	}{
+		{name: "no run at all", want: "requires two runs"},
+		{name: "one run", runs: []string{"20260901T120000Z-1"}, want: "requires two runs"},
+		{
+			name: "three runs",
+			runs: []string{"20260901T120000Z-1", "20260902T120000Z-2", "20260901T120000Z-1"},
+			want: "requires two runs",
+		},
+		{name: "two runs", runs: []string{"20260901T120000Z-1", "20260902T120000Z-2"}},
+		{
+			name: "a first run nothing can read",
+			runs: []string{"not-a-run", "20260902T120000Z-2"}, want: "invalid trace run",
+		},
+		{
+			name: "a second run nothing can read",
+			runs: []string{"20260901T120000Z-1", "not-a-run"}, want: "invalid trace run",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			result, err := service.readTrace(root, "diff", test.runs)
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("%s reported %v, want a diff", test.name, err)
+				}
+				if len(result.Evidence) == 0 {
+					t.Fatal("a diff of two runs stated no evidence")
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("%s reported %v, want %q", test.name, err, test.want)
+			}
+		})
 	}
 }
