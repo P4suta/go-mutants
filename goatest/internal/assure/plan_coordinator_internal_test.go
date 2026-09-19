@@ -522,3 +522,21 @@ func TestPlanCoordinatorRejectsUnknownContractsAndJoinsCleanupFailures(t *testin
 		t.Fatalf("plan fixture has %d mutants, want %d", len(newPlanTestHarness().workspace.catalog.Mutants), planTestMutantCount)
 	}
 }
+
+func TestProductionPlanWorkspaceAdapterPreservesBothResults(t *testing.T) {
+	t.Parallel()
+	failure := errors.New("open workspace")
+	failed, err := adaptProductionPlanWorkspace(nil, failure)
+	if failed != nil || !errors.Is(err, failure) {
+		t.Fatalf("failed adapter = %#v, %v", failed, err)
+	}
+	workspace := &mutationbridge.Workspace{}
+	adapted, err := adaptProductionPlanWorkspace(workspace, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	production, ok := adapted.(productionPlanWorkspace)
+	if !ok || production.Workspace != workspace {
+		t.Fatalf("adapted workspace = %#v", adapted)
+	}
+}

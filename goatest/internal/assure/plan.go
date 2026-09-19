@@ -41,6 +41,13 @@ func (workspace productionPlanWorkspace) PreparePlan(
 	return workspace.Prepare(ctx, options)
 }
 
+func adaptProductionPlanWorkspace(workspace *mutationbridge.Workspace, err error) (planWorkspace, error) {
+	if err != nil {
+		return nil, err
+	}
+	return productionPlanWorkspace{Workspace: workspace}, nil
+}
+
 type planDependencies struct {
 	goMutantsIdentity func() (string, error)
 	repositoryRoot    func(string) (string, error)
@@ -77,11 +84,7 @@ func productionPlanDependencies() planDependencies {
 		collectBuildCache: collectRunBuildCache,
 		releaseBuildCache: releaseBuildCache,
 		openWorkspace: func(ctx context.Context, root string, options mutationbridge.Options) (planWorkspace, error) {
-			workspace, err := mutationbridge.Open(ctx, root, options)
-			if err != nil {
-				return nil, err
-			}
-			return productionPlanWorkspace{Workspace: workspace}, nil
+			return adaptProductionPlanWorkspace(mutationbridge.Open(ctx, root, options))
 		},
 		inspectWorkspace: inspectWorkspace,
 		discoverTargets:  goanalysis.DiscoverTargets,
@@ -91,12 +94,6 @@ func productionPlanDependencies() planDependencies {
 
 func Plan(ctx context.Context, options Options) (result report.Report, resultErr error) {
 	return planWithDependencies(ctx, options, productionPlanDependencies())
-}
-
-func planWithGoMutantsVersion(ctx context.Context, options Options, goMutants string) (result report.Report, resultErr error) {
-	dependencies := productionPlanDependencies()
-	dependencies.goMutantsIdentity = func() (string, error) { return goMutants, nil }
-	return planWithDependencies(ctx, options, dependencies)
 }
 
 func planWithDependencies(
@@ -227,10 +224,7 @@ func planWithDependencies(
 		}
 	}
 	jobs := mutationJobLimit(options, loaded)
-	waves := 0
-	if selectedMutants != 0 {
-		waves = (selectedMutants + jobs - 1) / jobs
-	}
+	waves := (selectedMutants + jobs - 1) / jobs
 	evidenceItems = append(evidenceItems, report.Evidence{
 		Kind: "plan", ID: "summary", Status: "completed",
 		Detail: fmt.Sprintf("targets=%d mutants=%d compile-rejected=%d resources=%d jobs=%d estimated-mutation-waves=%d", len(targets), selectedMutants, compileRejected, len(resources), jobs, waves),
@@ -271,14 +265,14 @@ func applyExecutionDefaults(options *Options, loaded config.Config) {
 }
 
 func plannedResources(targets []goanalysis.Target, loaded config.Config) ([]string, error) {
-	set := make(map[string]bool)
+	set := make(map[string]struct{})
 	for _, target := range targets {
 		capabilities := slices.Clone(target.Capabilities)
 		for _, capability := range capabilities {
 			if _, configured := loaded.Resources[capability]; !configured {
 				return nil, fmt.Errorf("goatest: target %s requires unconfigured resource %q", target.Name, capability)
 			}
-			set[capability] = true
+			set[capability] = struct{}{}
 		}
 	}
 	result := make([]string, 0, len(set))
