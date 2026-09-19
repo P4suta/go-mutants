@@ -26,10 +26,18 @@ type RepositoryObserver struct {
 	candidates map[string]goanalysis.RepositoryReadCandidate
 	packages   map[string]goanalysis.Package
 	sources    targetKeySources
+	files      repositoryObserverFiles
 }
 
 func repositoryObservationScope(root string, packages []goanalysis.Package) (map[string]goanalysis.RepositoryReadCandidate, map[string]bool) {
 	candidates := goanalysis.RepositoryReadCandidates(root, packages)
+	return completeRepositoryObservationScope(candidates, packages)
+}
+
+func completeRepositoryObservationScope(
+	candidates map[string]goanalysis.RepositoryReadCandidate,
+	packages []goanalysis.Package,
+) (map[string]goanalysis.RepositoryReadCandidate, map[string]bool) {
 	readers := make(map[string]bool, len(packages))
 	for _, pkg := range packages {
 		if _, found := candidates[pkg.ImportPath]; !found {
@@ -41,15 +49,40 @@ func repositoryObservationScope(root string, packages []goanalysis.Package) (map
 }
 
 func newRepositoryObserver(root, directory string, candidates map[string]goanalysis.RepositoryReadCandidate, sources targetKeySources) *RepositoryObserver {
+	return newRepositoryObserverWithFiles(root, directory, candidates, sources, repositoryObserverFiles{
+		absolute: filepath.Abs,
+		create:   func(directory, pattern string) (repositoryLogFile, error) { return os.CreateTemp(directory, pattern) },
+		remove:   os.Remove,
+		read:     os.ReadFile,
+	})
+}
+
+type repositoryLogFile interface {
+	Name() string
+	Close() error
+}
+
+type repositoryObserverFiles struct {
+	absolute func(string) (string, error)
+	create   func(string, string) (repositoryLogFile, error)
+	remove   func(string) error
+	read     func(string) ([]byte, error)
+}
+
+func newRepositoryObserverWithFiles(
+	root, directory string,
+	candidates map[string]goanalysis.RepositoryReadCandidate,
+	sources targetKeySources,
+	files repositoryObserverFiles,
+) *RepositoryObserver {
 	packages := make(map[string]goanalysis.Package, len(sources.model.Packages))
 	for _, pkg := range sources.model.Packages {
 		packages[pkg.ImportPath] = pkg
 	}
-	absolute, err := filepath.Abs(root)
+	absolute, err := files.absolute(root)
 	if err != nil || root == "" {
 		absolute = ""
-	}
-	if absolute != "" {
+	} else {
 		absolute = filepath.Clean(absolute)
 	}
 	selected := make(map[string]goanalysis.RepositoryReadCandidate, len(candidates))
@@ -66,22 +99,24 @@ func newRepositoryObserver(root, directory string, candidates map[string]goanaly
 	}
 	return &RepositoryObserver{
 		root: absolute, directory: directory,
-		candidates: selected, packages: packages, sources: sources,
+		candidates: selected, packages: packages, sources: sources, files: files,
 	}
+}
+
+func fixedRepositoryObservation(reason wholeTreeReason) func() repositoryObservation {
+	return func() repositoryObservation { return repositoryObservation{reason: reason} }
 }
 
 func (observer *RepositoryObserver) instrumentPackage(pkg string, arguments []string) ([]string, func() repositoryObservation) {
 	if observer == nil {
-		return arguments, func() repositoryObservation { return repositoryObservation{} }
+		return arguments, fixedRepositoryObservation(wholeTreeObserved)
 	}
 	owner, known := observer.packages[pkg]
 	if !known {
 		if _, selected := observer.candidate(pkg); selected {
-			return arguments, func() repositoryObservation {
-				return repositoryObservation{reason: wholeTreeStaticUnobservable}
-			}
+			return arguments, fixedRepositoryObservation(wholeTreeStaticUnobservable)
 		}
-		return arguments, func() repositoryObservation { return repositoryObservation{} }
+		return arguments, fixedRepositoryObservation(wholeTreeObserved)
 	}
 	return observer.instrument(pkg, owner.RelativeDir, arguments)
 }
@@ -110,36 +145,28 @@ type repositoryAccess struct {
 func (observer *RepositoryObserver) instrument(pkg, relativeDir string, arguments []string) ([]string, func() repositoryObservation) {
 	candidate, selected := observer.candidate(pkg)
 	if !selected {
-		return arguments, func() repositoryObservation { return repositoryObservation{} }
+		return arguments, fixedRepositoryObservation(wholeTreeObserved)
 	}
 	if candidate.Unobservable {
-		return arguments, func() repositoryObservation {
-			return repositoryObservation{reason: wholeTreeStaticUnobservable}
-		}
+		return arguments, fixedRepositoryObservation(wholeTreeStaticUnobservable)
 	}
 	if observer.root == "" || observer.directory == "" {
-		return arguments, func() repositoryObservation {
-			return repositoryObservation{reason: wholeTreeLogUnavailable}
-		}
+		return arguments, fixedRepositoryObservation(wholeTreeLogUnavailable)
 	}
-	file, err := os.CreateTemp(observer.directory, "test-action-*.log")
+	file, err := observer.files.create(observer.directory, "test-action-*.log")
 	if err != nil {
-		return arguments, func() repositoryObservation {
-			return repositoryObservation{reason: wholeTreeLogUnavailable}
-		}
+		return arguments, fixedRepositoryObservation(wholeTreeLogUnavailable)
 	}
 	name := file.Name()
 	if err := file.Close(); err != nil {
-		_ = os.Remove(name)
-		return arguments, func() repositoryObservation {
-			return repositoryObservation{reason: wholeTreeLogUnavailable}
-		}
+		_ = observer.files.remove(name)
+		return arguments, fixedRepositoryObservation(wholeTreeLogUnavailable)
 	}
 	instrumented := append(slices.Clone(arguments), "-test.testlogfile="+name)
 	initialDirectory := filepath.Join(observer.root, filepath.FromSlash(relativeDir))
 	return instrumented, func() repositoryObservation {
-		defer func() { _ = os.Remove(name) }()
-		data, err := os.ReadFile(name)
+		defer func() { _ = observer.files.remove(name) }()
+		data, err := observer.files.read(name)
 		if err != nil {
 			return repositoryObservation{reason: wholeTreeLogUnavailable}
 		}
@@ -206,6 +233,19 @@ func (observer *RepositoryObserver) wholeTreeSuiteReason(pkg string, observation
 }
 
 func wholeTreeKeyLimitation(targets []TargetEvidence, suites map[string]PackageSuiteCoverage) (report.Limitation, bool) {
+	widenedTargets, widenedSuites := wholeTreeWideningCounts(targets, suites)
+	if widenedTargets == 0 && widenedSuites == 0 {
+		return report.Limitation{}, false
+	}
+	return report.Limitation{
+		Code: report.LimitationWholeTreeBehaviourKeys,
+		Summary: fmt.Sprintf(
+			"%d of %d targets and %d of %d package suites read outside their ordinary inputs, so their evidence is reused only while nothing in the tree changes; goatest trace summary names which boundary widened each one",
+			widenedTargets, len(targets), widenedSuites, len(suites)),
+	}, true
+}
+
+func wholeTreeWideningCounts(targets []TargetEvidence, suites map[string]PackageSuiteCoverage) (int, int) {
 	widenedTargets := 0
 	for _, target := range targets {
 		if target.WholeTree {
@@ -218,18 +258,18 @@ func wholeTreeKeyLimitation(targets []TargetEvidence, suites map[string]PackageS
 			widenedSuites++
 		}
 	}
-	if widenedTargets == 0 && widenedSuites == 0 {
-		return report.Limitation{}, false
-	}
-	return report.Limitation{
-		Code: report.LimitationWholeTreeBehaviourKeys,
-		Summary: fmt.Sprintf(
-			"%d of %d targets and %d of %d package suites read outside their ordinary inputs, so their evidence is reused only while nothing in the tree changes; goatest trace summary names which boundary widened each one",
-			widenedTargets, len(targets), widenedSuites, len(suites)),
-	}, true
+	return widenedTargets, widenedSuites
 }
 
 func parseRepositoryTestLog(data []byte, root, initialDirectory string) repositoryObservation {
+	return parseRepositoryTestLogWithStat(data, root, initialDirectory, os.Stat)
+}
+
+func parseRepositoryTestLogWithStat(
+	data []byte,
+	root, initialDirectory string,
+	stat func(string) (os.FileInfo, error),
+) repositoryObservation {
 	if !bytes.HasPrefix(data, repositoryTestLogMagic) || len(data) == 0 || data[len(data)-1] != '\n' {
 		return repositoryObservation{reason: wholeTreeLogAmbiguous}
 	}
@@ -266,7 +306,7 @@ func parseRepositoryTestLog(data []byte, root, initialDirectory string) reposito
 			if !inside {
 				continue
 			}
-			info, err := os.Stat(resolved)
+			info, err := stat(resolved)
 			if err != nil {
 				observation.accesses = append(observation.accesses, repositoryAccess{path: relative, directory: true})
 				continue
@@ -280,10 +320,14 @@ func parseRepositoryTestLog(data []byte, root, initialDirectory string) reposito
 }
 
 func repositoryRelativePath(root, name string) (string, bool) {
+	return repositoryRelativePathWith(root, name, filepath.Rel)
+}
+
+func repositoryRelativePathWith(root, name string, relativePath func(string, string) (string, error)) (string, bool) {
 	if root == "" || name == "" {
 		return "", false
 	}
-	relative, err := filepath.Rel(root, name)
+	relative, err := relativePath(root, name)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
 		return "", false
 	}
@@ -302,8 +346,8 @@ func repositoryTestLogFailure(output string, arguments []string) bool {
 		return true
 	}
 
-	encoded, err := json.Marshal(path)
-	return err == nil && len(encoded) >= 2 && strings.Contains(output, string(encoded[1:len(encoded)-1]))
+	encoded, _ := json.Marshal(path)
+	return strings.Contains(output, string(encoded[1:len(encoded)-1]))
 }
 
 func repositoryTestLogPath(arguments []string) (string, bool) {
