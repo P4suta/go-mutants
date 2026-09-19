@@ -4,6 +4,7 @@
 package assure
 
 import (
+	"cmp"
 	"fmt"
 	"reflect"
 	"slices"
@@ -123,10 +124,10 @@ func (controller *runCheckpointController) saveBaseline(state checkpoint.Baselin
 	}
 
 	slices.SortFunc(state.Targets, func(left, right checkpoint.BaselineTarget) int {
-		return compareText(left.ID, right.ID)
+		return cmp.Compare(left.ID, right.ID)
 	})
 	slices.SortFunc(state.Suites, func(left, right checkpoint.BaselineSuite) int {
-		return compareText(left.Package, right.Package)
+		return cmp.Compare(left.Package, right.Package)
 	})
 	previous := controller.state.Baseline
 	controller.state.Baseline = state
@@ -168,13 +169,13 @@ func baselineCheckpointJournalSuffix(previous, next checkpoint.Baseline) ([]chec
 		}
 		before[unit.ID] = unit
 	}
-	suffix := make([]checkpoint.BaselineTarget, 0, len(next.Targets)-len(previous.Targets))
-	seen := make(map[string]bool, len(next.Targets))
+	var suffix []checkpoint.BaselineTarget
+	seen := make(map[string]struct{}, len(next.Targets))
 	for _, unit := range next.Targets {
-		if seen[unit.ID] {
+		if _, duplicate := seen[unit.ID]; duplicate {
 			return nil, false
 		}
-		seen[unit.ID] = true
+		seen[unit.ID] = struct{}{}
 		if saved, exists := before[unit.ID]; exists {
 			if !reflect.DeepEqual(saved, unit) {
 				return nil, false
@@ -187,7 +188,7 @@ func baselineCheckpointJournalSuffix(previous, next checkpoint.Baseline) ([]chec
 		return nil, false
 	}
 	slices.SortFunc(suffix, func(left, right checkpoint.BaselineTarget) int {
-		return compareText(left.ID, right.ID)
+		return cmp.Compare(left.ID, right.ID)
 	})
 	return suffix, true
 }
@@ -205,13 +206,13 @@ func baselineSuiteCheckpointJournalSuffix(previous, next checkpoint.Baseline) ([
 		}
 		before[unit.Package] = unit
 	}
-	suffix := make([]checkpoint.BaselineSuite, 0, len(next.Suites)-len(previous.Suites))
-	seen := make(map[string]bool, len(next.Suites))
+	var suffix []checkpoint.BaselineSuite
+	seen := make(map[string]struct{}, len(next.Suites))
 	for _, unit := range next.Suites {
-		if seen[unit.Package] {
+		if _, duplicate := seen[unit.Package]; duplicate {
 			return nil, false
 		}
-		seen[unit.Package] = true
+		seen[unit.Package] = struct{}{}
 		if saved, exists := before[unit.Package]; exists {
 			if !reflect.DeepEqual(saved, unit) {
 				return nil, false
@@ -224,7 +225,7 @@ func baselineSuiteCheckpointJournalSuffix(previous, next checkpoint.Baseline) ([
 		return nil, false
 	}
 	slices.SortFunc(suffix, func(left, right checkpoint.BaselineSuite) int {
-		return compareText(left.Package, right.Package)
+		return cmp.Compare(left.Package, right.Package)
 	})
 	return suffix, true
 }
@@ -384,7 +385,7 @@ func (controller *runCheckpointController) completeMutation() {
 	}
 
 	slices.SortFunc(controller.state.Mutation.Results, func(left, right checkpoint.MutationResult) int {
-		return compareText(left.ID, right.ID)
+		return cmp.Compare(left.ID, right.ID)
 	})
 	controller.state.Mutation.Complete = true
 	controller.persistLocked()
@@ -427,15 +428,4 @@ func (controller *runCheckpointController) disableCheckpointLocked(err error) {
 	emit(controller.options, "checkpoint-warning", err.Error()+"; disabling checkpoint writes for this run")
 	controller.enabled = false
 	_ = controller.store.DeleteCheckpoint(controller.digest)
-}
-
-func compareText(left, right string) int {
-	switch {
-	case left < right:
-		return -1
-	case left > right:
-		return 1
-	default:
-		return 0
-	}
 }
