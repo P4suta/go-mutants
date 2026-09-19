@@ -72,11 +72,34 @@ type nativeCacheProjection struct {
 	seededGeneration uint64
 }
 
+type runBuildCacheOpenDependencies struct {
+	prepare    func(buildcache.Layer) error
+	mkdir      func(string) error
+	program    func(buildcache.ProgramOptions) (string, error)
+	openNative func(string, runScratch, time.Time) (string, *tempowner.Owner, bool, tempowner.Result, error)
+	now        func() time.Time
+}
+
 func openRunBuildCache(program, base, source string, runScratch runScratch, maxBytes int64) (runBuildCache, error) {
+	return openRunBuildCacheWith(program, base, source, runScratch, maxBytes, runBuildCacheOpenDependencies{
+		prepare: func(layer buildcache.Layer) error { return layer.Prepare() },
+		mkdir: func(path string) error {
+			return os.Mkdir(path, filemode.PrivateDirectory)
+		},
+		program: buildcache.Program, openNative: openNativeBuildCache, now: time.Now,
+	})
+}
+
+func openRunBuildCacheWith(
+	program, base, source string,
+	runScratch runScratch,
+	maxBytes int64,
+	dependencies runBuildCacheOpenDependencies,
+) (runBuildCache, error) {
 	if program == "" || base == "" {
 		return runBuildCache{}, nil
 	}
-	if err := (buildcache.Layer{Dir: base}).Prepare(); err != nil {
+	if err := dependencies.prepare(buildcache.Layer{Dir: base}); err != nil {
 		return runBuildCache{}, err
 	}
 	scratch, err := runScratch.buildCacheLayer()
@@ -87,28 +110,28 @@ func openRunBuildCache(program, base, source string, runScratch runScratch, maxB
 	discard := func(err error) (runBuildCache, error) {
 		return runBuildCache{}, errors.Join(err, removeBuildCacheScratch(scratch))
 	}
-	if err := (buildcache.Layer{Dir: scratch, Touch: buildcache.ScratchTouchInterval}).Prepare(); err != nil {
+	if err := dependencies.prepare(buildcache.Layer{Dir: scratch, Touch: buildcache.ScratchTouchInterval}); err != nil {
 		return discard(err)
 	}
 	fallback := filepath.Join(scratch, goCacheScratchName)
-	if err := os.Mkdir(fallback, filemode.PrivateDirectory); err != nil {
+	if err := dependencies.mkdir(fallback); err != nil {
 		return discard(fmt.Errorf("goatest: create external build cache backing directory: %w", err))
 	}
 	cache := runBuildCache{
 		scratch: scratch, base: base, source: source, fallback: fallback,
 		projection: &nativeCacheProjection{beforeDrain: releaseUntrackedNativeExecution}, maxBytes: maxBytes,
 	}
-	if cache.plain, err = buildcache.Program(buildcache.ProgramOptions{
+	if cache.plain, err = dependencies.program(buildcache.ProgramOptions{
 		Executable: program, Base: base, Scratch: scratch, NativeSource: source, MaxBytes: maxBytes,
 	}); err != nil {
 		return discard(err)
 	}
-	if cache.persisting, err = buildcache.Program(buildcache.ProgramOptions{
+	if cache.persisting, err = dependencies.program(buildcache.ProgramOptions{
 		Executable: program, Base: base, Scratch: scratch, NativeSource: source, Persist: true, MaxBytes: maxBytes,
 	}); err != nil {
 		return discard(err)
 	}
-	cache.native, cache.nativeOwner, cache.nativeShared, cache.nativeSweep, err = openNativeBuildCache(base, runScratch, time.Now())
+	cache.native, cache.nativeOwner, cache.nativeShared, cache.nativeSweep, err = dependencies.openNative(base, runScratch, dependencies.now())
 	if err != nil {
 		cache.projection.once.Do(func() {
 			cache.projection.attempted = true
@@ -118,11 +141,31 @@ func openRunBuildCache(program, base, source string, runScratch runScratch, maxB
 	return cache, nil
 }
 
+type nativeBuildCacheOpenDependencies struct {
+	sweep       func(string, []string, time.Time) (tempowner.Result, error)
+	claimShared func(string, string, tempowner.Marker, time.Time) (string, *tempowner.Owner, bool, error)
+	mkdirTemp   func(string, string) (string, error)
+	claim       func(string, tempowner.Marker, time.Time) (*tempowner.Owner, error)
+	remove      func(string) error
+}
+
 func openNativeBuildCache(base string, scratch runScratch, now time.Time) (string, *tempowner.Owner, bool, tempowner.Result, error) {
+	return openNativeBuildCacheWith(base, scratch, now, nativeBuildCacheOpenDependencies{
+		sweep: tempowner.Sweep, claimShared: claimSharedNativeBuildCache, mkdirTemp: os.MkdirTemp,
+		claim: tempowner.Claim, remove: removeBuildCacheScratch,
+	})
+}
+
+func openNativeBuildCacheWith(
+	base string,
+	scratch runScratch,
+	now time.Time,
+	dependencies nativeBuildCacheOpenDependencies,
+) (string, *tempowner.Owner, bool, tempowner.Result, error) {
 	parent := filepath.Dir(base)
-	swept, sweepErr := tempowner.Sweep(parent, []string{buildcache.NativeDirectoryPrefix}, now)
+	swept, sweepErr := dependencies.sweep(parent, []string{buildcache.NativeDirectoryPrefix}, now)
 	marker := tempowner.Marker{RunID: scratch.id, Root: scratch.root}
-	if directory, owner, claimed, err := claimSharedNativeBuildCache(parent, base, marker, now); err != nil {
+	if directory, owner, claimed, err := dependencies.claimShared(parent, base, marker, now); err != nil {
 		return "", nil, false, swept, errors.Join(sweepErr, err)
 	} else if claimed {
 		if sweepErr != nil {
@@ -130,13 +173,13 @@ func openNativeBuildCache(base string, scratch runScratch, now time.Time) (strin
 		}
 		return directory, owner, true, swept, nil
 	}
-	directory, err := os.MkdirTemp(parent, buildcache.NativeDirectoryPrefix)
+	directory, err := dependencies.mkdirTemp(parent, buildcache.NativeDirectoryPrefix)
 	if err != nil {
 		return "", nil, false, swept, errors.Join(sweepErr, fmt.Errorf("goatest: create native build cache scratch: %w", err))
 	}
-	owner, err := tempowner.Claim(directory, marker, now)
+	owner, err := dependencies.claim(directory, marker, now)
 	if err != nil {
-		return "", nil, false, swept, errors.Join(sweepErr, fmt.Errorf("goatest: claim native build cache scratch: %w", err), removeBuildCacheScratch(directory))
+		return "", nil, false, swept, errors.Join(sweepErr, fmt.Errorf("goatest: claim native build cache scratch: %w", err), dependencies.remove(directory))
 	}
 	if sweepErr != nil {
 		swept.Errors = append(swept.Errors, sweepErr)
@@ -164,10 +207,14 @@ func claimSharedNativeBuildCache(
 }
 
 func removeBuildCacheScratch(scratch string) error {
+	return removeBuildCacheScratchWith(scratch, os.RemoveAll)
+}
+
+func removeBuildCacheScratchWith(scratch string, remove func(string) error) error {
 	if scratch == "" {
 		return nil
 	}
-	if err := os.RemoveAll(scratch); err != nil {
+	if err := remove(scratch); err != nil {
 		return fmt.Errorf("goatest: remove build cache scratch: %w", err)
 	}
 	return nil
@@ -185,6 +232,10 @@ func collectRunBuildCache(options Options, loaded config.Config, cache runBuildC
 	collected, ran, err := cache.collectBase(buildcache.Policy{
 		MaxBytes: loaded.Cache.BuildMaxBytes, TTL: loaded.Cache.TTL, MinIdle: base.MinIdle(),
 	}, now)
+	reportRunBuildCacheCollection(options, collected, ran, err)
+}
+
+func reportRunBuildCacheCollection(options Options, collected buildcache.Collected, ran bool, err error) {
 	switch {
 	case err != nil:
 		emit(options, "build-cache-unavailable", err.Error())
@@ -375,10 +426,10 @@ func recordNativePersistence(projection *nativeCacheProjection, seed buildcache.
 }
 
 func (cache runBuildCache) collectNativeLocked(force bool, now time.Time) {
-	if cache.maxBytes <= 0 || cache.projection.err != nil || cache.projection.disabled {
+	if !nativeCollectionReady(cache.maxBytes, cache.projection.err, cache.projection.disabled) {
 		return
 	}
-	if !force && !cache.projection.lastCollect.IsZero() && now.Sub(cache.projection.lastCollect) < buildcache.NativeCollectInterval {
+	if !nativeCollectionDue(force, cache.projection.lastCollect, now) {
 		return
 	}
 	cache.projection.lastCollect = now
@@ -395,6 +446,14 @@ func (cache runBuildCache) collectNativeLocked(force bool, now time.Time) {
 	cache.projection.collected.RemovedObjects += collected.RemovedObjects
 	cache.projection.collected.RemovedActions += collected.RemovedActions
 	cache.projection.collected.RemovedBytes += collected.RemovedBytes
+}
+
+func nativeCollectionReady(maxBytes int64, projectionErr error, disabled bool) bool {
+	return maxBytes > 0 && projectionErr == nil && !disabled
+}
+
+func nativeCollectionDue(force bool, lastCollect, now time.Time) bool {
+	return force || lastCollect.IsZero() || now.Sub(lastCollect) >= buildcache.NativeCollectInterval
 }
 
 func (cache runBuildCache) persistingEnvironment() []string {
