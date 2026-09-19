@@ -425,9 +425,6 @@ func restoreMutationProbe(catalog gomutants.Catalog, targets []TargetEvidence, p
 		if target.Target.ID == "" {
 			return ProbeEvaluation{}, false
 		}
-		if _, duplicate := byID[target.Target.ID]; duplicate {
-			return ProbeEvaluation{}, false
-		}
 		byID[target.Target.ID] = index
 	}
 	if len(saved.Targets) != len(targets) {

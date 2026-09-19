@@ -6,6 +6,7 @@ package assure
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,7 +31,45 @@ func TestDigestGoatestExecutableReadsExactBytes(t *testing.T) {
 
 func TestDigestGoatestExecutableFailsClosed(t *testing.T) {
 	t.Parallel()
-	if digest, err := digestGoatestExecutable(filepath.Join(t.TempDir(), "missing")); err == nil || digest != "" {
-		t.Fatalf("digestGoatestExecutable = (%q, %v)", digest, err)
+	for _, path := range []string{filepath.Join(t.TempDir(), "missing"), t.TempDir()} {
+		if digest, err := digestGoatestExecutable(path); err == nil || digest != "" {
+			t.Errorf("digestGoatestExecutable(%q) = (%q, %v)", path, digest, err)
+		}
+	}
+}
+
+func TestResolveGoatestBuildIdentityNamesEachFailureAndReturnsTheDigest(t *testing.T) {
+	t.Parallel()
+	locateErr := errors.New("locate failed")
+	identity, err := resolveGoatestBuildIdentityWith(func() (string, error) {
+		return "", locateErr
+	}, func(string) (string, error) {
+		t.Fatal("digest called after locate failed")
+		return "", nil
+	})
+	if identity != "" || !errors.Is(err, locateErr) || err.Error() != "goatest: locate running executable: locate failed" {
+		t.Fatalf("locate failure = (%q, %v)", identity, err)
+	}
+
+	digestErr := errors.New("digest failed")
+	identity, err = resolveGoatestBuildIdentityWith(func() (string, error) {
+		return "/bin/goatest", nil
+	}, func(path string) (string, error) {
+		if path != "/bin/goatest" {
+			t.Fatalf("digest path = %q", path)
+		}
+		return "", digestErr
+	})
+	if identity != "" || !errors.Is(err, digestErr) || err.Error() != "goatest: identify running executable: digest failed" {
+		t.Fatalf("digest failure = (%q, %v)", identity, err)
+	}
+
+	identity, err = resolveGoatestBuildIdentityWith(func() (string, error) {
+		return "/bin/goatest", nil
+	}, func(string) (string, error) {
+		return "build-digest", nil
+	})
+	if identity != "build-digest" || err != nil {
+		t.Fatalf("success = (%q, %v)", identity, err)
 	}
 }

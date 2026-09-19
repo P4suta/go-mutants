@@ -39,7 +39,7 @@ type runBuildCache struct {
 
 	native string
 
-	nativeOwner  *tempowner.Owner
+	nativeOwner  temporaryOwner
 	nativeShared bool
 	nativeSweep  tempowner.Result
 

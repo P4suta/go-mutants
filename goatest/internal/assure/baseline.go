@@ -133,7 +133,6 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 	}
 	completed := make(map[string]checkpoint.BaselineTarget)
 	completedSuites := make(map[string]checkpoint.BaselineSuite)
-	measuredTargets := make(map[string]*TargetEvidence)
 	checkpointInstrumentation := make(map[string]struct{})
 	buildVetComplete := false
 	resumeRouting := false
@@ -347,11 +346,6 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 			instrumentationAnchor = control.targets[0].Target.ID
 		}
 		commit := func(run baselineTargetRun) {
-			if run.evidence != nil {
-				measured := *run.evidence
-				measured.Instrumented = nil
-				measuredTargets[run.unit.ID] = &measured
-			}
 			if run.unit.Target != nil {
 				_, instrumented := checkpointInstrumentation[control.importPath]
 				if instrumented || run.unit.ID != instrumentationAnchor {
@@ -413,7 +407,7 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 			return BaselineResult{}, measured.err
 		}
 	}
-	appendCompletedBaselineTargets(&result, targets, completed, measuredTargets)
+	appendCompletedBaselineTargets(&result, targets, completed, nil)
 	checkpointNow(true)
 	return result, nil
 }
@@ -569,10 +563,7 @@ func collectPackageBaselineTargets(
 			return run.err
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return nil
+	return ctx.Err()
 }
 
 func neededBaselineSuitePackages(catalog gomutants.Catalog, targets []TargetEvidence, instrumented []goanalysis.FileCoverage) []string {
@@ -1188,15 +1179,12 @@ func classifyTestFraming(target string, output []byte) (bool, string, string, er
 		}
 		framed := remaining[marker+1:]
 		end := len(framed)
-		delimiter := byte(0)
 		if newline := bytes.IndexByte(framed, '\n'); newline != -1 {
-			end, delimiter = newline, '\n'
+			end = newline
 		}
-		if next := bytes.IndexByte(framed, testFramingMarker); next != -1 {
+		next := bytes.IndexByte(framed, testFramingMarker)
+		if next != -1 {
 			end = min(end, next)
-			if end == next {
-				delimiter = testFramingMarker
-			}
 		}
 		line := bytes.TrimSuffix(framed[:end], []byte{'\r'})
 		for bytes.HasPrefix(line, []byte("    ")) {
@@ -1211,13 +1199,10 @@ func classifyTestFraming(target string, output []byte) (bool, string, string, er
 				return true, "skipped-subtest", "a selected subtest was skipped: " + name, nil
 			}
 		}
-		if delimiter == 0 {
+		if next == -1 {
 			break
 		}
-		remaining = framed[end:]
-		if delimiter == '\n' {
-			remaining = remaining[1:]
-		}
+		remaining = framed[next:]
 	}
 	if truncated {
 		return false, "", "", errors.New("captured output was truncated before skip classification completed")

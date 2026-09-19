@@ -354,8 +354,8 @@ func TestNeededBaselineSuitesFilterRejectedEmptyAndRoutedMutants(t *testing.T) {
 	block := []goanalysis.FileCoverage{{Path: "value.go", Blocks: []goanalysis.CoverageBlock{infectionBlock()}}}
 	target := TargetEvidence{Target: baselineTestTarget("TestValue"), CoveredFiles: []string{"value.go"}, Covered: block, Instrumented: block}
 	catalog := gomutants.Catalog{Mutants: []gomutants.Mutant{
-		{ID: "rejected", Package: "fixture.example/rejected", Path: "value.go", Line: 1, Column: 1},
-		{ID: "empty", Accepted: true, Path: "value.go", Line: 1, Column: 1},
+		{ID: "rejected", Package: "fixture.example/rejected", Path: "rejected.go", Line: 1, Column: 1},
+		{ID: "empty", Accepted: true, Path: "empty.go", Line: 1, Column: 1},
 		{ID: "routed", Accepted: true, Package: "fixture.example/module", Path: "value.go", Line: 7, Column: 2},
 		{ID: "needed", Accepted: true, Package: "fixture.example/needed", Path: "other.go", Line: 1, Column: 1},
 	}}
@@ -551,7 +551,9 @@ func TestCollectBaselineDecidesProjectCheckTerminalsAndCheckpointBoundary(t *tes
 		{name: "classified exit", result: gomutants.CommandResult{ExitCode: 2, Output: []byte("broken")}, classify: true, wantResult: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			calls := 0
 			workspace := &baselineFakeWorkspace{exec: func(gomutants.Command) (gomutants.CommandResult, error) {
+				calls++
 				return test.result, nil
 			}}
 			resume := &checkpoint.Baseline{Targets: []checkpoint.BaselineTarget{{
@@ -562,6 +564,9 @@ func TestCollectBaselineDecidesProjectCheckTerminalsAndCheckpointBoundary(t *tes
 			})
 			if (err != nil) != test.wantError {
 				t.Fatalf("project check = (%+v, %v), want error %t", result, err, test.wantError)
+			}
+			if test.name == "timeout" && (calls != 1 || !strings.Contains(err.Error(), "go vet failed")) {
+				t.Fatalf("timeout calls=%d error=%v, want the first check to stop the run", calls, err)
 			}
 			if test.wantResult {
 				if err != nil || len(result.Findings) != 1 || len(result.Inventory) != 2 || result.Inventory[0].Status != "passed" || result.Inventory[1].Status != "not-run" || result.Skipped != 1 {
@@ -619,15 +624,47 @@ func TestCollectBaselineClassifiesCompileFailureAndCheckpointsExactStates(t *tes
 		}
 		return gomutants.CommandResult{}, nil
 	}}
-	var complete []bool
+	var states []checkpoint.Baseline
 	result, err := CollectBaseline(t.Context(), workspace, baselineModel(), []BaselineTarget{{Target: baselineTestTarget("TestValue")}}, BaselineOptions{
 		ArtifactDirectory: t.TempDir(), PackageSuites: true, ClassifyUserFailures: true,
-		Checkpoint: func(state checkpoint.Baseline) { complete = append(complete, state.Complete) },
+		Checkpoint: func(state checkpoint.Baseline) { states = append(states, state) },
 	})
+	complete := make([]bool, 0, len(states))
+	for _, state := range states {
+		complete = append(complete, state.Complete)
+	}
 	if err != nil || len(result.Findings) != 1 || result.Findings[0].Kind != "test-binary-build-failure" ||
 		len(result.Inventory) != 1 || result.Inventory[0].Status != "not-run" || result.Skipped != 1 ||
-		!slices.Equal(complete, []bool{false, false, true}) {
+		!slices.Equal(complete, []bool{false, false, true}) || len(states[1].Suites) != 1 || states[1].Suites[0].Package != "fixture.example/module" {
 		t.Fatalf("compile classification = (%+v, %v), checkpoints=%v", result, err, complete)
+	}
+	states = nil
+	result, err = CollectBaseline(t.Context(), workspace, baselineModel(), []BaselineTarget{{Target: baselineTestTarget("TestValue")}}, BaselineOptions{
+		ArtifactDirectory: t.TempDir(), ClassifyUserFailures: true,
+		Checkpoint: func(state checkpoint.Baseline) { states = append(states, state) },
+	})
+	for _, state := range states {
+		if len(state.Suites) != 0 {
+			t.Fatalf("disabled package suites checkpointed %+v", state.Suites)
+		}
+	}
+	if err != nil || len(result.Findings) != 1 {
+		t.Fatalf("compile classification without suites = (%+v, %v)", result, err)
+	}
+}
+
+func TestCollectBaselineCommitsATerminalTargetWithoutInventingEvidence(t *testing.T) {
+	workspace := &baselineFakeWorkspace{exec: func(command gomutants.Command) (gomutants.CommandResult, error) {
+		if len(command.Argv) != 0 && command.Argv[0] != "go" {
+			return gomutants.CommandResult{TimedOut: true, Duration: time.Second}, nil
+		}
+		return gomutants.CommandResult{}, nil
+	}}
+	result, err := CollectBaseline(t.Context(), workspace, baselineModel(), []BaselineTarget{{Target: baselineTestTarget("TestValue")}}, BaselineOptions{
+		ArtifactDirectory: t.TempDir(),
+	})
+	if err != nil || len(result.Inventory) != 1 || result.Inventory[0].Status != "failed" || len(result.Targets) != 0 {
+		t.Fatalf("terminal target = (%+v, %v)", result, err)
 	}
 }
 
@@ -723,6 +760,66 @@ func TestPreparedBaselineObservationFailuresKeepTargetAndSuiteTraceRoles(t *test
 	})
 	if err == nil || outcome != gomutants.ProbeUnavailable || !reflect.DeepEqual(suite, PackageSuiteCoverage{}) || !strings.Contains(err.Error(), "repository observation") {
 		t.Fatalf("unprepared observation failure = (%+v, %q, %v)", suite, outcome, err)
+	}
+}
+
+func TestPreparedBaselineExecutionFailuresKeepTargetAndSuiteTraceRoles(t *testing.T) {
+	const pkg = "fixture.example/module"
+	sentinel := errors.New("probe failed")
+	for _, test := range []struct {
+		name   string
+		suite  bool
+		target string
+	}{
+		{name: "target", target: baselineTestTarget("TestValue").ID},
+		{name: "suite", suite: true, target: packageSuiteProbeTarget(pkg)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			session := &mutationUnitSession{probe: func(gomutants.ProbeRequest) (gomutants.ProbeResult, error) {
+				return gomutants.ProbeResult{}, sentinel
+			}}
+			recording, recorder := newProbeRecording()
+			options := BaselineOptions{ArtifactDirectory: t.TempDir(), Trace: recorder}
+			var err error
+			if test.suite {
+				err = collectPreparedPackageSuiteCoverage(t.Context(), session, pkg, pkg, time.Second, nil, options).err
+			} else {
+				err = executePreparedBaselineTarget(t.Context(), session, pkg, pkg, BaselineTarget{Target: baselineTestTarget("TestValue")}, time.Second, options).err
+			}
+			if !errors.Is(err, sentinel) {
+				t.Fatalf("execution error = %v", err)
+			}
+			record := probeRecords(t, recording)[test.target]
+			if record.Error == "" || record.Suite != test.suite {
+				t.Fatalf("trace record = %+v, want suite=%t error", record, test.suite)
+			}
+		})
+	}
+}
+
+func TestPreparedPackageSuiteTraceMarksWholeTreeObservation(t *testing.T) {
+	const pkg = "fixture.example/module"
+	coverage := "mode: set\nfixture.example/module/value.go:1.1,2.1 1 1\n"
+	observer := newRepositoryObserver(t.TempDir(), t.TempDir(), map[string]goanalysis.RepositoryReadCandidate{
+		pkg: {Unobservable: true},
+	}, targetKeySources{})
+	session := &mutationUnitSession{probe: func(request gomutants.ProbeRequest) (gomutants.ProbeResult, error) {
+		profile := coverageProfileArgument(gomutants.Command{Argv: request.Args})
+		if err := os.WriteFile(profile, []byte(coverage), filemode.PrivateFile); err != nil {
+			t.Fatal(err)
+		}
+		return gomutants.ProbeResult{Outcome: gomutants.ProbeMeasured}, nil
+	}}
+	recording, recorder := newProbeRecording()
+	run := collectPreparedPackageSuiteCoverage(t.Context(), session, pkg, pkg, time.Second, nil, BaselineOptions{
+		ArtifactDirectory: t.TempDir(), RepositoryObserver: observer, Trace: recorder,
+	})
+	if run.err != nil || run.outcome != gomutants.ProbeMeasured {
+		t.Fatalf("suite = %+v", run)
+	}
+	record := probeRecords(t, recording)[packageSuiteProbeTarget(pkg)]
+	if !record.WholeTree || record.WholeTreeReason == string(wholeTreeObserved) {
+		t.Fatalf("whole-tree trace record = %+v", record)
 	}
 }
 

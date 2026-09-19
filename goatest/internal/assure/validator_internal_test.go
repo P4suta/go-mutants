@@ -108,3 +108,28 @@ func TestAValidatorsTestCommandCarriesOnlyWhatItWasGiven(t *testing.T) {
 		})
 	}
 }
+
+func TestAValidatorsListCommandCarriesBuildTagsOnlyWhenGiven(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		options RepositoryValidatorOptions
+		want    []string
+	}{
+		{name: "no tags", want: []string{"go", "list", "-json", "./..."}},
+		{
+			name: "tags and packages",
+			options: RepositoryValidatorOptions{
+				BuildTags: []string{"integration", "slow"}, Packages: []string{"./one", "./two"},
+			},
+			want: []string{"go", "list", "-json", "-tags=integration,slow", "./one", "./two"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := NewRepositoryValidator(test.options).listArgv(); !slices.Equal(got, test.want) {
+				t.Fatalf("list argv = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

@@ -76,9 +76,12 @@ func TestProbeTargetsSelectsFallbackAndPendingSuitesExactly(t *testing.T) {
 			name: "unmeasured explicit suite is retried",
 			options: ProbeOptions{
 				SuitePackages: []string{"fixture.example/module"},
-				Suites:        map[string]PackageProbeEvidence{"fixture.example/module": {}},
+				Suites: map[string]PackageProbeEvidence{
+					"fixture.example/module": {},
+					"fixture.example/saved":  {Measured: true},
+				},
 			},
-			wantPackages: []string{"fixture.example/module"}, wantMeasured: 1,
+			wantPackages: []string{"fixture.example/module"}, wantMeasured: 2,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -336,6 +339,19 @@ func TestRestoreMutationProbeRejectsEveryMalformedBoundary(t *testing.T) {
 	if !ok || restored.Measured != 1 || restored.Unmeasured != 1 || restored.SuitesMeasured != 1 || restored.SuitesUnmeasured != 1 ||
 		!restored.Targets[0].Probed || restored.Targets[1].Probed || !restored.Suites["pkg-a"].Measured || restored.Suites["pkg-b"].Measured {
 		t.Fatalf("valid restore = (%+v, %t)", restored, ok)
+	}
+	emptyTargets := slices.Clone(targets)
+	emptyTargets[0].Target.ID = ""
+	emptySaved := valid()
+	emptySaved.Targets[0].ID = ""
+	if evaluation, ok := restoreMutationProbe(catalog, emptyTargets, packages, emptySaved); ok || !reflect.DeepEqual(evaluation, ProbeEvaluation{}) {
+		t.Fatalf("matching empty target identity restored = (%+v, %t)", evaluation, ok)
+	}
+	allMeasured := valid()
+	allMeasured.Suites[1].Measured = true
+	allMeasured.Suites[1].DurationNS = 1
+	if evaluation, ok := restoreMutationProbe(catalog, targets, packages, allMeasured); !ok || evaluation.SuitesMeasured != 2 || evaluation.SuitesUnmeasured != 0 {
+		t.Fatalf("all measured suites restored = (%+v, %t)", evaluation, ok)
 	}
 	for _, test := range []struct {
 		name    string

@@ -60,6 +60,12 @@ func TestBaselineTargetJournalSuffixAcceptsOnlyAnExactExtension(t *testing.T) {
 	if !ok || len(suffix) != 1 || suffix[0].ID != "b" {
 		t.Fatalf("valid suffix = (%+v, %t)", suffix, ok)
 	}
+	next.Targets = append(next.Targets, checkpoint.BaselineTarget{ID: "c", Inventory: report.TargetDisposition{ID: "c"}})
+	next.Targets[0], next.Targets[2] = next.Targets[2], next.Targets[0]
+	suffix, ok = baselineCheckpointJournalSuffix(previous, next)
+	if !ok || len(suffix) != 2 || suffix[0].ID != "b" || suffix[1].ID != "c" {
+		t.Fatalf("sorted suffix = (%+v, %t)", suffix, ok)
+	}
 	for _, test := range []struct {
 		name   string
 		change func(*checkpoint.Baseline, *checkpoint.Baseline)
@@ -76,7 +82,7 @@ func TestBaselineTargetJournalSuffixAcceptsOnlyAnExactExtension(t *testing.T) {
 			before.Targets = append(before.Targets, before.Targets[0])
 			after.Targets = append(after.Targets, checkpoint.BaselineTarget{ID: "c"})
 		}},
-		{name: "duplicate after", change: func(_, after *checkpoint.Baseline) { after.Targets[0].ID = after.Targets[1].ID }},
+		{name: "duplicate after", change: func(_, after *checkpoint.Baseline) { after.Targets = append(after.Targets, after.Targets[0]) }},
 		{name: "saved unit changed", change: func(_, after *checkpoint.Baseline) { after.Targets[1].Executed = true }},
 		{name: "saved unit missing", change: func(_, after *checkpoint.Baseline) { after.Targets[1].ID = "c" }},
 	} {
@@ -96,6 +102,12 @@ func TestBaselineSuiteJournalSuffixAcceptsOnlyAnExactExtension(t *testing.T) {
 	suffix, ok := baselineSuiteCheckpointJournalSuffix(previous, next)
 	if !ok || len(suffix) != 1 || suffix[0].Package != "b" {
 		t.Fatalf("valid suffix = (%+v, %t)", suffix, ok)
+	}
+	next.Suites = append(next.Suites, checkpoint.BaselineSuite{Package: "c"})
+	next.Suites[0], next.Suites[2] = next.Suites[2], next.Suites[0]
+	suffix, ok = baselineSuiteCheckpointJournalSuffix(previous, next)
+	if !ok || len(suffix) != 2 || suffix[0].Package != "b" || suffix[1].Package != "c" {
+		t.Fatalf("sorted suffix = (%+v, %t)", suffix, ok)
 	}
 	for _, test := range []struct {
 		name   string
@@ -206,6 +218,32 @@ func TestCheckpointControllerSaveMethodsHonorDisabledAndExactState(t *testing.T)
 	(*runCheckpointController)(nil).saveBaseline(checkpoint.Baseline{})
 }
 
+func TestSaveBaselineUsesOnlySupportedJournalExtensionsAndOtherwisePersists(t *testing.T) {
+	previous, next := baselineJournalFixture()
+	nonJournal := &coordinatorCache{}
+	controller := &runCheckpointController{store: nonJournal, digest: "digest", enabled: true, state: checkpoint.State{Baseline: previous}}
+	controller.saveBaseline(next)
+	if !nonJournal.checkpointFound || !reflect.DeepEqual(nonJournal.checkpoint.Baseline, controller.state.Baseline) {
+		t.Fatalf("non-journal checkpoint = %+v, controller=%+v", nonJournal.checkpoint, controller.state)
+	}
+
+	journal := &journalCheckpointCache{}
+	incompatible := checkpoint.Baseline{BuildVetComplete: true, Complete: true}
+	controller = &runCheckpointController{store: journal, digest: "digest", enabled: true, state: checkpoint.State{Baseline: previous}}
+	controller.saveBaseline(incompatible)
+	if !journal.checkpointFound || !reflect.DeepEqual(journal.checkpoint.Baseline, incompatible) || len(journal.baselineUnits) != 0 || len(journal.baselineSuiteUnits) != 0 {
+		t.Fatalf("fallback checkpoint = %+v, target journal=%+v suite journal=%+v", journal.checkpoint, journal.baselineUnits, journal.baselineSuiteUnits)
+	}
+
+	unsorted := checkpoint.Baseline{BuildVetComplete: true, Suites: []checkpoint.BaselineSuite{{Package: "c"}, {Package: "a"}, {Package: "b"}}}
+	controller = &runCheckpointController{store: nonJournal, digest: "digest", enabled: true}
+	controller.saveBaseline(unsorted)
+	got := controller.state.Baseline.Suites
+	if len(got) != 3 || got[0].Package != "a" || got[1].Package != "b" || got[2].Package != "c" {
+		t.Fatalf("sorted suites = %+v", got)
+	}
+}
+
 func TestCheckpointControllerMutationRejectsEveryCatalogMismatch(t *testing.T) {
 	catalog := gomutants.Catalog{Mutants: []gomutants.Mutant{{ID: "a"}, {ID: "b"}}}
 	fingerprint := MutationCatalogFingerprint(catalog)
@@ -258,6 +296,19 @@ func TestCheckpointControllerFailurePathsDisableOrWarn(t *testing.T) {
 	controller.discard()
 	if controller.enabled || deleteCache.checkpointDeletes != 1 || len(deleteEvents) != 1 || !strings.Contains(deleteEvents[0].Detail, deleteCause.Error()) {
 		t.Fatalf("delete failure controller=%+v cache=%+v events=%+v", controller, deleteCache, deleteEvents)
+	}
+	successCache := &resumeDecisionCache{}
+	var successEvents []Event
+	controller = &runCheckpointController{store: successCache, digest: "digest", enabled: true, options: Options{Progress: func(event Event) { successEvents = append(successEvents, event) }}}
+	controller.discard()
+	if controller.enabled || successCache.checkpointDeletes != 1 || len(successEvents) != 0 {
+		t.Fatalf("successful discard controller=%+v cache=%+v events=%+v", controller, successCache, successEvents)
+	}
+	disabledCache := &coordinatorCache{}
+	controller = &runCheckpointController{store: disabledCache, digest: "digest"}
+	controller.persistLocked()
+	if disabledCache.checkpointFound {
+		t.Fatalf("disabled persist wrote %+v", disabledCache.checkpoint)
 	}
 	(*runCheckpointController)(nil).discard()
 }

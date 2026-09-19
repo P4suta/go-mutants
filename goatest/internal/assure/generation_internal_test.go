@@ -303,6 +303,84 @@ func TestAttemptGeneratedRepairsRecordsEveryRejectionAndArtifactBeforeApplying(t
 	}
 }
 
+func TestAttemptGeneratedRepairsKeepsPolicyAndValidationFailuresFromApplication(t *testing.T) {
+	finding := generationFinding("finding-boundary")
+	for _, test := range []struct {
+		name      string
+		candidate provider.Candidate
+		allowed   []string
+		noApply   bool
+		validator func(string) generationValidator
+	}{
+		{
+			name: "outside configured paths", candidate: provider.Candidate{
+				Kind: "patch", Path: "other_test.go", Content: []byte("package fixture\n"),
+			}, allowed: []string{"only_test.go"}, validator: func(string) generationValidator { return generationValidator{} },
+		},
+		{
+			name: "validation failure in read-only mode", candidate: provider.Candidate{
+				Kind: "patch", Path: "rejected_test.go", Content: []byte("package fixture\n"),
+			}, allowed: []string{"rejected_test.go"}, noApply: true, validator: func(string) generationValidator {
+				return generationValidator{original: func(context.Context, provider.Candidate) error {
+					return errors.New("original failed")
+				}}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			evaluation, err := AttemptGeneratedRepairs(t.Context(), root, []report.Finding{finding}, GenerationOptions{
+				NoApply: test.noApply, AllowedPaths: test.allowed, Validator: test.validator(root),
+				Generate: func(context.Context, provider.Request) (provider.Response, error) {
+					return provider.Response{Version: provider.ProtocolVersion, FindingID: finding.ID, Candidates: []provider.Candidate{test.candidate}}, nil
+				},
+			})
+			if err != nil || evaluation.Applied || len(evaluation.Repairs) != 1 || evaluation.Repairs[0].Status != "rejected" {
+				t.Fatalf("AttemptGeneratedRepairs = (%+v, %v)", evaluation, err)
+			}
+			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(test.candidate.Path))); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("rejected candidate changed the repository: %v", err)
+			}
+		})
+	}
+}
+
+func TestAttemptGeneratedRepairsReportsStorageFailureAndRejectsApplicationFailure(t *testing.T) {
+	finding := generationFinding("finding-write-boundary")
+	candidate := provider.Candidate{Kind: "patch", Path: "blocked/value_test.go", Content: []byte("package blocked\n")}
+	for _, test := range []struct {
+		name    string
+		noApply bool
+		block   string
+		wantErr string
+	}{
+		{name: "candidate storage", noApply: true, block: ".goatest", wantErr: "store repair candidate"},
+		{name: "candidate application", block: "blocked"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			validator := generationValidator{suite: func(context.Context, provider.Candidate) error {
+				return os.WriteFile(filepath.Join(root, test.block), []byte("not a directory"), 0o600)
+			}}
+			evaluation, err := AttemptGeneratedRepairs(t.Context(), root, []report.Finding{finding}, GenerationOptions{
+				NoApply: test.noApply, AllowedPaths: []string{"blocked/**"}, Validator: validator,
+				Generate: func(context.Context, provider.Request) (provider.Response, error) {
+					return provider.Response{Version: provider.ProtocolVersion, FindingID: finding.ID, Candidates: []provider.Candidate{candidate}}, nil
+				},
+			})
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) || !reflect.DeepEqual(evaluation, GenerationEvaluation{}) {
+					t.Fatalf("storage failure = (%+v, %v)", evaluation, err)
+				}
+				return
+			}
+			if err != nil || evaluation.Applied || len(evaluation.Repairs) != 1 || evaluation.Repairs[0].Status != "rejected" {
+				t.Fatalf("application failure = (%+v, %v)", evaluation, err)
+			}
+		})
+	}
+}
+
 func TestGenerationPathsHonorsPrecedenceAndClonesEveryResult(t *testing.T) {
 	options := Options{AllowedGenerationPaths: []string{"option_test.go"}}
 	loaded := config.Config{Generation: config.Generation{AllowedPaths: []string{"config_test.go"}}}

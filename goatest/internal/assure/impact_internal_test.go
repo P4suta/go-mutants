@@ -19,6 +19,8 @@ import (
 	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
 )
 
+const completeChangedFilesGitCalls = 2
+
 func TestSafeChangedPathCanonicalizesLocalFilesAndRejectsEveryEscapeForm(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
@@ -185,6 +187,13 @@ func TestChangedFilesCombinesSortsAndValidatesDiffAndUntrackedNames(t *testing.T
 			}
 			if got, known := changedFiles(context.Background(), t.TempDir(), "HEAD~1"); known || got != nil {
 				t.Fatalf("changedFiles(%s) = (%v, %t)", stage, got, known)
+			}
+			wantCalls := completeChangedFilesGitCalls
+			if stage == "diff" {
+				wantCalls = 1
+			}
+			if calls != wantCalls {
+				t.Fatalf("changedFiles(%s) made %d git calls, want %d", stage, calls, wantCalls)
 			}
 		})
 	}

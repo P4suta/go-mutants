@@ -289,8 +289,8 @@ func TestAMutationProbeIndexFingerprintChangesWithEveryFactItCovers(t *testing.T
 		{Index: 2, ID: "m-2"},
 	}}
 	fingerprint := mutationProbeIndexFingerprint(base)
-	if fingerprint == "" {
-		t.Fatal("a catalog of two mutants has no fingerprint")
+	if fingerprint != "ad0fd21fcf1d13be7b86cba193c071487c16e1eb6a966d37b4297c89547daf24" {
+		t.Fatalf("fingerprint = %q", fingerprint)
 	}
 	for _, test := range []struct {
 		name   string

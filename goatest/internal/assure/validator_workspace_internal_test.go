@@ -21,6 +21,7 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/mutationbridge"
 	"github.com/P4suta/go-mutants/goatest/internal/provider"
 	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 type scriptedValidationWorkspace struct {
@@ -28,6 +29,15 @@ type scriptedValidationWorkspace struct {
 	results  []gomutants.CommandResult
 	errors   []error
 	closed   int
+}
+
+type preservingValidationWorkspace struct {
+	*scriptedValidationWorkspace
+	preserved []string
+}
+
+func (workspace *preservingValidationWorkspace) Preserved() []string {
+	return slices.Clone(workspace.preserved)
 }
 
 func (workspace *scriptedValidationWorkspace) Exec(_ context.Context, command gomutants.Command) (gomutants.CommandResult, error) {
@@ -52,6 +62,11 @@ func TestDefaultPrepareValidationSessionRejectsUnsupportedWorkspace(t *testing.T
 	session, err := defaultPrepareValidationSession(t.Context(), &scriptedValidationWorkspace{}, mutationbridge.PrepareOptions{})
 	if session != nil || err == nil || !strings.Contains(err.Error(), "unsupported validation workspace") {
 		t.Fatalf("defaultPrepareValidationSession = (%T, %v)", session, err)
+	}
+	var supported *mutationbridge.Workspace
+	session, err = defaultPrepareValidationSession(t.Context(), supported, mutationbridge.PrepareOptions{})
+	if session != nil || err == nil || !strings.Contains(err.Error(), "nil mutation workspace") {
+		t.Fatalf("supported nil workspace = (%T, %v)", session, err)
 	}
 }
 
@@ -84,17 +99,33 @@ func TestRepositoryValidatorOpenPassesFrozenBridgeOptions(t *testing.T) {
 	}
 	_, recorder := newTraceRecording()
 	validator := NewRepositoryValidator(RepositoryValidatorOptions{
-		GoBinary: "go-custom", TempDirectory: "temp", Environment: []string{"DB=ready"}, Trace: recorder,
+		GoBinary: "go-custom", TempDirectory: "temp", Environment: []string{"DB=ready"}, BuildTags: []string{"integration"}, Trace: recorder,
 	})
 	workspace, err := validator.open(t.Context(), "snapshot", "temp")
 	if err != nil || workspace != wantWorkspace || gotRoot != "snapshot" || gotOptions.GoBinary != "go-custom" || gotOptions.TempDirectory != "temp" ||
 		gotOptions.ReportDirectory != internalOutputDirectory || !slices.Equal(gotOptions.SnapshotExclude, assuranceSnapshotExclusions()) ||
-		!slices.Equal(gotOptions.Environment, []string{"MUTATED=yes"}) || validator.options.Environment[0] != "DB=ready" {
+		!slices.Contains(gotOptions.Environment, "MUTATED=yes") || !containsEnvironment(gotOptions.Environment, "GOFLAGS", "-buildvcs=false -tags=integration") ||
+		validator.options.Environment[0] != "DB=ready" {
 		t.Fatalf("open = (%T, %v), root=%q options=%+v validator=%+v", workspace, err, gotRoot, gotOptions, validator.options)
 	}
 
 	if gotOptions.Trace != recorder {
 		t.Fatalf("bridge recorder = %p, want %p", gotOptions.Trace, recorder)
+	}
+}
+
+func TestRepositoryValidatorCloseRecordsPreservedWorkspaceArtifacts(t *testing.T) {
+	sink, recorder := newTraceRecording()
+	inner := &scriptedValidationWorkspace{}
+	workspace := &preservingValidationWorkspace{scriptedValidationWorkspace: inner, preserved: []string{"snapshot-a", "probe-b"}}
+	validator := NewRepositoryValidator(RepositoryValidatorOptions{Trace: recorder})
+	validator.close(workspace)
+	want := []trace.ArtifactRecord{
+		{Kind: artifactMutationWorkspace, Path: "snapshot-a"},
+		{Kind: artifactMutationWorkspace, Path: "probe-b"},
+	}
+	if inner.closed != 1 || !reflect.DeepEqual(recordedArtifacts(sink), want) {
+		t.Fatalf("closed=%d artifacts=%+v", inner.closed, recordedArtifacts(sink))
 	}
 }
 
@@ -330,6 +361,9 @@ func TestRepositoryValidatorSuiteCoversEveryFailureAndRaceOutcome(t *testing.T) 
 			err := validator.Suite(t.Context(), candidate)
 			if (err != nil) != test.wantErr || len(workspace.commands) != test.wantCommands || workspace.closed != 1 || collectCalls != test.wantCollectCalls {
 				t.Fatalf("Suite = %v, commands=%+v closed=%d collect=%d", err, workspace.commands, workspace.closed, collectCalls)
+			}
+			if len(workspace.commands) != 0 && !slices.Equal(workspace.commands[0].Argv, []string{"go", "test", "-tags=integration", "-count=1", "./...", "-args", "-test.short=true"}) {
+				t.Fatalf("suite command = %+v", workspace.commands[0])
 			}
 			if len(workspace.commands) == 2 && !slices.Equal(workspace.commands[1].Argv, []string{"go", "list", "-json", "-tags=integration", "./..."}) {
 				t.Fatalf("list command = %+v", workspace.commands[1])

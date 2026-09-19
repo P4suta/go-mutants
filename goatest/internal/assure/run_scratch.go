@@ -30,6 +30,11 @@ func TemporaryPrefixes() []string {
 	return []string{runScratchPrefix}
 }
 
+type temporaryOwner interface {
+	Keep() error
+	Release() error
+}
+
 type runScratch struct {
 	dir string
 
@@ -37,8 +42,10 @@ type runScratch struct {
 
 	id string
 
-	owner *tempowner.Owner
+	owner temporaryOwner
 }
+
+func (scratch runScratch) recordsKept() bool { return scratch.root != "" && scratch.id != "" }
 
 func openRunScratch(makeScratch func(string, string) (string, error), removeScratch func(string) error, temporary, root string, now time.Time) (runScratch, error) {
 	scratch := runScratch{root: root}
