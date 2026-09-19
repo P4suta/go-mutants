@@ -144,7 +144,6 @@ func EvaluateMutations(ctx context.Context, session MutationSession, targets []T
 	}
 	var evaluation MutationEvaluation
 	mutants := make([]gomutants.Mutant, 0, len(catalog.Mutants))
-	resumed := make(map[string]bool, len(options.Resume))
 
 	resumedProvenance := make(map[string]string, len(options.Resume))
 	replayPresent := options.ReplayMutantID == ""
@@ -155,10 +154,7 @@ func EvaluateMutations(ctx context.Context, session MutationSession, targets []T
 		replayPresent = true
 		if saved, ok := options.Resume[mutant.ID]; ok {
 			evaluation.append(saved)
-			resumed[mutant.ID] = true
-			if saved.Provenance != "" {
-				resumedProvenance[mutant.ID] = saved.Provenance
-			}
+			resumedProvenance[mutant.ID] = saved.Provenance
 			continue
 		}
 		mutants = append(mutants, mutant)
@@ -169,10 +165,7 @@ func EvaluateMutations(ctx context.Context, session MutationSession, targets []T
 		}
 		replayPresent = true
 		if saved, ok := options.Resume[rejection.ID]; ok {
-			if !resumed[rejection.ID] {
-				evaluation.append(saved)
-				resumed[rejection.ID] = true
-			}
+			evaluation.append(saved)
 			continue
 		}
 		unit := MutationEvaluation{Evidence: []report.Evidence{{
@@ -286,9 +279,6 @@ func mutationAccounting(catalog gomutants.Catalog, replayID string, evaluation M
 	statuses := make(map[string]report.MutantStatus, len(selected))
 	details := make(map[string]string, len(selected))
 	for _, item := range evaluation.Evidence {
-		if !selected[item.ID] {
-			continue
-		}
 		if item.Kind != "mutation" {
 			continue
 		}
@@ -299,9 +289,6 @@ func mutationAccounting(catalog gomutants.Catalog, replayID string, evaluation M
 		}
 	}
 	for _, finding := range evaluation.Findings {
-		if !selected[finding.MutantID] {
-			continue
-		}
 		if finding.Kind == "surviving-mutant" || finding.Kind == "unreached-mutant" {
 			statuses[finding.MutantID] = report.MutantSurvived
 		} else {
@@ -864,29 +851,17 @@ func aggregateMutationTimeout(targets []TargetEvidence, options MutationOptions)
 	baseline, probe := batchMutationControlDurations(targets)
 	targetDeadline := mutationExecutionTimeout(options.Timeout, baseline, probe)
 	pkg := targets[0].Target.Package
-	var suiteSamples []time.Duration
-	if suite, measured := options.SuiteCoverage[pkg]; measured && suite.Duration > 0 {
-		suiteSamples = append(suiteSamples, suite.Duration)
-	}
-	if suite, measured := options.SuiteProbes[pkg]; measured && suite.Measured && suite.Duration > 0 {
-		suiteSamples = append(suiteSamples, suite.Duration)
-	}
-	if len(suiteSamples) == 0 {
-		return targetDeadline
+	suiteSamples := []time.Duration{max(options.SuiteCoverage[pkg].Duration, 0)}
+	if suite := options.SuiteProbes[pkg]; suite.Measured {
+		suiteSamples = append(suiteSamples, max(suite.Duration, 0))
 	}
 	suiteDeadline := mutationExecutionTimeout(options.Timeout, suiteSamples...)
 	return mutationExecutionTimeout(options.Timeout, targetDeadline, suiteDeadline)
 }
 
 func saturatingDurationSum(total, duration time.Duration) time.Duration {
-	if duration <= 0 {
-		return total
-	}
 	maximum := time.Duration(math.MaxInt64)
-	if duration > maximum-total {
-		return maximum
-	}
-	return total + duration
+	return total + min(max(duration, 0), maximum-total)
 }
 
 func batchMutationDetail(targets []TargetEvidence) string {
@@ -969,10 +944,7 @@ func applySuiteCoverageRouting(mutant gomutants.Mutant, route mutationRoute, sui
 	if len(route.reaching) != 0 || len(route.discharged) != 0 {
 		return route
 	}
-	suite, measured := suites[mutant.Package]
-	if !measured {
-		return route
-	}
+	suite := suites[mutant.Package]
 	route.suiteDuration = suite.Duration
 	if mutant.Line <= 0 || mutant.Column <= 0 {
 		return route
@@ -990,7 +962,7 @@ func applySuiteCoverageRouting(mutant gomutants.Mutant, route mutationRoute, sui
 }
 
 func neededProbeSuitePackages(catalog gomutants.Catalog, targets []TargetEvidence, instrumented []goanalysis.FileCoverage, suites map[string]PackageSuiteCoverage) []string {
-	needed := make(map[string]bool)
+	needed := make(map[string]struct{})
 	for _, mutant := range catalog.Mutants {
 		if !mutant.Accepted || !mutant.Probed || mutant.Package == "" {
 			continue
@@ -1003,7 +975,7 @@ func neededProbeSuitePackages(catalog gomutants.Catalog, targets []TargetEvidenc
 		if route.suiteCoverage != "" && !route.suiteReached {
 			continue
 		}
-		needed[mutant.Package] = true
+		needed[mutant.Package] = struct{}{}
 	}
 	packages := make([]string, 0, len(needed))
 	for pkg := range needed {
@@ -1034,7 +1006,7 @@ func applyProbeRouting(mutant gomutants.Mutant, targets []TargetEvidence, route 
 	if coverageEmpty && !checkPositiveCounterexample && (suitePositivelyReached || route.suiteInfected) {
 		return route
 	}
-	known := make(map[string]bool, len(route.reaching)+len(route.discharged))
+	known := make(map[string]bool)
 	for _, target := range route.reaching {
 		known[target.Target.ID] = true
 	}
@@ -1094,7 +1066,7 @@ func dischargeReachingTargets(mutant gomutants.Mutant, ordered []TargetEvidence,
 	if len(branch) == 0 && len(infection) == 0 {
 		return ordered, nil
 	}
-	proofs := make(map[string]string, len(branch)+len(infection))
+	proofs := make(map[string]string)
 	for _, discharge := range slices.Concat(branch, infection) {
 		proofs[discharge.Target] = discharge.Reason
 	}
@@ -1122,9 +1094,6 @@ func dischargeNeverInfected(mutant gomutants.Mutant, reaching []TargetEvidence) 
 			Target: target.Target.ID, Reason: trace.DischargeNeverInfected,
 		})
 	}
-	if len(discharged) == 0 {
-		return reaching, nil
-	}
 	return kept, discharged
 }
 
@@ -1144,9 +1113,6 @@ func dischargeNarrowedBranch(mutant gomutants.Mutant, reaching []TargetEvidence,
 		discharged = append(discharged, trace.Discharge{
 			Target: target.Target.ID, Reason: trace.DischargeBranchNeverTaken,
 		})
-	}
-	if len(discharged) == 0 {
-		return reaching, nil
 	}
 	return kept, discharged
 }
@@ -1207,10 +1173,7 @@ func compareMutationWitnesses(mutant gomutants.Mutant, first, second TargetEvide
 			return order
 		}
 	}
-	if order := cmp.Compare(mutationPlanningDuration(first), mutationPlanningDuration(second)); order != 0 {
-		return order
-	}
-	return 0
+	return cmp.Compare(mutationPlanningDuration(first), mutationPlanningDuration(second))
 }
 
 func seedRequest(mutant gomutants.Mutant, target TargetEvidence, timeout time.Duration) gomutants.ExecRequest {
@@ -1248,9 +1211,9 @@ func mutationExecutionTimeout(limit time.Duration, samples ...time.Duration) tim
 	var timeout time.Duration
 	for _, sample := range samples {
 		timeout = saturatingDurationSum(timeout, sample)
-		if limit > 0 && timeout >= limit {
-			return limit
-		}
+	}
+	if limit > 0 {
+		return min(timeout, limit)
 	}
 	return timeout
 }
