@@ -75,6 +75,10 @@ func TestACandidateDiffSaysWhatItCanAndWhyItCannot(t *testing.T) {
 		[]byte{'a', 0, 'b'}, filemode.ReadableFile); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "leading_test.go"),
+		[]byte{0, 'a'}, filemode.ReadableFile); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, test := range []struct {
 		name      string
@@ -111,6 +115,18 @@ func TestACandidateDiffSaysWhatItCanAndWhyItCannot(t *testing.T) {
 			name: "a candidate that is not valid UTF-8",
 			candidate: provider.Candidate{
 				Kind: "patch", Path: "changed_test.go", Content: []byte{0xff, 0xfe},
+			},
+			want: "binary change:",
+		},
+		{
+			name:      "a file whose very first byte is not text",
+			candidate: provider.Candidate{Kind: "patch", Path: "leading_test.go", Content: []byte("package repaired\n")},
+			want:      "binary change:",
+		},
+		{
+			name: "a candidate whose very first byte is not text",
+			candidate: provider.Candidate{
+				Kind: "patch", Path: "changed_test.go", Content: []byte{0, 'a'},
 			},
 			want: "binary change:",
 		},
@@ -223,6 +239,21 @@ func TestAFixEnvironmentWithoutResourcesIsTheBaseItWasGiven(t *testing.T) {
 	defer func() { _ = release() }()
 	if !slices.Equal(environment, []string{"PATH=/bin"}) {
 		t.Fatalf("a fix with no resource runs with %q, want the base it was given", environment)
+	}
+}
+
+func TestAFixEnvironmentWithNoBaseTakesTheOneThisProcessHas(t *testing.T) {
+	t.Parallel()
+	environment, release, err := fixEnvironment(t.Context(), config.Config{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	if len(environment) == 0 {
+		t.Fatal("a fix given no base at all runs with nothing; it should take this process's own")
+	}
+	if !slices.Equal(environment, mergeFixEnvironment(os.Environ(), nil)) {
+		t.Fatalf("a fix given no base runs with %d entries, want this process's own", len(environment))
 	}
 }
 
