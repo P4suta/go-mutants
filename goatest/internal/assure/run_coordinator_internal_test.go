@@ -673,6 +673,9 @@ func TestRunCoordinatorRestoresCompleteProbeWithoutExecutingItAgain(t *testing.T
 		Mutation: &checkpoint.Mutation{
 			CatalogFingerprint: MutationCatalogFingerprint(harness.catalog),
 			Probe:              checkpointMutationProbe(harness.catalog, probeEvaluation),
+			Results: []checkpoint.MutationResult{{
+				ID: "mutant-a", Provenance: "saved-provenance",
+			}},
 		},
 	}
 	harness.cache.checkpointFound = true
@@ -685,6 +688,9 @@ func TestRunCoordinatorRestoresCompleteProbeWithoutExecutingItAgain(t *testing.T
 	}
 	if !reflect.DeepEqual(harness.mutationTargets, probed) || !reflect.DeepEqual(harness.mutationOptions.SuiteProbes, probeEvaluation.Suites) {
 		t.Fatalf("restored routing = targets %+v suites %+v, want %+v %+v", harness.mutationTargets, harness.mutationOptions.SuiteProbes, probed, probeEvaluation.Suites)
+	}
+	if saved, found := harness.mutationOptions.Resume["mutant-a"]; !found || saved.Provenance != "saved-provenance" {
+		t.Fatalf("mutation resume = %+v, want saved mutant", harness.mutationOptions.Resume)
 	}
 	if !slices.ContainsFunc(harness.events, func(event Event) bool { return event.Kind == "resume-probe" }) {
 		t.Fatalf("events = %+v, want resume-probe", harness.events)

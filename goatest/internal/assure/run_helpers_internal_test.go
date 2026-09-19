@@ -146,6 +146,7 @@ func TestInspectWorkspaceRejectsEveryCommandFailureAndMalformedOutput(t *testing
 	moduleRoot := t.TempDir()
 	validList := listedPackageJSON(t, moduleRoot)
 	validModules := moduleGraphJSON(t, listedModule{Path: "fixture.example/module", Main: true})
+	missingLocal := filepath.Join(t.TempDir(), "missing")
 	cause := errors.New("exec failed")
 	for _, test := range []struct {
 		name       string
@@ -166,6 +167,10 @@ func TestInspectWorkspaceRejectsEveryCommandFailureAndMalformedOutput(t *testing
 		{name: "no main module", results: []gomutants.CommandResult{{Output: validList}, {Output: moduleGraphJSON(t, listedModule{Path: "fixture.example/module"})}}, wantDetail: "no main module"},
 		{name: "different main module", results: []gomutants.CommandResult{{Output: validList}, {Output: moduleGraphJSON(t, listedModule{Path: "other.example/module", Main: true})}}, wantDetail: "does not match main module"},
 		{name: "multiple main modules", results: []gomutants.CommandResult{{Output: validList}, {Output: moduleGraphJSON(t, listedModule{Path: "fixture.example/module", Main: true}, listedModule{Path: "other.example/module", Main: true})}}, wantDetail: "refusing partial assurance"},
+		{name: "unreadable local replacement", results: []gomutants.CommandResult{{Output: validList}, {Output: moduleGraphJSON(t,
+			listedModule{Path: "fixture.example/module", Main: true},
+			listedModule{Path: "dependency.example/module", Replace: &listedModule{Path: missingLocal, Dir: missingLocal}},
+		)}}, wantDetail: "digest local replacement"},
 		{name: "valid control", results: []gomutants.CommandResult{{Output: validList}, {Output: validModules}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

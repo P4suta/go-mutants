@@ -51,10 +51,7 @@ const (
 const goMutantsModulePath = "github.com/P4suta/go-mutants"
 
 func GoMutantsVersion() (string, error) {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "", errors.New("goatest: build info is unavailable; the go-mutants version cannot be audited")
-	}
+	info, _ := debug.ReadBuildInfo()
 	return goMutantsVersionFrom(info)
 }
 
@@ -413,11 +410,8 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 			candidates, readers := repositoryObservationScope(root, metadata.model.Packages)
 			mutationSources = newTargetKeySources(inputs, metadata.model, contract, options, readers)
 			if len(candidates) != 0 {
-				observationParent, observationPrefix, observationErr := scratch.subdirectory(repositoryObservationName)
-				var observationDirectory string
-				if observationErr == nil {
-					observationDirectory, observationErr = os.MkdirTemp(observationParent, observationPrefix)
-				}
+				observationParent, observationPrefix, _ := scratch.subdirectory(repositoryObservationName)
+				observationDirectory, observationErr := os.MkdirTemp(observationParent, observationPrefix)
 				if observationErr != nil {
 					emit(options, "repository-observation-unavailable", observationErr.Error())
 				} else {
@@ -427,15 +421,14 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 			}
 		}
 
-		var closeRound func() error
+		closeResourcesAndWorkspace := func() error {
+			return errors.Join(manager.Close(), closeWorkspace(workspace))
+		}
 		var executionSession MutationSession
 		var catalog gomutants.Catalog
 		var preparationDone <-chan mutationPreparationResult
 		var cancelPreparation context.CancelFunc
 		settlePreparation := func() mutationPreparationResult {
-			if preparationDone == nil {
-				return mutationPreparationResult{}
-			}
 			result := <-preparationDone
 			cancelPreparation()
 			preparationDone = nil
@@ -443,9 +436,7 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 			return result
 		}
 		cancelPreparationAndSettle := func() mutationPreparationResult {
-			if cancelPreparation != nil {
-				cancelPreparation()
-			}
+			cancelPreparation()
 			return settlePreparation()
 		}
 		startPreparation := func() {
@@ -502,20 +493,13 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 			catalog = result.catalog
 			return nil
 		}
-		closeRound = func() error {
-			cancelPreparationAndSettle()
-			return errors.Join(manager.Close(), closeWorkspace(workspace))
-		}
+		closeRound := closeResourcesAndWorkspace
 
 		phases.enter(phaseBaseline)
-		baselineParent, baselinePrefix, err := scratch.subdirectory(baselineScratchName)
-		if err != nil {
-			_ = closeRound()
-			return report.Report{}, err
-		}
+		baselineParent, baselinePrefix, _ := scratch.subdirectory(baselineScratchName)
 		artifactDirectory, err := dependencies.makeBaselineScratch(baselineParent, baselinePrefix)
 		if err != nil {
-			_ = closeRound()
+			_ = closeResourcesAndWorkspace()
 			return report.Report{}, fmt.Errorf("goatest: create baseline scratch: %w", err)
 		}
 		baselineState := checkpoint.Baseline{}

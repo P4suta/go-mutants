@@ -127,6 +127,52 @@ func TestRunCoordinatorChoosesTheExactMutationPreparationScope(t *testing.T) {
 	}
 }
 
+func TestRunCoordinatorReportsChangedLineNarrowing(t *testing.T) {
+	harness := newRunCoordinatorHarness(t)
+	harness.dependencies.selectImpact = func(_ context.Context, _ string, _ goanalysis.Model, targets []goanalysis.Target, _ Options) impactSelection {
+		return impactSelection{
+			targets: slices.Clone(targets), changed: []string{"value.go"},
+			ranges: map[string][]gomutants.LineRange{"value.go": {{First: 3, Last: 5}}},
+		}
+	}
+	if _, err := harness.run(Options{Changed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(harness.events, func(event Event) bool {
+		return event.Kind == "impact-lines" && event.Detail == "1 changed file(s) narrowed by line"
+	}) {
+		t.Fatalf("events = %+v, want changed-line narrowing", harness.events)
+	}
+}
+
+func TestEmptyChangesetPropagatesCloseAndCacheFailures(t *testing.T) {
+	cause := errors.New("empty changeset terminal failed")
+	for _, test := range []struct {
+		name   string
+		change func(*runCoordinatorHarness)
+	}{
+		{name: "workspace close", change: func(harness *runCoordinatorHarness) {
+			harness.dependencies.closeWorkspace = func(*mutationbridge.Workspace) error {
+				harness.workspaceCloses++
+				return cause
+			}
+		}},
+		{name: "cache write", change: func(harness *runCoordinatorHarness) { harness.cache.putErr = cause }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			harness := newRunCoordinatorHarness(t)
+			harness.dependencies.selectImpact = func(context.Context, string, goanalysis.Model, []goanalysis.Target, Options) impactSelection {
+				return impactSelection{changed: []string{}}
+			}
+			test.change(harness)
+			result, err := harness.run(Options{Changed: true})
+			if !errors.Is(err, cause) || !reflect.DeepEqual(result, report.Report{}) || harness.workspaceCloses != 1 {
+				t.Fatalf("run = (%+v, %v), closes=%d", result, err, harness.workspaceCloses)
+			}
+		})
+	}
+}
+
 func TestRunCoordinatorCreatesRepositoryObserversOnlyInsideTheReusableEvidenceBoundary(t *testing.T) {
 	for _, test := range []struct {
 		name         string
@@ -255,6 +301,14 @@ func TestRunCoordinatorReportsEveryBaselineLimitationAndNoInventedResourceLimit(
 	if !static.Estimated {
 		t.Fatalf("race limitation = %+v", static)
 	}
+	plain := newRunCoordinatorHarness(t)
+	plainResult, err := plain.run(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.ContainsFunc(plainResult.Limitations, func(item report.Limitation) bool { return item.Code == "" }) {
+		t.Fatalf("plain limitations = %+v, want no empty limitation", plainResult.Limitations)
+	}
 }
 
 func TestRunCoordinatorCountsExcludedTargetsFromTheDiscoveredInventory(t *testing.T) {
@@ -317,6 +371,29 @@ func TestRunCoordinatorNamesPluralMutationWork(t *testing.T) {
 	}
 }
 
+func TestRunCoordinatorDoesNotTreatAnUnmeasuredBaselineProbeAsPrepared(t *testing.T) {
+	harness := newRunCoordinatorHarness(t)
+	harness.catalog.Mutants[0].Index = coordinatorProbeIndex
+	harness.catalog.Mutants[0].Path = "other.go"
+	harness.catalog.Mutants[0].Line = coordinatorMutantLine
+	harness.catalog.Mutants[0].Column = coordinatorMutantColumn
+	harness.catalog.Mutants[0].Probed = true
+	harness.baseline.ProbeSuites = map[string]PackageProbeEvidence{
+		"fixture.example/module": {Measured: false},
+	}
+	if _, err := harness.run(Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(harness.probeOptions.Suites) != 0 {
+		t.Fatalf("prepared suites = %+v, want none", harness.probeOptions.Suites)
+	}
+	if !slices.ContainsFunc(harness.events, func(event Event) bool {
+		return event.Kind == "probe-target" && event.Detail == "1 target, 1 package suite"
+	}) {
+		t.Fatalf("events = %+v, want one supplemental suite", harness.events)
+	}
+}
+
 func TestRunCoordinatorDiscardsMutationResumeWhenTheProbeInventoryIsInvalid(t *testing.T) {
 	harness := newRunCoordinatorHarness(t)
 	harness.cache.checkpoint = checkpoint.State{
@@ -371,14 +448,14 @@ func TestBoundedProgressUsesCeilingSizedStepsAndSuppressesDuplicates(t *testing.
 	t.Parallel()
 	var events []Event
 	progress := boundedProgress(Options{Progress: func(event Event) { events = append(events, event) }}, "work")
-	for _, completed := range []int{0, 1, 2, 3, 3, 200, 201} {
-		progress(completed, 201)
+	for _, completed := range []int{0, 1, 2, 3, 3, 199, 200} {
+		progress(completed, 200)
 	}
 	want := []Event{
-		{Kind: "work", Detail: "0/201"},
-		{Kind: "work", Detail: "1/201"},
-		{Kind: "work", Detail: "3/201"},
-		{Kind: "work", Detail: "201/201"},
+		{Kind: "work", Detail: "0/200"},
+		{Kind: "work", Detail: "1/200"},
+		{Kind: "work", Detail: "2/200"},
+		{Kind: "work", Detail: "200/200"},
 	}
 	if !reflect.DeepEqual(events, want) {
 		t.Fatalf("progress events = %+v, want %+v", events, want)
