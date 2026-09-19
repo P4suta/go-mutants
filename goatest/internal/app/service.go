@@ -77,6 +77,8 @@ type Service struct {
 	doctorFilesystem doctorProbeFilesystem
 
 	doctorProcess startDoctorProcess
+
+	doctorDiskFree func(string) (uint64, error)
 }
 
 var (
