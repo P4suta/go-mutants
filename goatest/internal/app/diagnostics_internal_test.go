@@ -4,12 +4,14 @@
 package app
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/P4suta/go-mutants/goatest/internal/report"
 	"github.com/P4suta/go-mutants/goatest/internal/trace"
+	enginetrace "github.com/P4suta/go-mutants/trace"
 )
 
 func TestABundleIsNamedForItsRun(t *testing.T) {
@@ -133,5 +135,67 @@ func TestTheEnvironmentOfABundleIsTheOneTheRunsCommandsCouldSee(t *testing.T) {
 	text = string(Service{Environment: []string{"PATH=/usr/bin"}}.diagnosticsEnvironment(report.Report{}))
 	if !strings.Contains(text, "\nPATH\n") || strings.Contains(text, "GOATEST_DIAGNOSTICS_PROBE") {
 		t.Fatalf("environment.txt = %q, want the environment the caller named", text)
+	}
+}
+
+func TestATraceBundleWritesALineForEveryEventAndNothingForNone(t *testing.T) {
+	t.Parallel()
+	events := []trace.Event{
+		{Seq: 1, Type: trace.TypeProgress, Progress: &trace.ProgressRecord{Kind: "note"}},
+		{Seq: 2, Type: trace.TypeProgress, Progress: &trace.ProgressRecord{Kind: "note"}},
+	}
+	stream, err := diagnosticsTrace(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := strings.Count(string(stream), "\n"); lines != len(events) {
+		t.Fatalf("a bundle of %d events wrote %d lines: %q", len(events), lines, stream)
+	}
+	empty, err := diagnosticsTrace(nil)
+	if err != nil || empty != nil {
+		t.Fatalf("a bundle of no event at all wrote %q, %v, want nothing", empty, err)
+	}
+}
+
+func TestAnEngineTraceBundleWritesALineForEveryEventAndNothingForNone(t *testing.T) {
+	t.Parallel()
+	events := []enginetrace.Event{{Seq: 1, Type: "run-start"}, {Seq: 2, Type: "run-end"}}
+	stream, err := diagnosticsEngineTrace(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := strings.Count(string(stream), "\n"); lines != len(events) {
+		t.Fatalf("a bundle of %d engine events wrote %d lines: %q", len(events), lines, stream)
+	}
+	empty, err := diagnosticsEngineTrace(nil)
+	if err != nil || empty != nil {
+		t.Fatalf("a bundle of no engine event at all wrote %q, %v, want nothing", empty, err)
+	}
+}
+
+func TestTheEnvironmentNamesOfABundleLeaveOutWhatIsNotAName(t *testing.T) {
+	t.Parallel()
+	names := environmentNames([]string{"PATH=/bin", "=orphan", "NOVALUE", "GOCACHE=/cache", "PATH=/usr/bin"})
+	want := []string{"GOCACHE", "NOVALUE", "PATH"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("the bundle names %q, want %q", names, want)
+	}
+}
+
+func TestTheEnvironmentOfABundleLeavesOutAFieldNothingNamed(t *testing.T) {
+	t.Parallel()
+	service := Service{Environment: []string{}}
+	text := string(service.diagnosticsEnvironment(report.Report{
+		Toolchain: report.Toolchain{Go: "go1.26.6", OS: "darwin", Arch: "arm64"},
+	}))
+	for _, named := range []string{"go: go1.26.6", "os: darwin", "arch: arm64"} {
+		if !strings.Contains(text, named) {
+			t.Errorf("the bundle reads %q, want it to say %q", text, named)
+		}
+	}
+	for _, absent := range []string{"goatest:", "go-mutants:", "temp-directory:"} {
+		if strings.Contains(text, absent) {
+			t.Errorf("the bundle reads %q, want it to leave out %q", text, absent)
+		}
 	}
 }
