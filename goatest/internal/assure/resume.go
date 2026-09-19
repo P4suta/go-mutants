@@ -172,9 +172,6 @@ func baselineCheckpointJournalSuffix(previous, next checkpoint.Baseline) ([]chec
 	var suffix []checkpoint.BaselineTarget
 	seen := make(map[string]struct{}, len(next.Targets))
 	for _, unit := range next.Targets {
-		if _, duplicate := seen[unit.ID]; duplicate {
-			return nil, false
-		}
 		seen[unit.ID] = struct{}{}
 		if saved, exists := before[unit.ID]; exists {
 			if !reflect.DeepEqual(saved, unit) {

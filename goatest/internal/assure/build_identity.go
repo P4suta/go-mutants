@@ -31,7 +31,13 @@ func resolveGoatestBuildIdentityWith(locate func() (string, error), digest func(
 }
 
 func digestGoatestExecutable(path string) (string, error) {
-	file, err := os.Open(path)
+	return digestGoatestExecutableWith(path, func(path string) (io.ReadCloser, error) {
+		return os.Open(path)
+	})
+}
+
+func digestGoatestExecutableWith(path string, open func(string) (io.ReadCloser, error)) (string, error) {
+	file, err := open(path)
 	if err != nil {
 		return "", err
 	}

@@ -346,11 +346,9 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 			instrumentationAnchor = control.targets[0].Target.ID
 		}
 		commit := func(run baselineTargetRun) {
-			if run.unit.Target != nil {
-				_, instrumented := checkpointInstrumentation[control.importPath]
-				if instrumented || run.unit.ID != instrumentationAnchor {
-					run.unit.Target.Instrumented = nil
-				}
+			_, instrumented := checkpointInstrumentation[control.importPath]
+			if instrumented || run.unit.ID != instrumentationAnchor {
+				run.unit.Target.Instrumented = nil
 			}
 			completed[run.unit.ID] = run.unit
 			result.Instrumented = goanalysis.MergeFileCoverage(result.Instrumented, run.instrumented)

@@ -390,6 +390,7 @@ func TestClassifyFramingAndTrimDurationChooseEveryDelimiter(t *testing.T) {
 	}{
 		{name: "newline", output: "\x16--- SKIP: TestValue\n", skipped: true, kind: "skipped-target"},
 		{name: "next marker", output: "\x16ordinary\x16--- SKIP: TestValue\n", skipped: true, kind: "skipped-target"},
+		{name: "marker terminates target", output: "\x16--- SKIP: TestValue\x16ordinary", skipped: true, kind: "skipped-target"},
 		{name: "unterminated", output: "\x16--- SKIP: TestValue", skipped: true, kind: "skipped-target"},
 		{name: "newline advances", output: "\x16ordinary\n\x16--- SKIP: TestValue\n", skipped: true, kind: "skipped-target"},
 		{name: "unframed", output: "ordinary"},

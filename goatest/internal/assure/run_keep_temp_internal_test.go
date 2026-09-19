@@ -228,6 +228,7 @@ func TestReleasingAKeptBuildCacheNamesItsNativeProjectionOnlyWhereThereIsOne(t *
 		native  string
 		scratch runScratch
 		kinds   []string
+		ledger  bool
 	}{
 		{
 			name:  "a cache with no native projection",
@@ -236,7 +237,7 @@ func TestReleasingAKeptBuildCacheNamesItsNativeProjectionOnlyWhereThereIsOne(t *
 		{
 			name: "a native projection a ledger can record", native: "native",
 			scratch: runScratch{root: "root", id: "run-a"},
-			kinds:   []string{artifactBuildCacheScratch, artifactNativeCacheScratch},
+			kinds:   []string{artifactBuildCacheScratch, artifactNativeCacheScratch}, ledger: true,
 		},
 		{
 			name: "a native projection no ledger can record", native: "native",
@@ -266,6 +267,12 @@ func TestReleasingAKeptBuildCacheNamesItsNativeProjectionOnlyWhereThereIsOne(t *
 			}
 			if !reflect.DeepEqual(kinds, test.kinds) {
 				t.Fatalf("%s recorded %q, want %q", test.name, kinds, test.kinds)
+			}
+			if scratch.root != "" {
+				_, err := os.Stat(keptledger.Path(scratch.root))
+				if exists := err == nil; exists != test.ledger {
+					t.Fatalf("%s ledger exists=%t, want %t (stat error %v)", test.name, exists, test.ledger, err)
+				}
 			}
 		})
 	}

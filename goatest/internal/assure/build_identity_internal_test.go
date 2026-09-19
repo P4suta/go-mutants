@@ -7,8 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/P4suta/go-mutants/goatest/internal/filemode"
@@ -35,6 +37,20 @@ func TestDigestGoatestExecutableFailsClosed(t *testing.T) {
 		if digest, err := digestGoatestExecutable(path); err == nil || digest != "" {
 			t.Errorf("digestGoatestExecutable(%q) = (%q, %v)", path, digest, err)
 		}
+	}
+}
+
+func TestDigestGoatestExecutableStopsAtAnOpenFailure(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("open failed")
+	digest, err := digestGoatestExecutableWith("goatest", func(path string) (io.ReadCloser, error) {
+		if path != "goatest" {
+			t.Fatalf("open path = %q", path)
+		}
+		return io.NopCloser(strings.NewReader("bytes that must not be digested")), cause
+	})
+	if digest != "" || !errors.Is(err, cause) {
+		t.Fatalf("digest after open failure = (%q, %v)", digest, err)
 	}
 }
 

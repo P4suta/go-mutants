@@ -112,6 +112,14 @@ func TestRepositoryValidatorOpenPassesFrozenBridgeOptions(t *testing.T) {
 	if gotOptions.Trace != recorder {
 		t.Fatalf("bridge recorder = %p, want %p", gotOptions.Trace, recorder)
 	}
+
+	untagged := NewRepositoryValidator(RepositoryValidatorOptions{Environment: []string{"DB=ready"}})
+	if _, err := untagged.open(t.Context(), "snapshot", "temp"); err != nil {
+		t.Fatal(err)
+	}
+	if slices.ContainsFunc(gotOptions.Environment, func(entry string) bool { return strings.HasPrefix(entry, "GOFLAGS=") }) {
+		t.Fatalf("untagged bridge environment = %q, want no synthesized GOFLAGS", gotOptions.Environment)
+	}
 }
 
 func TestRepositoryValidatorCloseRecordsPreservedWorkspaceArtifacts(t *testing.T) {
