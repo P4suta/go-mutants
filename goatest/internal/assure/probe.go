@@ -4,6 +4,7 @@
 package assure
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -80,11 +81,6 @@ func ProbeTargets(ctx context.Context, session MutationSession, targets []Target
 		for pkg, suite := range options.Suites {
 			suite.Infected = slices.Clone(suite.Infected)
 			evaluation.Suites[pkg] = suite
-			if suite.Measured {
-				evaluation.SuitesMeasured++
-			} else {
-				evaluation.SuitesUnmeasured++
-			}
 		}
 	}
 	positions := probedTargetPositions(evaluation.Targets)
@@ -103,9 +99,6 @@ func ProbeTargets(ctx context.Context, session MutationSession, targets []Target
 		if evaluation.Suites == nil {
 			evaluation.Suites = make(map[string]PackageProbeEvidence, len(packages))
 		}
-	}
-	if len(positions) == 0 && len(packages) == 0 {
-		return evaluation, nil
 	}
 	identities := probeMutantIdentities(catalog)
 	work := make([]probeWork, 0, len(positions)+len(packages))
@@ -165,11 +158,6 @@ func ProbeTargets(ctx context.Context, session MutationSession, targets []Target
 				Measured: suite.measured, Infected: slices.Clone(suite.infected),
 				Duration: suite.duration, WholeTree: suite.wholeTree,
 			}
-			if suite.measured {
-				evaluation.SuitesMeasured++
-			} else {
-				evaluation.SuitesUnmeasured++
-			}
 			continue
 		}
 		target := &evaluation.Targets[item.targetPosition]
@@ -181,6 +169,12 @@ func ProbeTargets(ctx context.Context, session MutationSession, targets []Target
 			evaluation.Unmeasured++
 		}
 	}
+	for _, suite := range evaluation.Suites {
+		if suite.Measured {
+			evaluation.SuitesMeasured++
+		}
+	}
+	evaluation.SuitesUnmeasured = len(evaluation.Suites) - evaluation.SuitesMeasured
 	return evaluation, nil
 }
 
@@ -273,15 +267,15 @@ func probeResultRecord(
 	request gomutants.ProbeRequest,
 	result gomutants.ProbeResult,
 	identities map[uint32]string,
-) (trace.ProbeRecord, []uint32, bool) {
-	record := probeRequestRecord(target, suite, request)
+) (record trace.ProbeRecord, infected []uint32, measured bool) {
+	record = probeRequestRecord(target, suite, request)
 	record.Outcome = string(result.Outcome)
 	record.ExitCode = result.ExitCode
 	record.DurationMS = traceMilliseconds(result.Duration)
 	if result.Outcome != gomutants.ProbeMeasured {
-		return record, nil, false
+		return
 	}
-	infected := slices.Clone(result.Infected)
+	infected = slices.Clone(result.Infected)
 	slices.Sort(infected)
 	infected = slices.Compact(infected)
 	identifiers := make([]string, 0, len(infected))
@@ -290,23 +284,23 @@ func probeResultRecord(
 		if !known {
 			record.Outcome = ""
 			record.Error = fmt.Sprintf("probe reported an unknown mutant index %d", index)
-			return record, nil, false
+			infected = nil
+			return
 		}
 		identifiers = append(identifiers, identity)
 	}
-	if len(identifiers) != 0 {
-		record.Infected = identifiers
-	}
-	return record, infected, true
+	record.Infected = identifiers
+	measured = true
+	return
 }
 
 func packageSuiteProbeTarget(pkg string) string { return trace.PackageSuiteProbePrefix + pkg }
 
 func probeSuitePackages(catalog gomutants.Catalog) []string {
-	seen := make(map[string]bool)
+	seen := make(map[string]struct{})
 	for _, mutant := range catalog.Mutants {
 		if mutant.Accepted && mutant.Package != "" {
-			seen[mutant.Package] = true
+			seen[mutant.Package] = struct{}{}
 		}
 	}
 	packages := make([]string, 0, len(seen))
@@ -381,11 +375,7 @@ func probeRequest(target TargetEvidence, options ProbeOptions) gomutants.ProbeRe
 }
 
 func suiteCoverageControlDuration(suites map[string]PackageSuiteCoverage, pkg string) time.Duration {
-	suite, measured := suites[pkg]
-	if !measured {
-		return 0
-	}
-	return suite.Duration
+	return suites[pkg].Duration
 }
 
 func checkpointMutationProbe(catalog gomutants.Catalog, evaluation ProbeEvaluation) *checkpoint.MutationProbe {
@@ -443,19 +433,20 @@ func restoreMutationProbe(catalog gomutants.Catalog, targets []TargetEvidence, p
 	if len(saved.Targets) != len(targets) {
 		return ProbeEvaluation{}, false
 	}
-	knownIndices := make(map[uint32]bool, len(catalog.Mutants))
+	knownIndices := make(map[uint32]struct{}, len(catalog.Mutants))
 	for _, mutant := range catalog.Mutants {
-		knownIndices[mutant.Index] = true
+		knownIndices[mutant.Index] = struct{}{}
 	}
-	seenTargets := make(map[string]bool, len(saved.Targets))
+	seenTargets := make(map[string]struct{}, len(saved.Targets))
 	for _, measured := range saved.Targets {
 		position, found := byID[measured.ID]
-		if !found || seenTargets[measured.ID] || !validCheckpointProbeFact(measured.Measured, measured.DurationNS, measured.Infected, false) {
+		_, seen := seenTargets[measured.ID]
+		if !found || seen || !validCheckpointProbeFact(measured.Measured, measured.DurationNS, measured.Infected, false) {
 			return ProbeEvaluation{}, false
 		}
-		seenTargets[measured.ID] = true
+		seenTargets[measured.ID] = struct{}{}
 		for _, infected := range measured.Infected {
-			if !knownIndices[infected] {
+			if _, known := knownIndices[infected]; !known {
 				return ProbeEvaluation{}, false
 			}
 		}
@@ -493,7 +484,7 @@ func restoreMutationProbe(catalog gomutants.Catalog, targets []TargetEvidence, p
 			return ProbeEvaluation{}, false
 		}
 		for _, infected := range measured.Infected {
-			if !knownIndices[infected] {
+			if _, known := knownIndices[infected]; !known {
 				return ProbeEvaluation{}, false
 			}
 		}
@@ -536,16 +527,12 @@ func mutationProbeIndexFingerprint(catalog gomutants.Catalog) string {
 		})
 	}
 	slices.SortFunc(entries, func(left, right entry) int {
-		if left.index < right.index {
-			return -1
-		}
-		if left.index > right.index {
-			return 1
-		}
-		return compareText(left.id, right.id)
+		return cmp.Or(cmp.Compare(left.index, right.index), cmp.Compare(left.id, right.id))
 	})
 	hash := sha256.New()
 	_, _ = hash.Write([]byte("goatest-mutation-probe-index-v1\x00"))
+	acceptedFlags := map[bool]byte{true: probeIndexAcceptedFlag}
+	probedFlags := map[bool]byte{true: probeIndexMeasuredFlag}
 	for _, item := range entries {
 		var index [4]byte
 		binary.BigEndian.PutUint32(index[:], item.index)
@@ -554,13 +541,7 @@ func mutationProbeIndexFingerprint(catalog gomutants.Catalog) string {
 		binary.BigEndian.PutUint32(length[:], uint32(len(item.id)))
 		_, _ = hash.Write(length[:])
 		_, _ = hash.Write([]byte(item.id))
-		flags := byte(0)
-		if item.accepted {
-			flags |= probeIndexAcceptedFlag
-		}
-		if item.probed {
-			flags |= probeIndexMeasuredFlag
-		}
+		flags := acceptedFlags[item.accepted] | probedFlags[item.probed]
 		_, _ = hash.Write([]byte{flags})
 	}
 	return hex.EncodeToString(hash.Sum(nil))
