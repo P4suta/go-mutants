@@ -216,6 +216,9 @@ type runDependencies struct {
 	makeRunScratch         func(string, string) (string, error)
 	removeRunScratch       func(string) error
 	sweepTemporary         func(string, []string, time.Time) (tempowner.Result, error)
+	openBuildCache         func(string, string, string, runScratch, int64) (runBuildCache, error)
+	collectBuildCache      func(Options, config.Config, runBuildCache, time.Time)
+	releaseBuildCache      func(Options, runBuildCache, runScratch, time.Time) error
 	makeBaselineScratch    func(string, string) (string, error)
 	removeBaselineScratch  func(string) error
 	collectBaseline        func(context.Context, CommandWorkspace, goanalysis.Model, []BaselineTarget, BaselineOptions) (BaselineResult, error)
@@ -280,15 +283,11 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 	closeWorkspace := func(workspace *mutationbridge.Workspace) error {
 		err := dependencies.closeWorkspace(workspace)
 		recordTemporaryArtifacts(options, artifactMutationWorkspace, workspace.Preserved())
-		if options.EngineRecording != nil {
-			if recording := workspace.Recording(); len(recording) != 0 {
-				options.EngineRecording(recording)
-			}
-		}
+		recordEngineEvents(options.EngineRecording, workspace.Recording())
 		return err
 	}
 
-	buildCache, err := openRunBuildCache(
+	buildCache, err := dependencies.openBuildCache(
 		options.BuildCacheProgram, options.BuildCacheDir, options.BuildCacheNativeSource, scratch, loaded.Cache.BuildMaxBytes)
 	if err != nil {
 		emit(options, "build-cache-unavailable", err.Error())
@@ -297,8 +296,8 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 		if detail := buildCache.summarize(); detail != "" {
 			emit(options, "build-cache-summary", detail)
 		}
-		collectRunBuildCache(options, loaded, buildCache, now())
-		if closeErr := releaseBuildCache(options, buildCache, scratch, now()); closeErr != nil {
+		dependencies.collectBuildCache(options, loaded, buildCache, now())
+		if closeErr := dependencies.releaseBuildCache(options, buildCache, scratch, now()); closeErr != nil {
 			emit(options, "build-cache-unavailable", closeErr.Error())
 		}
 
@@ -308,7 +307,7 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 	phases := runPhases{recorder: options.Trace}
 	defer phases.leave()
 
-	for round := 0; ; round++ {
+	for round := range maximumRounds {
 		phases.enter(phaseSnapshot)
 		emit(options, "snapshot", fmt.Sprintf("repair round %d", round+1))
 		preparationEnvironment := buildCache.preparationEnvironment()
@@ -433,18 +432,21 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 		var catalog gomutants.Catalog
 		var preparationDone <-chan mutationPreparationResult
 		var cancelPreparation context.CancelFunc
-		settlePreparation := func(cancel bool) mutationPreparationResult {
+		settlePreparation := func() mutationPreparationResult {
 			if preparationDone == nil {
 				return mutationPreparationResult{}
-			}
-			if cancel {
-				cancelPreparation()
 			}
 			result := <-preparationDone
 			cancelPreparation()
 			preparationDone = nil
 			cancelPreparation = nil
 			return result
+		}
+		cancelPreparationAndSettle := func() mutationPreparationResult {
+			if cancelPreparation != nil {
+				cancelPreparation()
+			}
+			return settlePreparation()
 		}
 		startPreparation := func() {
 			include, packages := mutationScope(selection)
@@ -501,7 +503,7 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 			return nil
 		}
 		closeRound = func() error {
-			settlePreparation(true)
+			cancelPreparationAndSettle()
 			return errors.Join(manager.Close(), closeWorkspace(workspace))
 		}
 
@@ -541,11 +543,11 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 		baseline, err := dependencies.collectBaseline(ctx, baselineCommands, metadata.model, baselineTargets, baselineOptions)
 		phases.leave()
 		if err != nil || len(baseline.Findings) != 0 {
-			prepared := settlePreparation(true)
+			prepared := cancelPreparationAndSettle()
 			if errors.Is(err, gomutants.ErrPrepareFailed) && prepared.err != nil {
 				err = errors.Join(err, prepared.err)
 			}
-		} else if err = acceptPreparation(settlePreparation(false)); err == nil && options.ReplayMutantID == "" {
+		} else if err = acceptPreparation(settlePreparation()); err == nil && options.ReplayMutantID == "" {
 			phases.enter(phaseBaseline)
 			baselineOptions.StopAfterChecks = false
 			baselineOptions.ProbeSession = executionSession
@@ -670,10 +672,6 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 			return baseReport, nil
 		}
 
-		if executionSession == nil {
-			_ = closeRound()
-			return report.Report{}, errors.New("goatest: mutation session was not prepared")
-		}
 		mutationCount := mutationTargetCount(catalog, options.ReplayMutantID)
 		mutationDetail := fmt.Sprintf("%d mutants", mutationCount)
 		if mutationCount == 1 {
@@ -862,6 +860,14 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 		}
 		return result, nil
 	}
+	panic("goatest: repair loop exhausted")
+}
+
+func recordEngineEvents(record func([]enginetrace.Event), events []enginetrace.Event) {
+	if record == nil || len(events) == 0 {
+		return
+	}
+	record(events)
 }
 
 func sessionOriginalControl(session MutationSession, recorder *trace.Recorder) OriginalControl {
@@ -1199,9 +1205,6 @@ func generationProviderEnvironment(input, configured []string) []string {
 }
 
 func includedProjectTargets(targets []goanalysis.Target, excludes []string) []goanalysis.Target {
-	if len(excludes) == 0 {
-		return slices.Clone(targets)
-	}
 	result := make([]goanalysis.Target, 0, len(targets))
 	for _, target := range targets {
 		if !projectPathExcluded(target.Path, excludes) {
@@ -1356,12 +1359,7 @@ func acquireResources(ctx context.Context, loaded config.Config, targets []goana
 		}
 		var targetEnvironment []string
 		for _, capability := range capabilities {
-			merged, mergeErr := mergeEnvironment(targetEnvironment, environments[capability])
-			if mergeErr != nil {
-				_ = manager.Close()
-				return nil, nil, nil, nil, fmt.Errorf("goatest: target %s resources: %w", target.Name, mergeErr)
-			}
-			targetEnvironment = merged
+			targetEnvironment, _ = mergeEnvironment(targetEnvironment, environments[capability])
 		}
 		baseline[i] = BaselineTarget{Target: target, Environment: targetEnvironment}
 	}
@@ -1497,9 +1495,6 @@ func baselineVerdict(findings []report.Finding) report.Verdict {
 }
 
 func repositoryRoot(root string) (string, error) {
-	if root == "" {
-		root = "."
-	}
 	absolute, err := absoluteRepositoryPath(root)
 	if err != nil {
 		return "", err

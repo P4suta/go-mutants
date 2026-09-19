@@ -381,6 +381,9 @@ func TestModeIdentityEnvironmentAndAcceptanceBoundaries(t *testing.T) {
 	if got := modeIdentity(Options{NoApply: true, ReplayFindingID: "finding-a"}); got != ";apply=false;changed=false;ref=;replay-finding=finding-a" {
 		t.Fatalf("finding replay mode identity = %q", got)
 	}
+	if got := modeIdentity(Options{MutationJobs: 2}); !strings.HasPrefix(got, ";apply=true;changed=false;ref=;execution=") || !strings.Contains(got, `"MutationJobs":2`) {
+		t.Fatalf("extended mode identity = %q", got)
+	}
 	selected := selectedEnvironment([]string{"B=2", "A=1", "SECRET=hidden", "GOFLAGS=-trimpath"}, []string{"B"})
 	if !slices.Equal(selected, []string{"B=2", "GOFLAGS=-trimpath"}) {
 		t.Fatalf("selectedEnvironment = %v", selected)

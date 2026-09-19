@@ -757,6 +757,7 @@ func TestSessionOriginalControlFailsClosed(t *testing.T) {
 				ExitCode: -1, TimedOut: true, Duration: 3 * time.Second, Output: []byte("stalled"),
 			},
 		},
+		{name: "a zero duration is valid", result: gomutants.ControlResult{}, wantResult: gomutants.ControlResult{}},
 		{name: "an execution error", failure: cause, wantError: "goatest: original control: control process did not start"},
 		{
 			name:      "a negative duration",

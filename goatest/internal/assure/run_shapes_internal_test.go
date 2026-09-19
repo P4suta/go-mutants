@@ -111,6 +111,10 @@ func TestBuildTagsAreAddedToEveryEnvironmentShape(t *testing.T) {
 	if !containsEnvironment(got, "GOFLAGS", "-trimpath -buildvcs=false -tags=integration") {
 		t.Fatalf("mutation environment = %q", got)
 	}
+	caseFolded := executionEnvironment([]string{"goflags=-trimpath"})
+	if !slices.Contains(caseFolded, "goflags=-trimpath -buildvcs=false") || slices.Contains(caseFolded, "GOFLAGS=-trimpath -buildvcs=false") {
+		t.Fatalf("case-folded execution environment = %q", caseFolded)
+	}
 }
 
 func TestReportScopeDistinguishesEveryRequestedAndResolvedShape(t *testing.T) {
@@ -221,6 +225,8 @@ func TestProjectExcludesRecognizeEverySupportedPatternShape(t *testing.T) {
 		{name: "suffix nested", candidate: "pkg/value_generated.go", patterns: []string{"**/*_generated.go"}, excluded: true},
 		{name: "suffix mismatch", candidate: "pkg/value.go", patterns: []string{"**/*_generated.go"}},
 		{name: "ordinary glob", candidate: "pkg/value.go", patterns: []string{"pkg/*.go"}, excluded: true},
+		{name: "ordinary glob is not a directory prefix", candidate: "pkg/*.go/child", patterns: []string{"pkg/*.go"}},
+		{name: "ordinary glob is not a recursive suffix", candidate: "root/pkg/value.go", patterns: []string{"pkg/*.go"}},
 		{name: "normalized path", candidate: `./pkg\value.go`, patterns: []string{"./pkg/*.go"}, excluded: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
