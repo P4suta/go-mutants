@@ -595,13 +595,11 @@ func finalizeReportKind(ctx context.Context, root string, request cli.Request, i
 			Code: report.LimitationModuleMetadataUnavailable, Summary: "The Go module identity could not be resolved before execution stopped",
 		})
 	}
-	if result.Repository.Module != "" {
-		if len(result.Scope.Requested.Modules) == 0 {
-			result.Scope.Requested.Modules = []string{result.Repository.Module}
-		}
-		if len(result.Scope.Resolved.Modules) == 0 {
-			result.Scope.Resolved.Modules = []string{result.Repository.Module}
-		}
+	if len(result.Scope.Requested.Modules) == 0 {
+		result.Scope.Requested.Modules = []string{result.Repository.Module}
+	}
+	if len(result.Scope.Resolved.Modules) == 0 {
+		result.Scope.Resolved.Modules = []string{result.Repository.Module}
 	}
 	metadata, gitErr := inspectGit(ctx, root, request, hooks.git)
 	if gitErr != nil {

@@ -191,3 +191,119 @@ func TestFinalizingAReplayNamesTheReplayScopeWhateverTheReportSaid(t *testing.T)
 		t.Fatalf("a replay that found nothing is %q, want %q", result.Verdict, report.VerdictResolved)
 	}
 }
+
+func TestFinalizingAReportKeepsEveryFieldItAlreadyHad(t *testing.T) {
+	t.Parallel()
+	started := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	input := finalizeFixture()
+	input.Scope.Requested.Modules = []string{"example.test/requested"}
+	input.Scope.Resolved.Modules = []string{"example.test/resolved"}
+	input.Scope.Requested.Files = []string{"requested.go"}
+	input.Scope.Resolved.Files = []string{"resolved.go"}
+	input.Scope.Resolved.Kind = string(report.RunChangeset)
+
+	result := finalizeReportKind(t.Context(), ".", cli.Request{Contract: "deep-v1", Packages: []string{"./other"}},
+		input, report.RunChangeset, started, started.Add(time.Second), finalizeHooks())
+
+	for name, pair := range map[string][2]string{
+		"contract":   {result.Contract, input.Contract},
+		"snapshot":   {result.Snapshot, input.Snapshot},
+		"digest":     {result.Configuration.Digest, input.Configuration.Digest},
+		"goatest":    {result.Toolchain.Goatest, input.Toolchain.Goatest},
+		"go":         {result.Toolchain.Go, input.Toolchain.Go},
+		"go-mutants": {result.Toolchain.GoMutants, input.Toolchain.GoMutants},
+		"os":         {result.Toolchain.OS, input.Toolchain.OS},
+		"arch":       {result.Toolchain.Arch, input.Toolchain.Arch},
+		"module":     {result.Repository.Module, input.Repository.Module},
+		"requested":  {result.Scope.Requested.Kind, input.Scope.Requested.Kind},
+		"resolved":   {result.Scope.Resolved.Kind, input.Scope.Resolved.Kind},
+		"project":    {result.Scope.Requested.Project, input.Scope.Requested.Project},
+	} {
+		if pair[0] != pair[1] {
+			t.Errorf("finalizing replaced the %s it was given: %q, want %q", name, pair[0], pair[1])
+		}
+	}
+	for name, pair := range map[string][2][]string{
+		"packages":          {result.Repository.Packages, input.Repository.Packages},
+		"requested modules": {result.Scope.Requested.Modules, input.Scope.Requested.Modules},
+		"resolved modules":  {result.Scope.Resolved.Modules, input.Scope.Resolved.Modules},
+		"requested files":   {result.Scope.Requested.Files, input.Scope.Requested.Files},
+		"resolved files":    {result.Scope.Resolved.Files, input.Scope.Resolved.Files},
+	} {
+		if !slices.Equal(pair[0], pair[1]) {
+			t.Errorf("finalizing replaced the %s it was given: %q, want %q", name, pair[0], pair[1])
+		}
+	}
+}
+
+func TestFinalizingAChangesetTakesItsFilesFromGitAndNoOtherKindDoes(t *testing.T) {
+	t.Parallel()
+	started := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name     string
+		kind     report.RunKind
+		resolved string
+		files    bool
+	}{
+		{name: "a changeset run", kind: report.RunChangeset, resolved: string(report.RunChangeset), files: true},
+		{name: "a full run", kind: report.RunFull, resolved: "full"},
+		{name: "a package run", kind: report.RunPackage, resolved: "package"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			input := finalizeFixture()
+			input.Scope.Requested.Kind = string(test.kind)
+			input.Scope.Resolved.Kind = test.resolved
+			result := finalizeReportKind(t.Context(), ".", cli.Request{}, input, test.kind,
+				started, started.Add(time.Second), finalizeHooks())
+			named := len(result.Scope.Requested.Files) != 0
+			if named != test.files {
+				t.Fatalf("%s named the files %q, want any=%t", test.name, result.Scope.Requested.Files, test.files)
+			}
+			if resolved := len(result.Scope.Resolved.Files) != 0; resolved != test.files {
+				t.Errorf("%s resolved the files %q, want any=%t", test.name, result.Scope.Resolved.Files, test.files)
+			}
+		})
+	}
+}
+
+func TestARequestedRunKindIsDecidedByWhatTheRequestNames(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		request cli.Request
+		want    report.RunKind
+	}{
+		{name: "a replay of a finding", request: cli.Request{ReplayFindingID: "finding-a"}, want: report.RunReplay},
+		{name: "a replay of a mutant", request: cli.Request{ReplayMutantID: "mutant-a"}, want: report.RunReplay},
+		{name: "a changeset", request: cli.Request{Changed: true}, want: report.RunChangeset},
+		{
+			name:    "a replay that also asked for a changeset",
+			request: cli.Request{ReplayFindingID: "finding-a", Changed: true}, want: report.RunReplay,
+		},
+		{name: "a package", request: cli.Request{Packages: []string{"./pkg"}}, want: report.RunPackage},
+		{name: "two packages", request: cli.Request{Packages: []string{"./one", "./two"}}, want: report.RunPackage},
+		{name: "everything under the root", request: cli.Request{Packages: []string{"./..."}}, want: report.RunFull},
+		{name: "nothing named at all", want: report.RunFull},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := requestedRunKind(test.request); got != test.want {
+				t.Fatalf("%s reads as %q, want %q", test.name, got, test.want)
+			}
+		})
+	}
+}
+
+func TestFinalizingAReplayNamesItsOwnScopeWhateverItWasGiven(t *testing.T) {
+	t.Parallel()
+	started := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	input := finalizeFixture()
+	input.Scope.Requested.Kind = "package"
+	input.Scope.Requested.Project = "somewhere-else"
+	result := finalizeReportKind(t.Context(), ".", cli.Request{}, input, report.RunReplay,
+		started, started.Add(time.Second), finalizeHooks())
+	if result.Scope.Requested.Kind != string(report.RunReplay) || result.Scope.Requested.Project != "." {
+		t.Fatalf("a replay named the scope %+v, want its own", result.Scope.Requested)
+	}
+}
