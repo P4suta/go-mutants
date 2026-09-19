@@ -303,8 +303,8 @@ func TestChangedLineRangesFailsClosedWhenGitCannotListWhatItTracks(t *testing.T)
 		return nil, nil
 	}
 
-	if ranges, ok := changedLineRanges(t.Context(), root, "", []string{"value.go"}); ok {
-		t.Fatalf("a changeset git could not classify was accepted: %+v", ranges)
+	if ranges, ok := changedLineRanges(t.Context(), root, "", []string{"value.go"}); ok || ranges != nil {
+		t.Fatalf("a changeset git could not classify was accepted: (%+v, %t)", ranges, ok)
 	}
 }
 
