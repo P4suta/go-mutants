@@ -8,9 +8,9 @@ go 1.26.0
 // cannot be taken back; what these lines do is stop `go get` choosing them and
 // tell anybody who already has one why it is not the engine main describes.
 retract (
-	v0.1.0 // Tagged on a branch that never reached main.
-	v0.1.1 // Tagged on a branch that never reached main.
 	v0.1.2 // Tagged on a branch that never reached main.
+	v0.1.1 // Tagged on a branch that never reached main.
+	v0.1.0 // Tagged on a branch that never reached main.
 )
 
 require (
