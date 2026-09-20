@@ -347,7 +347,7 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 		}
 		commit := func(run baselineTargetRun) {
 			_, instrumented := checkpointInstrumentation[control.importPath]
-			if instrumented || run.unit.ID != instrumentationAnchor {
+			if run.unit.Target != nil && (instrumented || run.unit.ID != instrumentationAnchor) {
 				run.unit.Target.Instrumented = nil
 			}
 			completed[run.unit.ID] = run.unit

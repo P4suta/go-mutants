@@ -422,6 +422,27 @@ func TestCollectBaselinePublishesOneExactInstrumentationAnchorAndOneCompletedChe
 	}
 }
 
+func TestCollectBaselineDoesNotAssignInstrumentationToAnUnmeasuredTarget(t *testing.T) {
+	names := []string{"TestOne", "TestTwo"}
+	targets := make([]BaselineTarget, len(names))
+	for index, name := range names {
+		targets[index] = BaselineTarget{Target: baselineTestTarget(name)}
+	}
+	passing := passingBaselineExec(t, "fixture.example/module", true)
+	workspace := &baselineFakeWorkspace{exec: func(command gomutants.Command) (gomutants.CommandResult, error) {
+		if baselineCommandTarget(command) == "TestTwo" {
+			return gomutants.CommandResult{Output: []byte("\x16--- SKIP: TestTwo\n")}, nil
+		}
+		return passing(command)
+	}}
+	result, err := CollectBaseline(t.Context(), workspace, baselineModel(), targets, BaselineOptions{
+		ArtifactDirectory: t.TempDir(), UseTestFraming: true, Jobs: 1,
+	})
+	if err != nil || result.Executed != len(targets) || result.Skipped != 1 || len(result.Targets) != 1 {
+		t.Fatalf("baseline with an unmeasured target = (%+v, %v)", result, err)
+	}
+}
+
 func TestBaselineJobLimitAndCheckpointEvidenceCoverEveryBoundary(t *testing.T) {
 	for _, test := range []struct {
 		requested int
