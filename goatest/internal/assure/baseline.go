@@ -67,15 +67,17 @@ type BaselineOptions struct {
 }
 
 type BaselineResult struct {
-	Evidence     []report.Evidence
-	Findings     []report.Finding
-	Targets      []TargetEvidence
-	Suites       map[string]PackageSuiteCoverage
-	ProbeSuites  map[string]PackageProbeEvidence
-	Instrumented []goanalysis.FileCoverage
-	Inventory    []report.TargetDisposition
-	Executed     int
-	Skipped      int
+	Evidence    []report.Evidence
+	Findings    []report.Finding
+	Targets     []TargetEvidence
+	Suites      map[string]PackageSuiteCoverage
+	ProbeSuites map[string]PackageProbeEvidence
+
+	UnmeasuredSuites map[string]gomutants.ProbeOutcome
+	Instrumented     []goanalysis.FileCoverage
+	Inventory        []report.TargetDisposition
+	Executed         int
+	Skipped          int
 }
 
 type PackageSuiteCoverage struct {
@@ -389,9 +391,14 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 			return
 		}
 		completedSuites[measured.importPath] = checkpointBaselineSuite(measured)
-		if measured.measured {
+		if measured.measured() {
 			result.Suites[measured.importPath] = measured.suite
 			result.Instrumented = goanalysis.MergeFileCoverage(result.Instrumented, measured.suite.Instrumented)
+		} else {
+			if result.UnmeasuredSuites == nil {
+				result.UnmeasuredSuites = make(map[string]gomutants.ProbeOutcome)
+			}
+			result.UnmeasuredSuites[measured.importPath] = measured.outcome
 		}
 		if measured.probe != nil {
 			result.ProbeSuites[measured.importPath] = *measured.probe
@@ -436,8 +443,12 @@ type packageSuiteCoverageRun struct {
 	importPath string
 	suite      PackageSuiteCoverage
 	probe      *PackageProbeEvidence
-	measured   bool
+	outcome    gomutants.ProbeOutcome
 	err        error
+}
+
+func (run packageSuiteCoverageRun) measured() bool {
+	return run.outcome == gomutants.ProbeMeasured
 }
 
 func collectPackageSuiteCoverages(
@@ -472,12 +483,12 @@ func collectPackageSuiteCoverages(
 					finished <- index
 					continue
 				}
-				suite, measured, err := collectPackageSuiteCoverage(
+				suite, outcome, err := collectPackageSuiteCoverage(
 					ctx, workspace, modulePath, control.importPath, control.relativeDir,
 					control.binary, targetTimeout, targets, options,
 				)
 				runs[index] = packageSuiteCoverageRun{
-					importPath: control.importPath, suite: suite, measured: measured, err: err,
+					importPath: control.importPath, suite: suite, outcome: outcome, err: err,
 				}
 				finished <- index
 			}
@@ -820,7 +831,7 @@ func collectPreparedPackageSuiteCoverage(
 	record.WholeTree = wholeTree != wholeTreeObserved
 	options.Trace.ProbeExec(record)
 	if result.Outcome != gomutants.ProbeMeasured {
-		return packageSuiteCoverageRun{importPath: importPath}
+		return packageSuiteCoverageRun{importPath: importPath, outcome: result.Outcome}
 	}
 	profileData, err := os.ReadFile(profile)
 	if err != nil {
@@ -838,7 +849,7 @@ func collectPreparedPackageSuiteCoverage(
 			Covered: coverage.Covered, Instrumented: coverage.Instrumented,
 			Duration: result.Duration, WholeTree: record.WholeTree,
 		},
-		measured: true,
+		outcome: gomutants.ProbeMeasured,
 	}
 	if probed {
 		run.probe = &PackageProbeEvidence{
@@ -855,7 +866,7 @@ func collectPackageSuiteCoverage(
 	targetTimeout time.Duration,
 	targets []TargetEvidence,
 	options BaselineOptions,
-) (PackageSuiteCoverage, bool, error) {
+) (PackageSuiteCoverage, gomutants.ProbeOutcome, error) {
 	profile := filepath.Join(options.ArtifactDirectory, binaryName(importPath)+".suite.cover")
 	timeout := controlExecutionTimeout(
 		targetTimeout, packageSuiteControlDuration(targets, importPath),
@@ -871,28 +882,31 @@ func collectPackageSuiteCoverage(
 	run, err := workspace.Exec(ctx, observed)
 	observation := finishObservation()
 	if err != nil {
-		return PackageSuiteCoverage{}, false, fmt.Errorf("goatest: baseline package suite %s: %w", importPath, err)
+		return PackageSuiteCoverage{}, gomutants.ProbeUnavailable, fmt.Errorf("goatest: baseline package suite %s: %w", importPath, err)
 	}
 	if repositoryTestLogFailure(string(run.Output), observed.Argv) {
-		return PackageSuiteCoverage{}, false, fmt.Errorf("goatest: repository observation for baseline package suite %s failed", importPath)
+		return PackageSuiteCoverage{}, gomutants.ProbeUnavailable, fmt.Errorf("goatest: repository observation for baseline package suite %s failed", importPath)
 	}
-	if run.TimedOut || run.ExitCode != 0 {
-		return PackageSuiteCoverage{}, false, nil
+	if run.TimedOut {
+		return PackageSuiteCoverage{}, gomutants.ProbeTimedOut, nil
+	}
+	if run.ExitCode != 0 {
+		return PackageSuiteCoverage{}, gomutants.ProbeTestFailed, nil
 	}
 	profileData, err := os.ReadFile(profile)
 	if err != nil {
-		return PackageSuiteCoverage{}, false, fmt.Errorf("goatest: read package-suite coverage for %s: %w", importPath, err)
+		return PackageSuiteCoverage{}, gomutants.ProbeUnavailable, fmt.Errorf("goatest: read package-suite coverage for %s: %w", importPath, err)
 	}
 	coverage, err := goanalysis.ParseCoverage(profileData, modulePath)
 	if err != nil {
-		return PackageSuiteCoverage{}, false, fmt.Errorf("goatest: package-suite coverage for %s: %w", importPath, err)
+		return PackageSuiteCoverage{}, gomutants.ProbeUnavailable, fmt.Errorf("goatest: package-suite coverage for %s: %w", importPath, err)
 	}
 	coverage = restrictBaselineCoverage(coverage, options.coveragePackages)
 	return PackageSuiteCoverage{
 		Covered: coverage.Covered, Instrumented: coverage.Instrumented,
 		Duration:  run.Duration,
 		WholeTree: options.RepositoryObserver.wholeTreeSuite(importPath, observation),
-	}, true, nil
+	}, gomutants.ProbeMeasured, nil
 }
 
 func baselineCheckEvidence(items []report.Evidence) []report.Evidence {
@@ -1020,8 +1034,8 @@ func restoreTargetEvidence(input checkpoint.TargetEvidence) TargetEvidence {
 }
 
 func checkpointBaselineSuite(run packageSuiteCoverageRun) checkpoint.BaselineSuite {
-	unit := checkpoint.BaselineSuite{Package: run.importPath, Measured: run.measured}
-	if !run.measured {
+	unit := checkpoint.BaselineSuite{Package: run.importPath, Measured: run.measured()}
+	if !run.measured() {
 		return unit
 	}
 	unit.Covered = checkpointCoverage(run.suite.Covered)

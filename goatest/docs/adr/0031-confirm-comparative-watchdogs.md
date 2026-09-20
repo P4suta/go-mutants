@@ -14,6 +14,9 @@ Accepted as goatest ADR 0018 and renumbered 0031 when the two
 products came into one repository; the sequence is one because the products
 are. Nothing else about this record changed.
 
+Point 4 is superseded by
+[ADR 0038](0038-a-request-with-no-prior-observation-measures-its-own.md).
+
 ## Context
 
 A mutation may introduce a loop, deadlock, unbounded recursion, or another

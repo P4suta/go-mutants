@@ -15,6 +15,7 @@ const (
 	LimitationGoToolchainMetadataUnavailable   = "go-toolchain-metadata-unavailable"
 	LimitationLaterPhasesNotRun                = "later-phases-not-run"
 	LimitationModuleMetadataUnavailable        = "module-metadata-unavailable"
+	LimitationPackageSuiteUnmeasured           = "package-suite-unmeasured"
 	LimitationPlanCostEstimate                 = "plan-cost-estimate"
 	LimitationProjectExclude                   = "project-exclude"
 	LimitationRaceScopeStaticEstimate          = "race-scope-static-estimate"
@@ -36,6 +37,7 @@ var limitationCodes = []string{
 	LimitationGoToolchainMetadataUnavailable,
 	LimitationLaterPhasesNotRun,
 	LimitationModuleMetadataUnavailable,
+	LimitationPackageSuiteUnmeasured,
 	LimitationPlanCostEstimate,
 	LimitationProjectExclude,
 	LimitationRaceScopeStaticEstimate,

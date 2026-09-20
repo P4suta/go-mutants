@@ -366,7 +366,7 @@ func TestExactOriginalAndMutantUseCompletedCleanDurations(t *testing.T) {
 	}
 }
 
-func TestMutationWithoutAnObservationOrControlIsNotStarted(t *testing.T) {
+func TestAPackageSuiteMutationWithoutAControlFacilityIsNotStarted(t *testing.T) {
 	t.Parallel()
 	mutant := controlMutants()[0]
 	session := &suiteControlSession{
@@ -383,7 +383,7 @@ func TestMutationWithoutAnObservationOrControlIsNotStarted(t *testing.T) {
 	}
 }
 
-func TestMutationWithoutAnExactControlIsNotStarted(t *testing.T) {
+func TestATargetMutationWithoutAControlFacilityIsNotStarted(t *testing.T) {
 	t.Parallel()
 	mutant := controlMutants()[0]
 	session := &suiteControlSession{
@@ -392,6 +392,44 @@ func TestMutationWithoutAnExactControlIsNotStarted(t *testing.T) {
 	}
 	evaluation, err := assure.EvaluateMutations(t.Context(), session, controlTargets()[:1], assure.MutationOptions{
 		Timeout: controlContainmentTimeout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evaluation.Findings) != 1 || evaluation.Findings[0].Kind != "mutation-control-unavailable" ||
+		len(session.recordedRequests()) != 0 {
+		t.Fatalf("evaluation = %+v, mutant requests = %+v", evaluation, session.recordedRequests())
+	}
+}
+
+func TestAPackageSuiteWithNoPriorObservationIsBoundedByItsOwnControl(t *testing.T) {
+	t.Parallel()
+	mutant := controlMutants()[0]
+	session := &suiteControlSession{catalog: gomutants.Catalog{Mutants: []gomutants.Mutant{mutant}}}
+	recorder := &controlRecorder{result: gomutants.ControlResult{Duration: 250 * time.Millisecond}}
+	evaluation, err := assure.EvaluateMutations(t.Context(), session, nil, assure.MutationOptions{
+		Timeout: time.Second, OriginalControl: recorder.run,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := session.recordedRequests()
+	if recorder.total() != 1 || len(requests) != 1 || requests[0].Timeout != 250*time.Millisecond {
+		t.Fatalf("control calls = %d, mutant requests = %+v, want one control and one mutant bounded by it",
+			recorder.total(), requests)
+	}
+	if len(evaluation.Findings) != 1 || evaluation.Findings[0].Kind != "unreached-mutant" {
+		t.Fatalf("evaluation = %+v, want the mutant answered rather than left unbounded", evaluation)
+	}
+}
+
+func TestAControlThatCompletesWithoutAPositiveDurationLeavesTheMutantUnbounded(t *testing.T) {
+	t.Parallel()
+	mutant := controlMutants()[0]
+	session := &suiteControlSession{catalog: gomutants.Catalog{Mutants: []gomutants.Mutant{mutant}}}
+	recorder := &controlRecorder{result: gomutants.ControlResult{}}
+	evaluation, err := assure.EvaluateMutations(t.Context(), session, nil, assure.MutationOptions{
+		Timeout: time.Second, OriginalControl: recorder.run,
 	})
 	if err != nil {
 		t.Fatal(err)
