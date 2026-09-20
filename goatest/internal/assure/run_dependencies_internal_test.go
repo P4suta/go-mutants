@@ -53,6 +53,8 @@ func TestProductionRunDependenciesConstructCacheDelegateCloseAndPreserveResource
 	if dependencies.repositoryRoot == nil || dependencies.loadConfig == nil || dependencies.newCache == nil || dependencies.openWorkspace == nil ||
 		dependencies.closeWorkspace == nil || dependencies.inspectWorkspace == nil || dependencies.assuranceInputs == nil ||
 		dependencies.discoverTargets == nil || dependencies.selectImpact == nil || dependencies.acquireResources == nil || dependencies.makeBaselineScratch == nil ||
+		dependencies.makeObservationDir == nil ||
+		dependencies.openBuildCache == nil || dependencies.collectBuildCache == nil || dependencies.releaseBuildCache == nil ||
 		dependencies.removeBaselineScratch == nil || dependencies.collectBaseline == nil || dependencies.concurrencyPackages == nil || dependencies.relevantRacePackages == nil ||
 		dependencies.collectRaceWithOptions == nil || dependencies.prepareSession == nil || dependencies.evaluateMutations == nil || dependencies.attemptRepairs == nil ||
 		dependencies.buildGraph == nil || dependencies.mergeGraph == nil || dependencies.saveGraph == nil ||

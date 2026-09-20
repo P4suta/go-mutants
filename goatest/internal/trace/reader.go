@@ -55,7 +55,10 @@ func ReadSummary(path string) (Summary, error) {
 	}
 	file, err := os.Open(stream)
 	if errors.Is(err, os.ErrNotExist) {
-		return Summary{Path: stream, Missing: true, Counts: map[string]int{}, PhaseDurationMS: map[string]int64{}, PrepareDurationMS: map[string]int64{}}, nil
+		parent, parentErr := os.Stat(filepath.Dir(stream))
+		if errors.Is(parentErr, os.ErrNotExist) || parentErr == nil && parent.IsDir() {
+			return Summary{Path: stream, Missing: true, Counts: map[string]int{}, PhaseDurationMS: map[string]int64{}, PrepareDurationMS: map[string]int64{}}, nil
+		}
 	}
 	if err != nil {
 		return Summary{}, fmt.Errorf("goatest: open trace %s: %w", stream, err)

@@ -77,6 +77,8 @@ type Service struct {
 	doctorFilesystem doctorProbeFilesystem
 
 	doctorProcess startDoctorProcess
+
+	doctorDiskFree func(string) (uint64, error)
 }
 
 var (
@@ -108,9 +110,6 @@ const (
 
 func (service Service) Execute(ctx context.Context, command cli.Command, request cli.Request, id string) (report.Report, error) {
 	root := service.Root
-	if root == "" {
-		root = "."
-	}
 	resolveAbsolute := service.absolute
 	if resolveAbsolute == nil {
 		resolveAbsolute = filepath.Abs
@@ -596,13 +595,11 @@ func finalizeReportKind(ctx context.Context, root string, request cli.Request, i
 			Code: report.LimitationModuleMetadataUnavailable, Summary: "The Go module identity could not be resolved before execution stopped",
 		})
 	}
-	if result.Repository.Module != "" {
-		if len(result.Scope.Requested.Modules) == 0 {
-			result.Scope.Requested.Modules = []string{result.Repository.Module}
-		}
-		if len(result.Scope.Resolved.Modules) == 0 {
-			result.Scope.Resolved.Modules = []string{result.Repository.Module}
-		}
+	if len(result.Scope.Requested.Modules) == 0 {
+		result.Scope.Requested.Modules = []string{result.Repository.Module}
+	}
+	if len(result.Scope.Resolved.Modules) == 0 {
+		result.Scope.Resolved.Modules = []string{result.Repository.Module}
 	}
 	metadata, gitErr := inspectGit(ctx, root, request, hooks.git)
 	if gitErr != nil {

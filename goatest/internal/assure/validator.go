@@ -79,7 +79,8 @@ func defaultPrepareValidationSession(ctx context.Context, workspace validationWo
 	if !ok {
 		return nil, fmt.Errorf("goatest: unsupported validation workspace %T", workspace)
 	}
-	return mutationWorkspace.Prepare(ctx, options)
+	session, err := mutationWorkspace.Prepare(ctx, options)
+	return mutationSessionResult(session, err)
 }
 
 var (
@@ -180,11 +181,7 @@ func (validator *repositoryValidator) Suite(ctx context.Context, candidate provi
 		if err := runPassing(ctx, workspace, validator.testArgv(false), "related suite", validator.timeout()); err != nil {
 			return err
 		}
-		listArgv := []string{"go", "list", "-json"}
-		if len(validator.options.BuildTags) != 0 {
-			listArgv = append(listArgv, "-tags="+strings.Join(validator.options.BuildTags, ","))
-		}
-		listArgv = append(listArgv, validator.packages()...)
+		listArgv := validator.listArgv()
 		listed, err := workspace.Exec(ctx, gomutants.Command{Argv: listArgv, Timeout: validator.timeout()})
 		if err != nil || listed.ExitCode != 0 || listed.TimedOut {
 			return commandError("candidate go list", listed, err)
@@ -273,6 +270,14 @@ func (validator *repositoryValidator) testArgv(compileOnly bool) []string {
 	return argv
 }
 
+func (validator *repositoryValidator) listArgv() []string {
+	argv := []string{"go", "list", "-json"}
+	if len(validator.options.BuildTags) != 0 {
+		argv = append(argv, "-tags="+strings.Join(validator.options.BuildTags, ","))
+	}
+	return append(argv, validator.packages()...)
+}
+
 func runPassing(ctx context.Context, workspace CommandWorkspace, argv []string, purpose string, timeout time.Duration) error {
 	result, err := workspace.Exec(ctx, gomutants.Command{Argv: argv, Timeout: timeout})
 	if err != nil {
@@ -286,7 +291,8 @@ func runPassing(ctx context.Context, workspace CommandWorkspace, argv []string, 
 
 func (validator *repositoryValidator) withCandidate(ctx context.Context, candidate provider.Candidate, action func(context.Context, string, string) error) error {
 	moment := validator.now()
-	scratch, standalone, err := validator.candidateScratch(moment)
+	standalone := validator.options.scratch == nil
+	scratch, err := validator.candidateScratch(moment)
 	if err != nil {
 		return err
 	}
@@ -313,18 +319,18 @@ func (validator *repositoryValidator) withCandidate(ctx context.Context, candida
 	return action(ctx, root, scratch.dir)
 }
 
-func (validator *repositoryValidator) candidateScratch(now time.Time) (runScratch, bool, error) {
+func (validator *repositoryValidator) candidateScratch(now time.Time) (runScratch, error) {
 	if validator.options.scratch != nil {
-		return *validator.options.scratch, false, nil
+		return *validator.options.scratch, nil
 	}
 	options := validator.scratchOptions()
 	sweepRunTemporaries(options, tempowner.Sweep, now)
 	scratch, err := openRunScratch(os.MkdirTemp, os.RemoveAll, validator.options.TempDirectory, validator.options.Root, now)
 	if err != nil {
 		emit(options, "temp-unavailable", err.Error())
-		return runScratch{}, false, err
+		return runScratch{}, err
 	}
-	return scratch, true, nil
+	return scratch, nil
 }
 
 func (validator *repositoryValidator) scratchOptions() Options {

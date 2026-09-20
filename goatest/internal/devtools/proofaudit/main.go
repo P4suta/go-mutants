@@ -100,10 +100,8 @@ func moduleFromGoMod(path string) (string, error) {
 		return "", fmt.Errorf("read the module path from %s: %w", path, err)
 	}
 	for line := range strings.SplitSeq(string(data), "\n") {
-		text := strings.TrimSpace(line)
-		if comment := strings.Index(text, "//"); comment >= 0 {
-			text = strings.TrimSpace(text[:comment])
-		}
+		code, _, _ := strings.Cut(line, "//")
+		text := strings.TrimSpace(code)
 		rest, directive := strings.CutPrefix(text, moduleDirective)
 
 		if !directive || rest == strings.TrimLeft(rest, " \t") {

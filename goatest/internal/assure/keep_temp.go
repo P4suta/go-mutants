@@ -59,7 +59,7 @@ func releaseBuildCache(options Options, cache runBuildCache, scratch runScratch,
 		}
 		options.Trace.Artifact(artifactBuildCacheScratch, cache.scratch)
 		if cache.native != "" {
-			if scratch.root != "" && scratch.id != "" {
+			if scratch.recordsKept() {
 				recordKept(options, scratch, artifactNativeCacheScratch, []string{cache.native}, now)
 			} else {
 				options.Trace.Artifact(artifactNativeCacheScratch, cache.native)
@@ -79,9 +79,6 @@ func (validator *repositoryValidator) releaseCandidate(root string) {
 }
 
 func recordKept(options Options, scratch runScratch, kind string, paths []string, now time.Time) {
-	if len(paths) == 0 {
-		return
-	}
 	entries := make([]keptledger.Entry, 0, len(paths))
 	for _, path := range paths {
 		options.Trace.Artifact(kind, path)

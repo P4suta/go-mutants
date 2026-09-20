@@ -61,6 +61,13 @@ func (start startDoctorProcess) resolved() startDoctorProcess {
 	return start
 }
 
+func (service Service) diskFree() func(string) (uint64, error) {
+	if service.doctorDiskFree != nil {
+		return service.doctorDiskFree
+	}
+	return diskFreeBytes
+}
+
 func (service Service) doctor(ctx context.Context, root string) (report.Report, error) {
 	result := report.Report{Schema: report.SchemaV1, RunKind: report.RunOperation, Verdict: report.VerdictCompleted}
 	loaded, err := config.Load(root)
@@ -173,7 +180,7 @@ func (service Service) doctor(ctx context.Context, root string) (report.Report, 
 		}
 		result.Evidence = append(result.Evidence, report.Evidence{Kind: "doctor", ID: "writable-" + directory, Status: "ready", Detail: directory})
 	}
-	free, err := diskFreeBytes(root)
+	free, err := service.diskFree()(root)
 	if err != nil {
 		return doctorFailure(result, "filesystem", "disk", err), nil
 	}

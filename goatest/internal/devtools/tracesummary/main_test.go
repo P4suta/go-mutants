@@ -54,8 +54,9 @@ func TestRunReportsATraceItCannotRead(t *testing.T) {
 	if stdout.Len() != 0 {
 		t.Errorf("run wrote %q to stdout, want nothing", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), missing) {
-		t.Errorf("run wrote %q to stderr, want the path it could not read", stderr.String())
+	if !strings.HasPrefix(stderr.String(), "tracesummary: open "+missing) {
+		t.Errorf("run wrote %q to stderr, want the open that failed rather than what reading it then reported",
+			stderr.String())
 	}
 }
 

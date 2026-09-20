@@ -194,12 +194,10 @@ func putResponse(message request, entry Entry, err error, size int64, stats *Sta
 }
 
 func serveClose(layers Layers, stats *Stats, hooks serveHooks) {
-	collected, ran, err := layers.Scratch.collectLockedWithHooks(
+	collected, _, _ := layers.Scratch.collectLockedWithHooks(
 		Policy{MaxBytes: layers.MaxBytes, MinIdle: layers.Scratch.MinIdle()},
 		ScratchCollectInterval, hooks.now(), hooks.layer)
-	if err == nil && ran {
-		stats.PrunedBytes += collected.RemovedBytes
-	}
+	stats.PrunedBytes += collected.RemovedBytes
 
 	_ = writeStats(layers.Scratch.Dir, hooks.statsName(), *stats, hooks.layer)
 }
@@ -212,9 +210,6 @@ func readRequestLine(reader *bufio.Reader) ([]byte, error) {
 			return trimmed, nil
 		}
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil, io.EOF
-			}
 			return nil, fmt.Errorf("goatest: read cacheprog request: %w", err)
 		}
 	}
@@ -331,7 +326,7 @@ func summarizeWithHooks(scratch string, hooks layerHooks) (Stats, error) {
 	}
 	directory := filepath.Join(scratch, statsDirectory)
 	entries, err := hooks.readDir(directory)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) && directoryIsAbsent(directory, scratch, hooks) {
 		return Stats{}, nil
 	}
 	if err != nil {

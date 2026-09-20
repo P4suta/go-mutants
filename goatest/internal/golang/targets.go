@@ -122,11 +122,7 @@ func targetKind(name string) (TargetKind, bool) {
 		if !strings.HasPrefix(name, prefix) {
 			continue
 		}
-		rest := strings.TrimPrefix(name, prefix)
-		if rest == "" {
-			return kind, true
-		}
-		r, _ := utf8.DecodeRuneInString(rest)
+		r, _ := utf8.DecodeRuneInString(strings.TrimPrefix(name, prefix))
 		if !unicode.IsLower(r) {
 			return kind, true
 		}

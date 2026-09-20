@@ -62,8 +62,12 @@ func productionRunDependencies() runDependencies {
 			return manager, baseline, evidenceItems, environment, err
 		},
 		makeRunScratch:         os.MkdirTemp,
+		makeObservationDir:     os.MkdirTemp,
 		removeRunScratch:       os.RemoveAll,
 		sweepTemporary:         tempowner.Sweep,
+		openBuildCache:         openRunBuildCache,
+		collectBuildCache:      collectRunBuildCache,
+		releaseBuildCache:      releaseBuildCache,
 		makeBaselineScratch:    os.MkdirTemp,
 		removeBaselineScratch:  os.RemoveAll,
 		collectBaseline:        CollectBaseline,

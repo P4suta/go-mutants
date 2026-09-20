@@ -71,7 +71,7 @@ func newTargetKeySources(inputs evidence.Inputs, model goanalysis.Model, contrac
 		corpus:            make(map[string][]string),
 	}
 	if len(readers) != 0 {
-		sources.extraFiles = make([]string, 0, len(inputs.Files)+len(inputs.Corpus))
+		sources.extraFiles = make([]string, 0)
 		for name := range inputs.Files {
 			sources.extraFiles = append(sources.extraFiles, name)
 		}
@@ -110,15 +110,9 @@ func testdataOwner(name string) (string, bool) {
 }
 
 func corpusOwner(name string) (string, string, bool) {
-	owner, found := testdataOwner(name)
-	if !found {
-		return "", "", false
-	}
-	remainder := name
-	if owner != "." {
-		remainder = strings.TrimPrefix(name, owner+"/")
-	}
-	remainder, found = strings.CutPrefix(remainder, "testdata/fuzz/")
+	owner, _ := testdataOwner(name)
+	remainder := strings.TrimPrefix(name, owner+"/")
+	remainder, found := strings.CutPrefix(remainder, "testdata/fuzz/")
 	if !found {
 		return "", "", false
 	}
@@ -182,9 +176,7 @@ func (sources targetKeySources) wholeTreeInputsFor(target goanalysis.Target) evi
 			inputs.Files[name] = digest
 			continue
 		}
-		if digest, known := sources.inputs.Corpus[name]; known {
-			inputs.Files[name] = digest
-		}
+		inputs.Files[name] = sources.inputs.Corpus[name]
 	}
 	return inputs
 }
@@ -203,7 +195,7 @@ func (sources targetKeySources) targetKey(target goanalysis.Target, environment 
 }
 
 func targetBehaviorEnvironment(base, overlay []string) []string {
-	values := make(map[string]string, len(base)+len(overlay))
+	values := make(map[string]string)
 	for _, entry := range append(slices.Clone(base), overlay...) {
 		key, value, ok := strings.Cut(entry, "=")
 		if !ok || key == "" {
@@ -406,11 +398,7 @@ func (collected *MutationEvidence) wholeTargetKeyLocked(identity targetIdentity)
 	if key, generated := collected.wholeKeys[identity]; generated {
 		return key
 	}
-	target, known := collected.targetByID[identity]
-	if !known {
-		collected.wholeKeys[identity] = ""
-		return ""
-	}
+	target := collected.targetByID[identity]
 	key := collected.sources.targetKey(target.Target, target.Environment, true)
 	collected.wholeKeys[identity] = key
 	return key
@@ -433,12 +421,8 @@ func (collected *MutationEvidence) wholeSuiteKey(pkg string) string {
 			return ""
 		}
 		key := collected.wholeTargetKeyLocked(identity)
-		if key == "" {
-			collected.wholeSuites[pkg] = ""
-			return ""
-		}
 		keys = append(keys, evidence.TargetKey{
-			Package: identity.pkg, Name: identity.name, Kind: identity.kind, Key: key, WholeTree: true,
+			Package: identity.pkg, Name: identity.name, Kind: identity.kind, Key: key,
 		})
 	}
 	key := collected.sources.suiteKey(pkg, keys, collected.suiteEnvironment, true)
@@ -664,8 +648,10 @@ func (collected *MutationEvidence) store(catalog gomutants.Catalog, modulePath s
 		}
 		records = append(records, record)
 	}
-	slices.SortFunc(records, func(first, second evidence.MutationRecord) int {
-		return strings.Compare(first.MutantID, second.MutantID)
-	})
+	slices.SortFunc(records, compareMutationRecords)
 	return evidence.MutationStore{Schema: evidence.MutationSchemaV1, ModulePath: modulePath, Records: records}
+}
+
+func compareMutationRecords(first, second evidence.MutationRecord) int {
+	return strings.Compare(first.MutantID, second.MutantID)
 }

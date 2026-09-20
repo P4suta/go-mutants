@@ -15,19 +15,29 @@ import (
 var goatestBuildIdentity = sync.OnceValues(resolveGoatestBuildIdentity)
 
 func resolveGoatestBuildIdentity() (string, error) {
-	path, err := os.Executable()
+	return resolveGoatestBuildIdentityWith(os.Executable, digestGoatestExecutable)
+}
+
+func resolveGoatestBuildIdentityWith(locate func() (string, error), digest func(string) (string, error)) (string, error) {
+	path, err := locate()
 	if err != nil {
 		return "", fmt.Errorf("goatest: locate running executable: %w", err)
 	}
-	digest, err := digestGoatestExecutable(path)
+	identity, err := digest(path)
 	if err != nil {
 		return "", fmt.Errorf("goatest: identify running executable: %w", err)
 	}
-	return digest, nil
+	return identity, nil
 }
 
 func digestGoatestExecutable(path string) (string, error) {
-	file, err := os.Open(path)
+	return digestGoatestExecutableWith(path, func(path string) (io.ReadCloser, error) {
+		return os.Open(path)
+	})
+}
+
+func digestGoatestExecutableWith(path string, open func(string) (io.ReadCloser, error)) (string, error) {
+	file, err := open(path)
 	if err != nil {
 		return "", err
 	}

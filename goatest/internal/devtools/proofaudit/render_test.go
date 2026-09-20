@@ -343,8 +343,17 @@ func TestMutantNameFallsBackToTheRecordedIdentity(t *testing.T) {
 		want string
 	}{
 		{name: "the display identity a run recorded", pair: killPair{mutant: firstMutant, display: firstDisplay}, want: firstDisplay},
+		{
+			name: "a display identity the recording chose for itself",
+			pair: killPair{mutant: firstMutant, display: shortDisplay}, want: shortDisplay,
+		},
 		{name: "the identity cut to the same width", pair: killPair{mutant: firstMutant}, want: firstMutant[:displayWidth]},
 		{name: "an identity shorter than the width", pair: killPair{mutant: "abc"}, want: "abc"},
+		{
+			name: "an identity exactly the width",
+			pair: killPair{mutant: firstMutant[:displayWidth]}, want: firstMutant[:displayWidth],
+		},
+		{name: "no display identity at all", pair: killPair{mutant: "abc", display: ""}, want: "abc"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -353,5 +362,35 @@ func TestMutantNameFallsBackToTheRecordedIdentity(t *testing.T) {
 				t.Errorf("mutantName rendered %q, want %q", got, testCase.want)
 			}
 		})
+	}
+}
+
+func TestARenderedTableHoldsAHeadingWithNoRowsBeneathIt(t *testing.T) {
+	t.Parallel()
+	lines := renderTable([]column{{"counter", false}, {"count", true}}, nil)
+	if len(lines) != 1 || !strings.Contains(lines[0], "counter") || !strings.Contains(lines[0], "count") {
+		t.Fatalf("table with no rows = %q", lines)
+	}
+}
+
+func TestTheBranchAndInfectionBlocksAreEmptyWhenTheirLayerWasNotAudited(t *testing.T) {
+	t.Parallel()
+	if got := branchBlock(auditResult{}); got != nil {
+		t.Fatalf("branch block of an unaudited layer = %q", got)
+	}
+	if got := infectionBlock(auditResult{}); got != nil {
+		t.Fatalf("infection block of an unaudited layer = %q", got)
+	}
+}
+
+func TestRenderAuditSaysNothingAboutSuiteReachWhenTheRecordingHoldsASuiteProfile(t *testing.T) {
+	t.Parallel()
+
+	got := renderAudit("trace.jsonl", "profiles", fixtureModule, auditResult{
+		suiteCoverageProfiles: 1,
+		layers:                []layerResult{{name: reachLayerName, audited: 1, kept: 1}},
+	})
+	if strings.Contains(got, whySuiteReachNotAudited) {
+		t.Errorf("an audit holding a package-suite profile still says the layer was not audited:\n%s", got)
 	}
 }

@@ -265,6 +265,7 @@ func newRunCoordinatorHarness(t *testing.T) *runCoordinatorHarness {
 			harness.runScratch = directory
 			return directory, err
 		},
+		makeObservationDir: os.MkdirTemp,
 		removeRunScratch: func(directory string) error {
 			harness.runScratchRemovals++
 			if directory != harness.runScratch {
@@ -280,6 +281,9 @@ func newRunCoordinatorHarness(t *testing.T) *runCoordinatorHarness {
 			harness.sweptPrefixes = slices.Clone(prefixes)
 			return harness.sweepResult, harness.sweepErr
 		},
+		openBuildCache:    openRunBuildCache,
+		collectBuildCache: collectRunBuildCache,
+		releaseBuildCache: releaseBuildCache,
 		makeBaselineScratch: func(parent, pattern string) (string, error) {
 			harness.baselineParent, harness.baselinePattern = parent, pattern
 			harness.scratch = filepath.Join(parent, "baseline-scratch")
@@ -295,7 +299,8 @@ func newRunCoordinatorHarness(t *testing.T) *runCoordinatorHarness {
 		collectBaseline: func(_ context.Context, _ CommandWorkspace, model goanalysis.Model, targets []BaselineTarget, options BaselineOptions) (BaselineResult, error) {
 			harness.baselineCalls++
 			harness.baselineOptions = options
-			if !reflect.DeepEqual(model, harness.metadata.model) || len(targets) != len(harness.targets) {
+			expectedTargets := includedProjectTargets(harness.targets, harness.loaded.Project.Exclude)
+			if !reflect.DeepEqual(model, harness.metadata.model) || len(targets) != len(expectedTargets) {
 				t.Fatalf("baseline input = %+v %+v", model, targets)
 			}
 			if options.Progress != nil {
@@ -420,11 +425,13 @@ func TestRunCoordinatorEstablishesAssuranceAndPassesExactRoundOptions(t *testing
 		!slices.Equal(harness.preparedOptions.Exclude, []string{"generated/**"}) ||
 		harness.preparedOptions.Jobs != 3 || harness.preparedOptions.BuildTimeout != 7*time.Minute ||
 		harness.preparedOptions.MutantTimeout != 7*time.Minute || !harness.preparedOptions.SkipVerify ||
+		len(harness.preparedOptions.ProbeCoverPackages) != 0 || harness.preparedOptions.Probe ||
 		len(harness.preparedOptions.VerifyArgv) != 0 || len(harness.preparedOptions.VerifyEnv) != 0 || harness.preparedOptions.VerifyTimeout != 0 {
 		t.Fatalf("prepare options = %+v", harness.preparedOptions)
 	}
 	if harness.baselineOptions.Jobs != 3 || harness.baselineOptions.CommandTimeout != 7*time.Minute ||
 		harness.baselineOptions.Contract != "standard-v1" || !harness.baselineOptions.PackageSuites ||
+		!harness.baselineOptions.UseTestFraming || !harness.baselineOptions.ClassifyUserFailures ||
 		harness.baselineOptions.Progress == nil || !slices.Equal(harness.baselineOptions.SuiteEnvironment, []string{"DB=ready"}) {
 		t.Fatalf("baseline options = %+v", harness.baselineOptions)
 	}
@@ -600,6 +607,7 @@ func TestRunCoordinatorUsesCombinedBaselineProbeWithoutSupplementalExecution(t *
 	}
 	harness.dependencies.probeTargets = func(ctx context.Context, prepared MutationSession, targets []TargetEvidence, options ProbeOptions) (ProbeEvaluation, error) {
 		harness.probeCalls++
+		harness.probeOptions = options
 		return ProbeTargets(ctx, prepared, targets, options)
 	}
 	if _, err := harness.run(Options{}); err != nil {
@@ -613,6 +621,14 @@ func TestRunCoordinatorUsesCombinedBaselineProbeWithoutSupplementalExecution(t *
 	}
 	if !reflect.DeepEqual(harness.mutationOptions.SuiteProbes, harness.baseline.ProbeSuites) {
 		t.Fatalf("suite probes = %+v, want %+v", harness.mutationOptions.SuiteProbes, harness.baseline.ProbeSuites)
+	}
+	if !reflect.DeepEqual(harness.probeOptions.Suites, harness.baseline.ProbeSuites) {
+		t.Fatalf("prepared probe suites = %+v, want %+v", harness.probeOptions.Suites, harness.baseline.ProbeSuites)
+	}
+	if !slices.ContainsFunc(harness.events, func(event Event) bool {
+		return event.Kind == "probe-target" && event.Detail == "0 targets, 0 package suites"
+	}) {
+		t.Fatalf("events = %+v, want no supplemental package suite", harness.events)
 	}
 }
 
@@ -658,6 +674,9 @@ func TestRunCoordinatorRestoresCompleteProbeWithoutExecutingItAgain(t *testing.T
 		Mutation: &checkpoint.Mutation{
 			CatalogFingerprint: MutationCatalogFingerprint(harness.catalog),
 			Probe:              checkpointMutationProbe(harness.catalog, probeEvaluation),
+			Results: []checkpoint.MutationResult{{
+				ID: "mutant-a", Provenance: "saved-provenance",
+			}},
 		},
 	}
 	harness.cache.checkpointFound = true
@@ -670,6 +689,9 @@ func TestRunCoordinatorRestoresCompleteProbeWithoutExecutingItAgain(t *testing.T
 	}
 	if !reflect.DeepEqual(harness.mutationTargets, probed) || !reflect.DeepEqual(harness.mutationOptions.SuiteProbes, probeEvaluation.Suites) {
 		t.Fatalf("restored routing = targets %+v suites %+v, want %+v %+v", harness.mutationTargets, harness.mutationOptions.SuiteProbes, probed, probeEvaluation.Suites)
+	}
+	if saved, found := harness.mutationOptions.Resume["mutant-a"]; !found || saved.Provenance != "saved-provenance" {
+		t.Fatalf("mutation resume = %+v, want saved mutant", harness.mutationOptions.Resume)
 	}
 	if !slices.ContainsFunc(harness.events, func(event Event) bool { return event.Kind == "resume-probe" }) {
 		t.Fatalf("events = %+v, want resume-probe", harness.events)
@@ -720,6 +742,9 @@ func TestProbePassDoesNotEnterTheCacheIdentity(t *testing.T) {
 	}
 	if prepared := probed.preparedOptions; !prepared.Probe {
 		t.Fatalf("prepare options = %+v, want a probe tree for a full run", prepared)
+	}
+	if !slices.Equal(probed.preparedOptions.ProbeCoverPackages, []string{"fixture.example/module/..."}) || len(replayed.preparedOptions.ProbeCoverPackages) != 0 {
+		t.Fatalf("probe cover packages = full %q replay %q", probed.preparedOptions.ProbeCoverPackages, replayed.preparedOptions.ProbeCoverPackages)
 	}
 }
 

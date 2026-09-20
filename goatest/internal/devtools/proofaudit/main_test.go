@@ -89,6 +89,10 @@ func TestRunReportsATraceItCannotRead(t *testing.T) {
 	if !strings.Contains(stderr.String(), missing) {
 		t.Errorf("run wrote %q to stderr, want the path it could not read", stderr.String())
 	}
+	if !strings.HasPrefix(stderr.String(), "proofaudit: open ") {
+		t.Errorf("run wrote %q to stderr, want the failure of the open rather than of the audit",
+			stderr.String())
+	}
 }
 
 func TestRunReportsProfilesItCannotRead(t *testing.T) {
@@ -386,4 +390,32 @@ func TestModuleFromGoModReportsAFileThatNamesNoModule(t *testing.T) {
 func firstLine(text string) string {
 	line, _, _ := strings.Cut(text, "\n")
 	return line
+}
+
+func TestRunReadsTheModuleFromGoModWhenNobodyNamesOne(t *testing.T) {
+	t.Parallel()
+	tracePath, profiles := soundRecording(t)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{tracePath, profiles}, &stdout, &stderr); code != exitFailure {
+		t.Fatalf("run exited %d, want it to look for ./go.mod and fail", code)
+	}
+	if !strings.Contains(stderr.String(), "read the module path") && !strings.Contains(stderr.String(), "names no module") {
+		t.Fatalf("run wrote %q to stderr, want it to say what it could not read", stderr.String())
+	}
+}
+
+func TestRunReportsAFlagItCannotParseBeforeReadingAnything(t *testing.T) {
+	t.Parallel()
+	stream, profiles := soundRecording(t)
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"-unknown", stream, profiles}, &stdout, &stderr); code != exitUsage {
+		t.Fatalf("run exited %d, want %d", code, exitUsage)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("run wrote %q to stdout, want nothing", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "-unknown") {
+		t.Errorf("run wrote %q to stderr, want the flag it refused", stderr.String())
+	}
 }

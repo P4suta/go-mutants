@@ -6,8 +6,11 @@ package assure
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/P4suta/go-mutants/goatest/internal/filemode"
@@ -30,7 +33,59 @@ func TestDigestGoatestExecutableReadsExactBytes(t *testing.T) {
 
 func TestDigestGoatestExecutableFailsClosed(t *testing.T) {
 	t.Parallel()
-	if digest, err := digestGoatestExecutable(filepath.Join(t.TempDir(), "missing")); err == nil || digest != "" {
-		t.Fatalf("digestGoatestExecutable = (%q, %v)", digest, err)
+	for _, path := range []string{filepath.Join(t.TempDir(), "missing"), t.TempDir()} {
+		if digest, err := digestGoatestExecutable(path); err == nil || digest != "" {
+			t.Errorf("digestGoatestExecutable(%q) = (%q, %v)", path, digest, err)
+		}
+	}
+}
+
+func TestDigestGoatestExecutableStopsAtAnOpenFailure(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("open failed")
+	digest, err := digestGoatestExecutableWith("goatest", func(path string) (io.ReadCloser, error) {
+		if path != "goatest" {
+			t.Fatalf("open path = %q", path)
+		}
+		return io.NopCloser(strings.NewReader("bytes that must not be digested")), cause
+	})
+	if digest != "" || !errors.Is(err, cause) {
+		t.Fatalf("digest after open failure = (%q, %v)", digest, err)
+	}
+}
+
+func TestResolveGoatestBuildIdentityNamesEachFailureAndReturnsTheDigest(t *testing.T) {
+	t.Parallel()
+	locateErr := errors.New("locate failed")
+	identity, err := resolveGoatestBuildIdentityWith(func() (string, error) {
+		return "", locateErr
+	}, func(string) (string, error) {
+		t.Fatal("digest called after locate failed")
+		return "", nil
+	})
+	if identity != "" || !errors.Is(err, locateErr) || err.Error() != "goatest: locate running executable: locate failed" {
+		t.Fatalf("locate failure = (%q, %v)", identity, err)
+	}
+
+	digestErr := errors.New("digest failed")
+	identity, err = resolveGoatestBuildIdentityWith(func() (string, error) {
+		return "/bin/goatest", nil
+	}, func(path string) (string, error) {
+		if path != "/bin/goatest" {
+			t.Fatalf("digest path = %q", path)
+		}
+		return "", digestErr
+	})
+	if identity != "" || !errors.Is(err, digestErr) || err.Error() != "goatest: identify running executable: digest failed" {
+		t.Fatalf("digest failure = (%q, %v)", identity, err)
+	}
+
+	identity, err = resolveGoatestBuildIdentityWith(func() (string, error) {
+		return "/bin/goatest", nil
+	}, func(string) (string, error) {
+		return "build-digest", nil
+	})
+	if identity != "build-digest" || err != nil {
+		t.Fatalf("success = (%q, %v)", identity, err)
 	}
 }

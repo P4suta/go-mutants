@@ -183,10 +183,7 @@ func mutantName(pair killPair) string {
 	if pair.display != "" {
 		return pair.display
 	}
-	if len(pair.mutant) > displayWidth {
-		return pair.mutant[:displayWidth]
-	}
-	return pair.mutant
+	return pair.mutant[:min(len(pair.mutant), displayWidth)]
 }
 
 func position(pair killPair) string {

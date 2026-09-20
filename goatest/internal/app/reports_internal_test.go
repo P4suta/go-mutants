@@ -4,11 +4,13 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 	"github.com/P4suta/go-mutants/goatest/internal/report"
@@ -143,5 +145,110 @@ func validReportFixture() report.Report {
 		Configuration: report.Configuration{Digest: appTestDigest("a")},
 		Toolchain:     report.Toolchain{Go: "go1.26.6", Goatest: "devel", GoMutants: "v0.1.2", OS: "windows", Arch: "amd64"},
 		Timing:        report.Timing{StartedAt: "2026-01-01T00:00:00Z", FinishedAt: "2026-01-01T00:00:01Z", DurationMS: 1000},
+	}
+}
+
+const twoProtectedRuns = 2
+
+func reportWithRunID(t *testing.T, runID string) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(report.Report{
+		Schema: report.SchemaV1, RunID: runID, RunKind: report.RunFull,
+		Verdict: report.VerdictAssured, Contract: "standard-v1", Snapshot: "snapshot",
+		Scope: report.Scope{
+			Requested: report.ScopeSpec{Kind: "full", Project: "."},
+			Resolved:  report.ScopeSpec{Kind: "full", Project: "."},
+		},
+		Repository: report.Repository{
+			Module: "example.test/fixture",
+			Git:    report.Git{Available: true, Commit: "commit", MergeBase: "commit"},
+		},
+		Configuration: report.Configuration{Digest: appTestDigest("a")},
+		Execution: report.Execution{
+			MutationJobs: 1, CommandTimeoutNS: int64(time.Minute), TargetTimeoutNS: int64(time.Minute),
+		},
+		Toolchain: report.Toolchain{
+			Go: "go1.26.6", Goatest: "devel", GoMutants: "v0.1.2", OS: "darwin", Arch: "arm64",
+		},
+		Timing: report.Timing{
+			StartedAt: "2026-01-01T00:00:00Z", FinishedAt: "2026-01-01T00:00:01Z", DurationMS: 1000,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
+func TestProtectedRunIdsNameOnlyTheIndexesThatCarryOne(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		any       string
+		full      string
+		protected int
+	}{
+		{name: "two indexes naming two runs", any: "run-a", full: "run-b", protected: twoProtectedRuns},
+		{name: "two indexes naming one run", any: "run-a", full: "run-a", protected: 1},
+		{name: "one index alone", any: "run-a", protected: 1},
+		{name: "an index that names no run", any: "", protected: 0},
+		{name: "no index at all", protected: 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			internal := filepath.Join(root, ".goatest")
+			if err := os.MkdirAll(internal, filemode.ReadableDirectory); err != nil {
+				t.Fatal(err)
+			}
+			written := map[string]string{}
+			if test.any != "" || test.name == "an index that names no run" {
+				written["latest-any.json"] = test.any
+			}
+			if test.full != "" {
+				written["latest-full.json"] = test.full
+			}
+			for name, runID := range written {
+				if err := os.WriteFile(filepath.Join(internal, name),
+					reportWithRunID(t, runID), filemode.ReadableFile); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := len(protectedRunIDs(root)); got != test.protected {
+				t.Fatalf("%s protected %d runs, want %d", test.name, got, test.protected)
+			}
+		})
+	}
+}
+
+func TestADurableSweepThatCouldNotReadTheConfigurationSaysSo(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".goatest.toml"),
+		[]byte("version = \"one\"\n"), filemode.PrivateFile); err != nil {
+		t.Fatal(err)
+	}
+	var progress strings.Builder
+	service := Service{Root: root, Progress: &progress}
+	service.collectDurableArtifacts(root, filepath.Join(root, ".goatest", "cache"))
+	for _, want := range []string{"reports-gc-unavailable", "repair-gc-unavailable"} {
+		if !strings.Contains(progress.String(), want) {
+			t.Errorf("the sweep said %q, want it to say %q", progress.String(), want)
+		}
+	}
+}
+
+func TestADurableSweepThatRanSaysNothing(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".goatest.toml"),
+		[]byte("version = 1\ncontract = \"standard-v1\"\n"), filemode.PrivateFile); err != nil {
+		t.Fatal(err)
+	}
+	var progress strings.Builder
+	service := Service{Root: root, Progress: &progress}
+	service.collectDurableArtifacts(root, filepath.Join(root, ".goatest", "cache"))
+	if progress.Len() != 0 {
+		t.Fatalf("a sweep over a repository it can read said %q, want nothing", progress.String())
 	}
 }

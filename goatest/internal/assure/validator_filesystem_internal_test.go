@@ -140,6 +140,32 @@ func TestRepositoryValidatorWithCandidateCleansEveryLifecycleOutcome(t *testing.
 	}
 }
 
+func TestRepositoryValidatorRejectsUnavailableSharedAndStandaloneScratch(t *testing.T) {
+	candidate := provider.Candidate{Kind: "patch", Path: "value_test.go", Content: []byte("candidate")}
+	shared := NewRepositoryValidator(RepositoryValidatorOptions{})
+	shared.options.scratch = &runScratch{}
+	if err := shared.withCandidate(t.Context(), candidate, func(context.Context, string, string) error {
+		t.Fatal("action ran without shared scratch")
+		return nil
+	}); err == nil || !strings.Contains(err.Error(), "run scratch is unavailable") {
+		t.Fatalf("shared scratch error = %v", err)
+	}
+
+	blocked := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocked, []byte("blocked"), filemode.PrivateFile); err != nil {
+		t.Fatal(err)
+	}
+	standalone := NewRepositoryValidator(RepositoryValidatorOptions{
+		Root: t.TempDir(), TempDirectory: blocked,
+	})
+	if err := standalone.withCandidate(t.Context(), candidate, func(context.Context, string, string) error {
+		t.Fatal("action ran without standalone scratch")
+		return nil
+	}); err == nil || !strings.Contains(err.Error(), "create run scratch") {
+		t.Fatalf("standalone scratch error = %v", err)
+	}
+}
+
 func TestCopyRepositoryCopiesRegularTreeAndSkipsGeneratedRoots(t *testing.T) {
 	preserveCandidateFileSeams(t)
 	source, destination := t.TempDir(), t.TempDir()

@@ -63,9 +63,6 @@ func selectImpact(ctx context.Context, root string, model goanalysis.Model, targ
 	if !known {
 		return impactSelection{targets: slices.Clone(targets), changed: changed, broad: true, prior: &record}
 	}
-	if len(changed) == 0 {
-		return impactSelection{changed: []string{}, prior: &record}
-	}
 	ranges, _ := changedLineRanges(ctx, root, options.ChangedRef, changed)
 	impact := record.Graph.Affected(changed)
 	if impact.Broad {
@@ -263,11 +260,7 @@ func mutationScope(selection impactSelection) (include, packages []string) {
 }
 
 func packageDirectoryOfPath(name string) string {
-	directory := path.Dir(filepath.ToSlash(name))
-	if directory == "" {
-		return "."
-	}
-	return directory
+	return path.Dir(filepath.ToSlash(name))
 }
 
 func mutationDiscoveryPackages(include, tests []string) []string {

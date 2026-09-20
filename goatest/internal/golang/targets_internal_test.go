@@ -204,6 +204,15 @@ func parseTargetSource(t *testing.T, source string) *ast.File {
 	return file
 }
 
+func parseCommentedTargetSource(t *testing.T, source string) *ast.File {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), "sample_test.go", source, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return file
+}
+
 func findTargetFunction(t *testing.T, file *ast.File, name string) *ast.FuncDecl {
 	t.Helper()
 	for _, declaration := range file.Decls {
@@ -221,4 +230,200 @@ func stringLiteral(value string) *ast.BasicLit {
 
 func selector(pkg, name string) *ast.SelectorExpr {
 	return &ast.SelectorExpr{X: ast.NewIdent(pkg), Sel: ast.NewIdent(name)}
+}
+
+func TestTargetCapabilitiesReadsTheResourcesADocCommentDeclares(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		source string
+		want   []string
+	}{
+		{
+			name:   "a comment that names two resources",
+			source: "// goatest:resources postgres redis\nfunc target() {}\n",
+			want:   []string{"postgres", "redis"},
+		},
+		{
+			name:   "a comment that names none",
+			source: "// goatest:resources\nfunc target() {}\n",
+		},
+		{
+			name:   "a comment that names only whitespace",
+			source: "// goatest:resources   \nfunc target() {}\n",
+		},
+		{
+			name:   "another comment entirely",
+			source: "// target does something\nfunc target() {}\n",
+		},
+		{
+			name:   "a comment beside a call that names the same resource",
+			source: "// goatest:resources postgres\nfunc target() { gt.Run(t, gt.Integration(\"postgres\"), callback) }\n",
+			want:   []string{"postgres"},
+		},
+		{
+			name:   "a comment and a call that name different resources",
+			source: "// goatest:resources redis\nfunc target() { gt.Run(t, gt.Integration(\"postgres\"), callback) }\n",
+			want:   []string{"postgres", "redis"},
+		},
+		{
+			name:   "a call that names one resource twice",
+			source: "func target() { gt.Run(t, gt.Integration(\"postgres\", \"postgres\"), callback) }\n",
+			want:   []string{"postgres"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			file := parseCommentedTargetSource(t, "package sample\n\n"+test.source)
+			got := targetCapabilities(findTargetFunction(t, file, "target"), map[string]bool{"gt": true})
+			if !slices.Equal(got, test.want) {
+				t.Fatalf("capabilities = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func integrationNode(t *testing.T, body string) ast.Node {
+	t.Helper()
+	file := parseTargetSource(t, "package sample\nfunc target() { "+body+" }\n")
+	statement, ok := findTargetFunction(t, file, "target").Body.List[0].(*ast.ExprStmt)
+	if !ok {
+		t.Fatal("the fixture body does not hold an expression")
+	}
+	return statement.X
+}
+
+func TestAnIntegrationScopeNamesOnlyResourcesItCanRead(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		body   string
+		want   []string
+		scoped bool
+	}{
+		{
+			name: "a scope of one resource", body: `gt.Run(t, gt.Integration("postgres"), callback)`,
+			want: []string{"postgres"}, scoped: true,
+		},
+		{
+			name: "a scope of two resources", body: `gt.Run(t, gt.Integration("postgres", "redis"), callback)`,
+			want: []string{"postgres", "redis"}, scoped: true,
+		},
+		{name: "a run of two arguments", body: `gt.Run(t, gt.Integration("postgres"))`},
+		{name: "a call that is not a run", body: `gt.Other(t, gt.Integration("postgres"), callback)`},
+		{name: "a run under another alias", body: `other.Run(t, gt.Integration("postgres"), callback)`},
+		{name: "a scope that is not a call", body: `gt.Run(t, scope, callback)`},
+		{name: "a scope of no argument", body: `gt.Run(t, gt.Integration(), callback)`},
+		{name: "a scope that is not an integration", body: `gt.Run(t, gt.Unit(), callback)`},
+		{name: "a scope naming an identifier", body: `gt.Run(t, gt.Integration(name), callback)`},
+		{name: "a scope naming a rune", body: `gt.Run(t, gt.Integration('x'), callback)`},
+		{name: "a scope naming an empty resource", body: `gt.Run(t, gt.Integration(""), callback)`},
+		{name: "a scope naming only whitespace", body: `gt.Run(t, gt.Integration("  "), callback)`},
+		{
+			name: "a scope whose second resource is not a string",
+			body: `gt.Run(t, gt.Integration("postgres", name), callback)`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			values, scoped := integrationCapabilities(integrationNode(t, test.body), map[string]bool{"gt": true})
+			if scoped != test.scoped || !slices.Equal(values, test.want) {
+				t.Fatalf("integrationCapabilities = (%q, %t), want (%q, %t)",
+					values, scoped, test.want, test.scoped)
+			}
+			if !scoped && values != nil {
+				t.Errorf("a scope it refused answered with %q, want nothing at all", values)
+			}
+		})
+	}
+	if values, scoped := integrationCapabilities(ast.NewIdent("name"), map[string]bool{"gt": true}); scoped || values != nil {
+		t.Fatalf("a node that is not a call answered (%q, %t), want nothing at all", values, scoped)
+	}
+}
+
+func TestAnExampleIsATargetOnlyWhenItsBodyStatesItsOutput(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		source string
+		want   bool
+	}{
+		{name: "an output comment", source: "func ExampleOne() {\n\t// Output: one\n}\n", want: true},
+		{
+			name:   "an unordered output comment",
+			source: "func ExampleOne() {\n\t// Unordered output: one\n}\n", want: true,
+		},
+		{name: "the same words in capitals", source: "func ExampleOne() {\n\t// OUTPUT: one\n}\n", want: true},
+		{name: "no comment at all", source: "func ExampleOne() {\n}\n"},
+		{name: "another comment entirely", source: "func ExampleOne() {\n\t// nothing to say\n}\n"},
+		{
+			name:   "an output comment before the body",
+			source: "// Output: one\nfunc ExampleOne() {\n}\n",
+		},
+		{
+			name:   "an output comment after the body",
+			source: "func ExampleOne() {\n}\n\n// Output: one\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			file := parseCommentedTargetSource(t, "package sample\n\n"+test.source)
+			function := findTargetFunction(t, file, "ExampleOne")
+			if got := hasExampleOutput(function, file.Comments); got != test.want {
+				t.Fatalf("hasExampleOutput = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestAnExampleSignatureTakesNothingAndAnswersNothing(t *testing.T) {
+	t.Parallel()
+	aliases := map[string]bool{"testing": true}
+	for _, test := range []struct {
+		name   string
+		source string
+		want   bool
+	}{
+		{name: "nothing either way", source: "func ExampleOne() {}", want: true},
+		{name: "a parameter", source: "func ExampleOne(value int) {}"},
+		{name: "a result", source: "func ExampleOne() int { return 0 }"},
+		{name: "both", source: "func ExampleOne(value int) int { return value }"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			file := parseTargetSource(t, "package sample\n\n"+test.source+"\n")
+			function := findTargetFunction(t, file, "ExampleOne")
+			if got := testingSignature(function, aliases, KindExample); got != test.want {
+				t.Fatalf("testingSignature of an example = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestATargetKindReadsThePrefixAndWhatFollowsIt(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name string
+		kind TargetKind
+		want bool
+	}{
+		{name: "Test", kind: KindTest, want: true},
+		{name: "Fuzz", kind: KindFuzz, want: true},
+		{name: "Example", kind: KindExample, want: true},
+		{name: "TestOne", kind: KindTest, want: true},
+		{name: "Test_one", kind: KindTest, want: true},
+		{name: "Testone"},
+		{name: "Fuzzy"},
+		{name: "Examples"},
+		{name: "Helper"},
+		{name: ""},
+	} {
+		t.Run("name "+test.name, func(t *testing.T) {
+			t.Parallel()
+			kind, ok := targetKind(test.name)
+			if ok != test.want || (ok && kind != test.kind) {
+				t.Fatalf("targetKind(%q) = (%q, %t), want (%q, %t)", test.name, kind, ok, test.kind, test.want)
+			}
+		})
+	}
 }

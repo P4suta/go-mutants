@@ -8,12 +8,38 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/P4suta/go-mutants/goatest/internal/keptledger"
 	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/tempowner"
 	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
+
+var keepTempMoment = time.Date(2026, time.September, 10, 12, 0, 0, 0, time.UTC)
+
+type failingTemporaryOwner struct {
+	keepErr    error
+	releaseErr error
+	kept       int
+	released   int
+}
+
+func (owner *failingTemporaryOwner) Keep() error {
+	owner.kept++
+	return owner.keepErr
+}
+
+func (owner *failingTemporaryOwner) Release() error {
+	owner.released++
+	return owner.releaseErr
+}
+
+func keepTempRecorder(sink *trace.MemorySink) *trace.Recorder {
+	return trace.New(sink, func() time.Time { return keepTempMoment })
+}
 
 func recordedArtifacts(sink *trace.MemorySink) []trace.ArtifactRecord {
 	var records []trace.ArtifactRecord
@@ -93,5 +119,175 @@ func TestReleaseBuildCacheRemovesAServingCacheScratch(t *testing.T) {
 	}
 	if _, err := os.Stat(directory); !os.IsNotExist(err) {
 		t.Fatalf("released build cache scratch = %v", err)
+	}
+}
+
+func TestReleaseBuildCacheReturnsNativeOwnerKeepFailure(t *testing.T) {
+	cause := errors.New("native keep failed")
+	owner := &failingTemporaryOwner{keepErr: cause}
+	cache := runBuildCache{plain: "program", scratch: t.TempDir(), nativeOwner: owner}
+	if err := releaseBuildCache(Options{KeepTemp: true}, cache, runScratch{}, keepTempMoment); !errors.Is(err, cause) || owner.kept != 1 {
+		t.Fatalf("releaseBuildCache = %v, owner=%+v", err, owner)
+	}
+}
+
+func TestReleasingARunScratchKeepsOrRemovesAndSaysWhichEitherWay(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		keep    bool
+		removed bool
+	}{
+		{name: "a run that keeps its temporaries", keep: true},
+		{name: "a run that does not", removed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			sink := trace.NewMemorySink(0)
+			root := t.TempDir()
+			directory := filepath.Join(root, "run-scratch")
+			if err := os.MkdirAll(directory, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			removals := 0
+			owner, err := tempowner.Claim(directory,
+				tempowner.Marker{RunID: "run-a", Root: root}, keepTempMoment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scratch := runScratch{dir: directory, id: "run-a", root: root, owner: owner}
+			options := Options{KeepTemp: test.keep, Trace: keepTempRecorder(sink)}
+			releaseRunScratch(options, func(string) error { removals++; return nil }, scratch, keepTempMoment)
+			if removed := removals == 1; removed != test.removed {
+				t.Fatalf("%s removed=%t, want %t", test.name, removed, test.removed)
+			}
+			recorded := len(recordedArtifacts(sink)) != 0
+			if recorded == test.removed {
+				t.Fatalf("%s recorded artifacts=%t, want %t", test.name, recorded, !test.removed)
+			}
+		})
+	}
+	sink := trace.NewMemorySink(0)
+	removals := 0
+	releaseRunScratch(Options{Trace: keepTempRecorder(sink)},
+		func(string) error { removals++; return nil }, runScratch{}, keepTempMoment)
+	if removals != 0 || len(recordedArtifacts(sink)) != 0 {
+		t.Fatalf("a scratch with no directory removed %d and recorded %d, want neither",
+			removals, len(recordedArtifacts(sink)))
+	}
+}
+
+func TestReleasingARunScratchReportsOwnerAndRemovalFailures(t *testing.T) {
+	keepErr := errors.New("keep failed")
+	keepOwner := &failingTemporaryOwner{keepErr: keepErr}
+	var keepEvents []Event
+	releaseRunScratch(Options{KeepTemp: true, Progress: func(event Event) { keepEvents = append(keepEvents, event) }},
+		func(string) error { t.Fatal("kept scratch was removed"); return nil },
+		runScratch{dir: "scratch", root: t.TempDir(), id: "run", owner: keepOwner}, keepTempMoment)
+	if keepOwner.kept != 1 || len(keepEvents) != 1 || !strings.Contains(keepEvents[0].Detail, keepErr.Error()) {
+		t.Fatalf("keep failure owner=%+v events=%+v", keepOwner, keepEvents)
+	}
+
+	releaseErr := errors.New("release failed")
+	removeErr := errors.New("remove failed")
+	releaseOwner := &failingTemporaryOwner{releaseErr: releaseErr}
+	var releaseEvents []Event
+	releaseRunScratch(Options{Progress: func(event Event) { releaseEvents = append(releaseEvents, event) }},
+		func(path string) error {
+			if path != "scratch" {
+				t.Fatalf("remove path = %q", path)
+			}
+			return removeErr
+		}, runScratch{dir: "scratch", owner: releaseOwner}, keepTempMoment)
+	if releaseOwner.released != 1 || len(releaseEvents) != 2 || !strings.Contains(releaseEvents[0].Detail, releaseErr.Error()) || !strings.Contains(releaseEvents[1].Detail, removeErr.Error()) {
+		t.Fatalf("release failure owner=%+v events=%+v", releaseOwner, releaseEvents)
+	}
+}
+
+func TestRunScratchRecordsKeptOnlyWithRootAndIdentity(t *testing.T) {
+	for _, test := range []struct {
+		root string
+		id   string
+		want bool
+	}{
+		{root: "root", id: "run", want: true},
+		{root: "root"},
+		{id: "run"},
+		{},
+	} {
+		if got := (runScratch{root: test.root, id: test.id}).recordsKept(); got != test.want {
+			t.Errorf("recordsKept(root=%q, id=%q) = %t, want %t", test.root, test.id, got, test.want)
+		}
+	}
+}
+
+func TestReleasingAKeptBuildCacheNamesItsNativeProjectionOnlyWhereThereIsOne(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		native  string
+		scratch runScratch
+		kinds   []string
+		ledger  bool
+	}{
+		{
+			name:  "a cache with no native projection",
+			kinds: []string{artifactBuildCacheScratch},
+		},
+		{
+			name: "a native projection a ledger can record", native: "native",
+			scratch: runScratch{root: "root", id: "run-a"},
+			kinds:   []string{artifactBuildCacheScratch, artifactNativeCacheScratch}, ledger: true,
+		},
+		{
+			name: "a native projection no ledger can record", native: "native",
+			kinds: []string{artifactBuildCacheScratch, artifactNativeCacheScratch},
+		},
+		{
+			name: "a native projection whose run has no identity", native: "native",
+			scratch: runScratch{root: "root"},
+			kinds:   []string{artifactBuildCacheScratch, artifactNativeCacheScratch},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			sink := trace.NewMemorySink(0)
+			scratch := test.scratch
+			if scratch.root != "" {
+				scratch.root = t.TempDir()
+			}
+			cache := runBuildCache{plain: "program", scratch: t.TempDir(), native: test.native}
+			options := Options{KeepTemp: true, Trace: keepTempRecorder(sink)}
+			if err := releaseBuildCache(options, cache, scratch, keepTempMoment); err != nil {
+				t.Fatal(err)
+			}
+			var kinds []string
+			for _, record := range recordedArtifacts(sink) {
+				kinds = append(kinds, record.Kind)
+			}
+			if !reflect.DeepEqual(kinds, test.kinds) {
+				t.Fatalf("%s recorded %q, want %q", test.name, kinds, test.kinds)
+			}
+			if scratch.root != "" {
+				_, err := os.Stat(keptledger.Path(scratch.root))
+				if exists := err == nil; exists != test.ledger {
+					t.Fatalf("%s ledger exists=%t, want %t (stat error %v)", test.name, exists, test.ledger, err)
+				}
+			}
+		})
+	}
+}
+
+func TestRecordingKeptPathsWritesNoLedgerForNoPathAtAll(t *testing.T) {
+	t.Parallel()
+	sink := trace.NewMemorySink(0)
+	root := t.TempDir()
+	recordKept(Options{Trace: keepTempRecorder(sink)}, runScratch{root: root, id: "run-a"},
+		artifactRunScratch, nil, keepTempMoment)
+	if len(recordedArtifacts(sink)) != 0 {
+		t.Fatalf("recording no path at all recorded %+v", recordedArtifacts(sink))
+	}
+	if _, err := os.Stat(keptledger.Path(root)); !os.IsNotExist(err) {
+		t.Fatalf("recording no path at all wrote a ledger: %v", err)
 	}
 }

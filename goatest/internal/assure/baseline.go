@@ -61,7 +61,7 @@ type BaselineOptions struct {
 	Progress             func(completed, total int)
 	Trace                *trace.Recorder
 	StopAfterChecks      bool
-	probeIndices         map[uint32]bool
+	probeIndices         map[uint32]struct{}
 	probeIdentities      map[uint32]string
 	coveragePackages     []goanalysis.Package
 }
@@ -103,11 +103,11 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 	}
 	if options.ProbeSession != nil {
 		catalog := options.ProbeSession.Catalog()
-		options.probeIndices = make(map[uint32]bool, len(catalog.Mutants))
+		options.probeIndices = make(map[uint32]struct{}, len(catalog.Mutants))
 		options.probeIdentities = probeMutantIdentities(catalog)
 		for _, mutant := range catalog.Mutants {
 			if mutant.Probed {
-				options.probeIndices[mutant.Index] = true
+				options.probeIndices[mutant.Index] = struct{}{}
 			}
 		}
 	}
@@ -133,8 +133,7 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 	}
 	completed := make(map[string]checkpoint.BaselineTarget)
 	completedSuites := make(map[string]checkpoint.BaselineSuite)
-	measuredTargets := make(map[string]*TargetEvidence)
-	checkpointInstrumentation := make(map[string]bool)
+	checkpointInstrumentation := make(map[string]struct{})
 	buildVetComplete := false
 	resumeRouting := false
 	if options.Resume != nil {
@@ -148,9 +147,7 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 				resumed = restrictTargetEvidenceToPackages(resumed, options.coveragePackages)
 				unit.Target = checkpointTargetEvidence(resumed)
 				result.Instrumented = goanalysis.MergeFileCoverage(result.Instrumented, resumed.Instrumented)
-				if unit.Target.Instrumented != nil {
-					checkpointInstrumentation[unit.Target.Target.Package] = true
-				}
+				checkpointInstrumentation[unit.Target.Target.Package] = struct{}{}
 			}
 			completed[unit.ID] = unit
 		}
@@ -240,7 +237,7 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 				if _, done := completed[target.Target.ID]; done {
 					continue
 				}
-				unit := baselineClassifiedUnit(target, "not-run", check.name+" failed", 0, false, true, nil, nil, nil)
+				unit := baselineClassifiedUnit(target, "not-run", check.name+" failed", 0, nil, nil, nil)
 				completed[unit.ID] = unit
 			}
 			publishProgress()
@@ -258,11 +255,11 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 	}
 
 	packageTargets := make(map[string][]BaselineTarget)
-	packageSuites := make(map[string]bool)
+	packageSuites := make(map[string]struct{})
 	for _, target := range targets {
 		if options.PackageSuites && !resumeRouting {
 			if _, done := completedSuites[target.Target.Package]; !done {
-				packageSuites[target.Target.Package] = true
+				packageSuites[target.Target.Package] = struct{}{}
 			}
 		}
 		if _, done := completed[target.Target.ID]; done {
@@ -276,7 +273,7 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 				continue
 			}
 			if _, done := completedSuites[mutant.Package]; !done {
-				packageSuites[mutant.Package] = true
+				packageSuites[mutant.Package] = struct{}{}
 			}
 		}
 	}
@@ -325,10 +322,10 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 				result.Findings = append(result.Findings, finding)
 				structuralFindings = append(structuralFindings, finding)
 				for _, target := range packageTargets[importPath] {
-					unit := baselineClassifiedUnit(target, "not-run", "test binary did not compile", 0, false, true, nil, nil, nil)
+					unit := baselineClassifiedUnit(target, "not-run", "test binary did not compile", 0, nil, nil, nil)
 					completed[unit.ID] = unit
 				}
-				if packageSuites[importPath] {
+				if _, needed := packageSuites[importPath]; needed {
 					completedSuites[importPath] = checkpoint.BaselineSuite{Package: importPath}
 				}
 				publishProgress()
@@ -336,9 +333,10 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 				continue
 			}
 		}
+		_, suite := packageSuites[importPath]
 		packageControls = append(packageControls, packageBaselineControl{
 			importPath: importPath, relativeDir: pkg.RelativeDir, binary: binary,
-			targets: packageTargets[importPath], suite: packageSuites[importPath],
+			targets: packageTargets[importPath], suite: suite,
 		})
 	}
 	suiteControls := make([]packageSuiteControl, 0, len(packageSuites))
@@ -348,15 +346,9 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 			instrumentationAnchor = control.targets[0].Target.ID
 		}
 		commit := func(run baselineTargetRun) {
-			if run.evidence != nil {
-				measured := *run.evidence
-				measured.Instrumented = nil
-				measuredTargets[run.unit.ID] = &measured
-			}
-			if run.unit.Target != nil {
-				if checkpointInstrumentation[control.importPath] || run.unit.ID != instrumentationAnchor {
-					run.unit.Target.Instrumented = nil
-				}
+			_, instrumented := checkpointInstrumentation[control.importPath]
+			if run.unit.Target != nil && (instrumented || run.unit.ID != instrumentationAnchor) {
+				run.unit.Target.Instrumented = nil
 			}
 			completed[run.unit.ID] = run.unit
 			result.Instrumented = goanalysis.MergeFileCoverage(result.Instrumented, run.instrumented)
@@ -374,7 +366,7 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 		}
 	}
 	neededSuites := slices.Sorted(maps.Keys(packageSuites))
-	if options.ProbeSession != nil {
+	if options.PackageSuites && options.ProbeSession != nil {
 		neededSuites = neededBaselineSuitePackages(
 			options.ProbeSession.Catalog(), completedTargetEvidence(targets, completed), result.Instrumented,
 		)
@@ -413,7 +405,7 @@ func CollectBaseline(ctx context.Context, workspace CommandWorkspace, model goan
 			return BaselineResult{}, measured.err
 		}
 	}
-	appendCompletedBaselineTargets(&result, targets, completed, measuredTargets)
+	appendCompletedBaselineTargets(&result, targets, completed, nil)
 	checkpointNow(true)
 	return result, nil
 }
@@ -461,9 +453,6 @@ func collectPackageSuiteCoverages(
 	options BaselineOptions,
 	commit func(packageSuiteCoverageRun),
 ) []packageSuiteCoverageRun {
-	if len(controls) == 0 {
-		return nil
-	}
 	runs := make([]packageSuiteCoverageRun, len(controls))
 	jobs := baselineJobLimitFor(options.Jobs, len(controls), defaultMutationJobLimit())
 	indexes := make(chan int, len(controls))
@@ -519,9 +508,6 @@ func collectPackageBaselineTargets(
 	options BaselineOptions,
 	commit func(baselineTargetRun),
 ) error {
-	if len(targets) == 0 {
-		return nil
-	}
 	jobs := baselineJobLimitFor(options.Jobs, len(targets), defaultMutationJobLimit())
 	type indexedRun struct {
 		index int
@@ -575,21 +561,18 @@ func collectPackageBaselineTargets(
 			return run.err
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return nil
+	return ctx.Err()
 }
 
 func neededBaselineSuitePackages(catalog gomutants.Catalog, targets []TargetEvidence, instrumented []goanalysis.FileCoverage) []string {
-	needed := make(map[string]bool)
+	needed := make(map[string]struct{})
 	for _, mutant := range catalog.Mutants {
 		if !mutant.Accepted || mutant.Package == "" {
 			continue
 		}
 		route := routeMutant(mutant, targets, instrumented)
 		if len(route.reaching) == 0 && len(route.discharged) == 0 {
-			needed[mutant.Package] = true
+			needed[mutant.Package] = struct{}{}
 		}
 	}
 	return slices.Sorted(maps.Keys(needed))
@@ -638,7 +621,7 @@ func executeBaselineTarget(
 		}
 		finding := targetFinding(target.Target, skipKind, skipSummary)
 		return baselineTargetRun{unit: baselineClassifiedUnit(
-			target, "skipped", skipSummary, first.Duration, false, true, nil,
+			target, "skipped", skipSummary, first.Duration, nil,
 			[]report.Evidence{evidenceItem}, []report.Finding{finding},
 		)}
 	}
@@ -646,7 +629,7 @@ func executeBaselineTarget(
 		kind, summary := classifyTargetFailure(first)
 		finding := targetFinding(target.Target, kind, summary)
 		return baselineTargetRun{unit: baselineClassifiedUnit(
-			target, "failed", summary, first.Duration, true, false, nil, nil, []report.Finding{finding},
+			target, "failed", summary, first.Duration, nil, nil, []report.Finding{finding},
 		)}
 	}
 	profileData, err := os.ReadFile(profile)
@@ -667,7 +650,7 @@ func executeBaselineTarget(
 	evidenceItem := report.Evidence{
 		Kind: "target", ID: target.Target.ID, Status: "passed", Detail: target.Target.Name,
 	}
-	unit := baselineClassifiedUnit(target, "passed", "", first.Duration, true, false, &targetEvidence, []report.Evidence{evidenceItem}, nil)
+	unit := baselineClassifiedUnit(target, "passed", "", first.Duration, &targetEvidence, []report.Evidence{evidenceItem}, nil)
 	return baselineTargetRun{unit: unit, evidence: &targetEvidence, instrumented: coverage.Instrumented}
 }
 
@@ -715,7 +698,7 @@ func executePreparedBaselineTarget(
 		}
 		finding := targetFinding(target.Target, skipKind, skipSummary)
 		return baselineTargetRun{unit: baselineClassifiedUnit(
-			target, "skipped", skipSummary, first.Duration, false, true, nil,
+			target, "skipped", skipSummary, first.Duration, nil,
 			[]report.Evidence{evidenceItem}, []report.Finding{finding},
 		)}
 	}
@@ -723,7 +706,7 @@ func executePreparedBaselineTarget(
 		kind, summary := classifyTargetFailure(first)
 		finding := targetFinding(target.Target, kind, summary)
 		return baselineTargetRun{unit: baselineClassifiedUnit(
-			target, "failed", summary, first.Duration, true, false, nil, nil, []report.Finding{finding},
+			target, "failed", summary, first.Duration, nil, nil, []report.Finding{finding},
 		)}
 	}
 	profileData, err := os.ReadFile(profile)
@@ -746,7 +729,7 @@ func executePreparedBaselineTarget(
 	evidenceItem := report.Evidence{
 		Kind: "target", ID: target.Target.ID, Status: "passed", Detail: target.Target.Name,
 	}
-	unit := baselineClassifiedUnit(target, "passed", "", result.Duration, true, false, &targetEvidence, []report.Evidence{evidenceItem}, nil)
+	unit := baselineClassifiedUnit(target, "passed", "", result.Duration, &targetEvidence, []report.Evidence{evidenceItem}, nil)
 	return baselineTargetRun{unit: unit, evidence: &targetEvidence, instrumented: coverage.Instrumented}
 }
 
@@ -772,7 +755,7 @@ func commandResultFromProbe(result gomutants.ProbeResult) gomutants.CommandResul
 	}
 }
 
-func validatedBaselineProbe(result gomutants.ProbeResult, indices map[uint32]bool) (bool, []uint32) {
+func validatedBaselineProbe(result gomutants.ProbeResult, indices map[uint32]struct{}) (bool, []uint32) {
 	if result.Outcome != gomutants.ProbeMeasured {
 		return false, nil
 	}
@@ -780,7 +763,7 @@ func validatedBaselineProbe(result gomutants.ProbeResult, indices map[uint32]boo
 	slices.Sort(infected)
 	infected = slices.Compact(infected)
 	for _, index := range infected {
-		if !indices[index] {
+		if _, known := indices[index]; !known {
 			return false, nil
 		}
 	}
@@ -936,12 +919,12 @@ func restrictTargetEvidenceToPackages(target TargetEvidence, packages []goanalys
 	return target
 }
 
-func baselineClassifiedUnit(target BaselineTarget, status, detail string, duration time.Duration, executed, skipped bool, evidence *TargetEvidence, evidenceItems []report.Evidence, findings []report.Finding) checkpoint.BaselineTarget {
+func baselineClassifiedUnit(target BaselineTarget, status, detail string, duration time.Duration, evidence *TargetEvidence, evidenceItems []report.Evidence, findings []report.Finding) checkpoint.BaselineTarget {
 	if status == "not-run" && len(evidenceItems) == 0 {
 		evidenceItems = []report.Evidence{{Kind: "target", ID: target.Target.ID, Status: status, Detail: detail}}
 	}
 	unit := checkpoint.BaselineTarget{
-		ID: target.Target.ID, Executed: executed, Skipped: skipped,
+		ID: target.Target.ID, Executed: status != "not-run", Skipped: status == "skipped" || status == "not-run",
 		Evidence: slices.Clone(evidenceItems), Findings: slices.Clone(findings),
 		Inventory: report.TargetDisposition{
 			ID: target.Target.ID, Name: target.Target.Name, Kind: string(target.Target.Kind), Package: target.Target.Package,
@@ -1194,15 +1177,12 @@ func classifyTestFraming(target string, output []byte) (bool, string, string, er
 		}
 		framed := remaining[marker+1:]
 		end := len(framed)
-		delimiter := byte(0)
 		if newline := bytes.IndexByte(framed, '\n'); newline != -1 {
-			end, delimiter = newline, '\n'
+			end = newline
 		}
-		if next := bytes.IndexByte(framed, testFramingMarker); next != -1 {
+		next := bytes.IndexByte(framed, testFramingMarker)
+		if next != -1 {
 			end = min(end, next)
-			if end == next {
-				delimiter = testFramingMarker
-			}
 		}
 		line := bytes.TrimSuffix(framed[:end], []byte{'\r'})
 		for bytes.HasPrefix(line, []byte("    ")) {
@@ -1217,13 +1197,10 @@ func classifyTestFraming(target string, output []byte) (bool, string, string, er
 				return true, "skipped-subtest", "a selected subtest was skipped: " + name, nil
 			}
 		}
-		if delimiter == 0 {
+		if next == -1 {
 			break
 		}
-		remaining = framed[end:]
-		if delimiter == '\n' {
-			remaining = remaining[1:]
-		}
+		remaining = framed[next:]
 	}
 	if truncated {
 		return false, "", "", errors.New("captured output was truncated before skip classification completed")
@@ -1232,10 +1209,7 @@ func classifyTestFraming(target string, output []byte) (bool, string, string, er
 }
 
 func trimTestDuration(name string) string {
-	prefix, suffix, found := strings.Cut(name, " (")
-	if !found {
-		return name
-	}
+	prefix, suffix, _ := strings.Cut(name, " (")
 	seconds, found := strings.CutSuffix(suffix, "s)")
 	if !found {
 		return name

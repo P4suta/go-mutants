@@ -438,3 +438,112 @@ func TestUnmeasuredSuiteLimitationNamesEveryPackageUnderTheReasonItCarries(t *te
 		t.Fatalf("limitation = %+v, want %q", limitation, want)
 	}
 }
+
+func TestAnObserverWithNothingToObserveNarrowsNothingAndSaysWhy(t *testing.T) {
+	t.Parallel()
+	const pkg = "fixture.example/module/pkg"
+	arguments := []string{"-test.run=^TestValue$"}
+	for _, test := range []struct {
+		name      string
+		observer  func(t *testing.T) *RepositoryObserver
+		reason    wholeTreeReason
+		wholeTree bool
+	}{
+		{
+			name:     "no observer at all",
+			observer: func(*testing.T) *RepositoryObserver { return nil },
+		},
+		{
+			name: "a package the model does not name and nothing selected",
+			observer: func(t *testing.T) *RepositoryObserver {
+				return newRepositoryObserver(t.TempDir(), t.TempDir(),
+					map[string]goanalysis.RepositoryReadCandidate{}, targetKeySources{})
+			},
+		},
+		{
+			name: "a package the model does not name but something selected",
+			observer: func(t *testing.T) *RepositoryObserver {
+				return newRepositoryObserver(t.TempDir(), t.TempDir(),
+					map[string]goanalysis.RepositoryReadCandidate{pkg: {}}, targetKeySources{})
+			},
+			reason: wholeTreeStaticUnobservable, wholeTree: true,
+		},
+		{
+			name: "an observer with no root to resolve against",
+			observer: func(t *testing.T) *RepositoryObserver {
+				observer := newRepositoryObserver("", t.TempDir(),
+					map[string]goanalysis.RepositoryReadCandidate{pkg: {}}, targetKeySources{
+						model: goanalysis.Model{Packages: []goanalysis.Package{
+							{ImportPath: pkg, RelativeDir: "pkg"},
+						}},
+					})
+				return observer
+			},
+			reason: wholeTreeLogUnavailable, wholeTree: true,
+		},
+		{
+			name: "an observer with nowhere to write its log",
+			observer: func(t *testing.T) *RepositoryObserver {
+				return newRepositoryObserver(t.TempDir(), "",
+					map[string]goanalysis.RepositoryReadCandidate{pkg: {}}, targetKeySources{
+						model: goanalysis.Model{Packages: []goanalysis.Package{
+							{ImportPath: pkg, RelativeDir: "pkg"},
+						}},
+					})
+			},
+			reason: wholeTreeLogUnavailable, wholeTree: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			observer := test.observer(t)
+			got, finish := observer.instrumentPackage(pkg, arguments)
+			if !slices.Equal(got, arguments) {
+				t.Fatalf("%s changed the arguments to %q, want %q", test.name, got, arguments)
+			}
+			observation := finish()
+			if observation.reason != test.reason {
+				t.Fatalf("%s observed the reason %q, want %q", test.name, observation.reason, test.reason)
+			}
+			if whole := observer.wholeTree(goanalysis.Target{Package: pkg}, observation); whole != test.wholeTree {
+				t.Errorf("%s keyed the whole tree=%t, want %t", test.name, whole, test.wholeTree)
+			}
+		})
+	}
+}
+
+func TestAnObserverResolvesItsRootOnceAndRefusesOneItCannot(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	observer := newRepositoryObserver(root, t.TempDir(),
+		map[string]goanalysis.RepositoryReadCandidate{}, targetKeySources{})
+	if observer.root != filepath.Clean(root) {
+		t.Fatalf("the observer resolved %q, want the cleaned root %q", observer.root, filepath.Clean(root))
+	}
+	empty := newRepositoryObserver("", t.TempDir(),
+		map[string]goanalysis.RepositoryReadCandidate{}, targetKeySources{})
+	if empty.root != "" {
+		t.Fatalf("an observer of no root resolved %q, want nothing", empty.root)
+	}
+}
+
+func TestAnObservationScopeNamesEveryPackageWhetherOrNotItReadsTheRepository(t *testing.T) {
+	t.Parallel()
+	packages := []goanalysis.Package{
+		{ImportPath: "fixture.example/module/one", RelativeDir: "one"},
+		{ImportPath: "fixture.example/module/two", RelativeDir: "two"},
+	}
+	candidates, readers := repositoryObservationScope(t.TempDir(), packages)
+	for _, pkg := range packages {
+		if _, named := candidates[pkg.ImportPath]; !named {
+			t.Errorf("the scope does not name %q among its candidates", pkg.ImportPath)
+		}
+		if !readers[pkg.ImportPath] {
+			t.Errorf("the scope does not name %q among its readers", pkg.ImportPath)
+		}
+	}
+	if len(candidates) != len(packages) || len(readers) != len(packages) {
+		t.Fatalf("the scope names %d candidates and %d readers, want %d of each",
+			len(candidates), len(readers), len(packages))
+	}
+}

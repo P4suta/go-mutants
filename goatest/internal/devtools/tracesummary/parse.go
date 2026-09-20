@@ -4,7 +4,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -21,37 +20,29 @@ import (
 
 const routePlanReused = "reused"
 
-const readBufferSize = 1 << 16
-
 const firstSequence = 1
 
 func readEvents(reader io.Reader) ([]trace.Event, error) {
-	buffered := bufio.NewReaderSize(reader, readBufferSize)
+	stream, readErr := io.ReadAll(reader)
+	if readErr != nil {
+		return nil, fmt.Errorf("read the recording: %w", readErr)
+	}
 	var events []trace.Event
-	var previousSeq int64
-	ended := false
-	for number := 1; ; number++ {
-		line, readErr := buffered.ReadBytes('\n')
-		if readErr != nil && !errors.Is(readErr, io.EOF) {
-			return nil, fmt.Errorf("line %d: %w", number, readErr)
-		}
-		line = bytes.TrimRight(line, "\r\n")
-		if len(line) == 0 && readErr != nil {
-			break
+	lines := bytes.Split(stream, []byte("\n"))
+	for index, line := range lines {
+		number := index + 1
+		line = bytes.TrimRight(line, "\r")
+		if len(line) == 0 && index == len(lines)-1 {
+			continue
 		}
 		event, err := decodeEvent(line)
 		if err != nil {
 			return nil, fmt.Errorf("line %d: %w", number, err)
 		}
-		if err := checkOrder(event, len(events), previousSeq, ended); err != nil {
+		if err := checkOrder(event, events); err != nil {
 			return nil, fmt.Errorf("line %d: %w", number, err)
 		}
-		previousSeq = event.Seq
-		ended = event.Type == trace.TypeRunEnd
 		events = append(events, event)
-		if readErr != nil {
-			break
-		}
 	}
 	if len(events) == 0 {
 		return nil, errors.New("the stream carries no events")
@@ -59,8 +50,8 @@ func readEvents(reader io.Reader) ([]trace.Event, error) {
 	return events, nil
 }
 
-func checkOrder(event trace.Event, kept int, previousSeq int64, ended bool) error {
-	if kept == 0 {
+func checkOrder(event trace.Event, kept []trace.Event) error {
+	if len(kept) == 0 {
 		if event.Type != trace.TypeRunStart {
 			return fmt.Errorf("the stream opens with a %s event, want a %s event", event.Type, trace.TypeRunStart)
 		}
@@ -72,11 +63,12 @@ func checkOrder(event trace.Event, kept int, previousSeq int64, ended bool) erro
 	if event.Type == trace.TypeRunStart {
 		return fmt.Errorf("a second %s event; one recording opens once", trace.TypeRunStart)
 	}
-	if ended {
+	previous := kept[len(kept)-1]
+	if previous.Type == trace.TypeRunEnd {
 		return fmt.Errorf("a %s event after the %s event that closes the recording", event.Type, trace.TypeRunEnd)
 	}
-	if event.Seq <= previousSeq {
-		return fmt.Errorf("seq %d does not follow seq %d", event.Seq, previousSeq)
+	if event.Seq <= previous.Seq {
+		return fmt.Errorf("seq %d does not follow seq %d", event.Seq, previous.Seq)
 	}
 	return nil
 }
@@ -94,22 +86,16 @@ func decodeEvent(line []byte) (trace.Event, error) {
 	if decoder.More() {
 		return trace.Event{}, errors.New("more than one value on the line")
 	}
-	fields, err := objectFields(line)
-	if err != nil {
-		return trace.Event{}, err
-	}
-	if err := validateEvent(event, fields); err != nil {
+	if err := validateEvent(event, payloadFields(line)); err != nil {
 		return trace.Event{}, err
 	}
 	return event, nil
 }
 
-func objectFields(data []byte) (map[string]json.RawMessage, error) {
+func payloadFields(data []byte) map[string]json.RawMessage {
 	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return nil, err
-	}
-	return fields, nil
+	_ = json.Unmarshal(data, &fields)
+	return fields
 }
 
 func validateEvent(event trace.Event, fields map[string]json.RawMessage) error {
@@ -390,10 +376,7 @@ func checkRoute(record trace.RouteRecord, fields map[string]json.RawMessage) err
 	if err := checkNotNegative("route.column", int64(record.Column)); err != nil {
 		return err
 	}
-	if err := checkNotNegative("route.file_candidates", int64(record.FileCandidates)); err != nil {
-		return err
-	}
-	return nil
+	return checkNotNegative("route.file_candidates", int64(record.FileCandidates))
 }
 
 func checkProbeRouting(record trace.RouteRecord, fields map[string]json.RawMessage) error {
@@ -463,9 +446,6 @@ func checkReuse(record trace.RouteRecord) error {
 }
 
 func checkDischarges(record trace.RouteRecord) error {
-	if len(record.Discharged) == 0 {
-		return nil
-	}
 	reaching := make(map[string]struct{}, len(record.ReachingTargets))
 	for _, target := range record.ReachingTargets {
 		reaching[target] = struct{}{}
@@ -526,9 +506,7 @@ func checkProbe(record trace.ProbeRecord, fields map[string]json.RawMessage) err
 		return fmt.Errorf("probe target %q has a mutation-control identity without control=true", record.Target)
 	}
 	if record.Suite {
-		if !strings.HasPrefix(record.Target, trace.PackageSuiteProbePrefix) ||
-			len(record.Target) == len(trace.PackageSuiteProbePrefix) || record.Package == "" ||
-			record.Target != trace.PackageSuiteProbePrefix+record.Package {
+		if record.Package == "" || record.Target != trace.PackageSuiteProbePrefix+record.Package {
 			return fmt.Errorf("suite probe target %q in package %q, want the package-suite identity of that exact package",
 				record.Target, record.Package)
 		}
@@ -614,10 +592,7 @@ func checkRun(record trace.RunRecord, fields map[string]json.RawMessage) error {
 }
 
 func requiredFields(fields map[string]json.RawMessage, payload string, required ...string) (map[string]json.RawMessage, error) {
-	inner, err := objectFields(fields[payload])
-	if err != nil {
-		return nil, err
-	}
+	inner := payloadFields(fields[payload])
 	for _, name := range required {
 		if _, present := inner[name]; !present {
 			return nil, missingField(payload + "." + name)

@@ -128,9 +128,6 @@ func (recorder *Recorder) RunEnd(verdict string, err error) {
 	}
 	recorder.mutex.Lock()
 	defer recorder.mutex.Unlock()
-	if recorder.ended {
-		return
-	}
 	record := &RunRecord{Verdict: verdict}
 	if err != nil {
 		record.Error = err.Error()
@@ -169,9 +166,6 @@ func (recorder *Recorder) emitLocked(moment time.Time, event Event) {
 }
 
 func environmentNames(entries []string) []string {
-	if len(entries) == 0 {
-		return nil
-	}
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		name, _, _ := strings.Cut(entry, "=")

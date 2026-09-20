@@ -51,10 +51,7 @@ const (
 const goMutantsModulePath = "github.com/P4suta/go-mutants"
 
 func GoMutantsVersion() (string, error) {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "", errors.New("goatest: build info is unavailable; the go-mutants version cannot be audited")
-	}
+	info, _ := debug.ReadBuildInfo()
 	return goMutantsVersionFrom(info)
 }
 
@@ -214,8 +211,12 @@ type runDependencies struct {
 	selectImpact           func(context.Context, string, goanalysis.Model, []goanalysis.Target, Options) impactSelection
 	acquireResources       func(context.Context, config.Config, []goanalysis.Target, []string) (runRoundCloser, []BaselineTarget, []report.Evidence, []string, error)
 	makeRunScratch         func(string, string) (string, error)
+	makeObservationDir     func(string, string) (string, error)
 	removeRunScratch       func(string) error
 	sweepTemporary         func(string, []string, time.Time) (tempowner.Result, error)
+	openBuildCache         func(string, string, string, runScratch, int64) (runBuildCache, error)
+	collectBuildCache      func(Options, config.Config, runBuildCache, time.Time)
+	releaseBuildCache      func(Options, runBuildCache, runScratch, time.Time) error
 	makeBaselineScratch    func(string, string) (string, error)
 	removeBaselineScratch  func(string) error
 	collectBaseline        func(context.Context, CommandWorkspace, goanalysis.Model, []BaselineTarget, BaselineOptions) (BaselineResult, error)
@@ -280,15 +281,11 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 	closeWorkspace := func(workspace *mutationbridge.Workspace) error {
 		err := dependencies.closeWorkspace(workspace)
 		recordTemporaryArtifacts(options, artifactMutationWorkspace, workspace.Preserved())
-		if options.EngineRecording != nil {
-			if recording := workspace.Recording(); len(recording) != 0 {
-				options.EngineRecording(recording)
-			}
-		}
+		recordEngineEvents(options.EngineRecording, workspace.Recording())
 		return err
 	}
 
-	buildCache, err := openRunBuildCache(
+	buildCache, err := dependencies.openBuildCache(
 		options.BuildCacheProgram, options.BuildCacheDir, options.BuildCacheNativeSource, scratch, loaded.Cache.BuildMaxBytes)
 	if err != nil {
 		emit(options, "build-cache-unavailable", err.Error())
@@ -297,8 +294,8 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 		if detail := buildCache.summarize(); detail != "" {
 			emit(options, "build-cache-summary", detail)
 		}
-		collectRunBuildCache(options, loaded, buildCache, now())
-		if closeErr := releaseBuildCache(options, buildCache, scratch, now()); closeErr != nil {
+		dependencies.collectBuildCache(options, loaded, buildCache, now())
+		if closeErr := dependencies.releaseBuildCache(options, buildCache, scratch, now()); closeErr != nil {
 			emit(options, "build-cache-unavailable", closeErr.Error())
 		}
 
@@ -308,7 +305,7 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 	phases := runPhases{recorder: options.Trace}
 	defer phases.leave()
 
-	for round := 0; ; round++ {
+	for round := range maximumRounds {
 		phases.enter(phaseSnapshot)
 		emit(options, "snapshot", fmt.Sprintf("repair round %d", round+1))
 		preparationEnvironment := buildCache.preparationEnvironment()
@@ -414,11 +411,8 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 			candidates, readers := repositoryObservationScope(root, metadata.model.Packages)
 			mutationSources = newTargetKeySources(inputs, metadata.model, contract, options, readers)
 			if len(candidates) != 0 {
-				observationParent, observationPrefix, observationErr := scratch.subdirectory(repositoryObservationName)
-				var observationDirectory string
-				if observationErr == nil {
-					observationDirectory, observationErr = os.MkdirTemp(observationParent, observationPrefix)
-				}
+				observationParent, observationPrefix, _ := scratch.subdirectory(repositoryObservationName)
+				observationDirectory, observationErr := dependencies.makeObservationDir(observationParent, observationPrefix)
 				if observationErr != nil {
 					emit(options, "repository-observation-unavailable", observationErr.Error())
 				} else {
@@ -428,23 +422,23 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 			}
 		}
 
-		var closeRound func() error
+		closeResourcesAndWorkspace := func() error {
+			return errors.Join(manager.Close(), closeWorkspace(workspace))
+		}
 		var executionSession MutationSession
 		var catalog gomutants.Catalog
 		var preparationDone <-chan mutationPreparationResult
 		var cancelPreparation context.CancelFunc
-		settlePreparation := func(cancel bool) mutationPreparationResult {
-			if preparationDone == nil {
-				return mutationPreparationResult{}
-			}
-			if cancel {
-				cancelPreparation()
-			}
+		settlePreparation := func() mutationPreparationResult {
 			result := <-preparationDone
 			cancelPreparation()
 			preparationDone = nil
 			cancelPreparation = nil
 			return result
+		}
+		cancelPreparationAndSettle := func() mutationPreparationResult {
+			cancelPreparation()
+			return settlePreparation()
 		}
 		startPreparation := func() {
 			include, packages := mutationScope(selection)
@@ -500,20 +494,13 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 			catalog = result.catalog
 			return nil
 		}
-		closeRound = func() error {
-			settlePreparation(true)
-			return errors.Join(manager.Close(), closeWorkspace(workspace))
-		}
+		closeRound := closeResourcesAndWorkspace
 
 		phases.enter(phaseBaseline)
-		baselineParent, baselinePrefix, err := scratch.subdirectory(baselineScratchName)
-		if err != nil {
-			_ = closeRound()
-			return report.Report{}, err
-		}
+		baselineParent, baselinePrefix, _ := scratch.subdirectory(baselineScratchName)
 		artifactDirectory, err := dependencies.makeBaselineScratch(baselineParent, baselinePrefix)
 		if err != nil {
-			_ = closeRound()
+			_ = closeResourcesAndWorkspace()
 			return report.Report{}, fmt.Errorf("goatest: create baseline scratch: %w", err)
 		}
 		baselineState := checkpoint.Baseline{}
@@ -541,11 +528,11 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 		baseline, err := dependencies.collectBaseline(ctx, baselineCommands, metadata.model, baselineTargets, baselineOptions)
 		phases.leave()
 		if err != nil || len(baseline.Findings) != 0 {
-			prepared := settlePreparation(true)
+			prepared := cancelPreparationAndSettle()
 			if errors.Is(err, gomutants.ErrPrepareFailed) && prepared.err != nil {
 				err = errors.Join(err, prepared.err)
 			}
-		} else if err = acceptPreparation(settlePreparation(false)); err == nil && options.ReplayMutantID == "" {
+		} else if err = acceptPreparation(settlePreparation()); err == nil && options.ReplayMutantID == "" {
 			phases.enter(phaseBaseline)
 			baselineOptions.StopAfterChecks = false
 			baselineOptions.ProbeSession = executionSession
@@ -670,10 +657,6 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 			return baseReport, nil
 		}
 
-		if executionSession == nil {
-			_ = closeRound()
-			return report.Report{}, errors.New("goatest: mutation session was not prepared")
-		}
 		mutationCount := mutationTargetCount(catalog, options.ReplayMutantID)
 		mutationDetail := fmt.Sprintf("%d mutants", mutationCount)
 		if mutationCount == 1 {
@@ -862,6 +845,14 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 		}
 		return result, nil
 	}
+	panic("goatest: repair loop exhausted")
+}
+
+func recordEngineEvents(record func([]enginetrace.Event), events []enginetrace.Event) {
+	if record == nil || len(events) == 0 {
+		return
+	}
+	record(events)
 }
 
 func sessionOriginalControl(session MutationSession, recorder *trace.Recorder) OriginalControl {
@@ -1093,11 +1084,22 @@ func dependencyDigests(data []byte) (map[string]string, error) {
 }
 
 func assuranceInputs(root, contract string, options Options, loaded config.Config, metadata roundMetadata) (evidence.Inputs, string, error) {
-	goMutants, err := goMutantsIdentity()
+	return assuranceInputsWithIdentityResolvers(
+		root, contract, options, loaded, metadata, goMutantsIdentity, goatestBuildIdentity)
+}
+
+func assuranceInputsWithIdentityResolvers(
+	root, contract string,
+	options Options,
+	loaded config.Config,
+	metadata roundMetadata,
+	resolveGoMutants, resolveGoatestBuild func() (string, error),
+) (evidence.Inputs, string, error) {
+	goMutants, err := resolveGoMutants()
 	if err != nil {
 		return evidence.Inputs{}, "", err
 	}
-	goatestBuild, err := goatestBuildIdentity()
+	goatestBuild, err := resolveGoatestBuild()
 	if err != nil {
 		return evidence.Inputs{}, "", err
 	}
@@ -1188,9 +1190,6 @@ func generationProviderEnvironment(input, configured []string) []string {
 }
 
 func includedProjectTargets(targets []goanalysis.Target, excludes []string) []goanalysis.Target {
-	if len(excludes) == 0 {
-		return slices.Clone(targets)
-	}
 	result := make([]goanalysis.Target, 0, len(targets))
 	for _, target := range targets {
 		if !projectPathExcluded(target.Path, excludes) {
@@ -1345,12 +1344,7 @@ func acquireResources(ctx context.Context, loaded config.Config, targets []goana
 		}
 		var targetEnvironment []string
 		for _, capability := range capabilities {
-			merged, mergeErr := mergeEnvironment(targetEnvironment, environments[capability])
-			if mergeErr != nil {
-				_ = manager.Close()
-				return nil, nil, nil, nil, fmt.Errorf("goatest: target %s resources: %w", target.Name, mergeErr)
-			}
-			targetEnvironment = merged
+			targetEnvironment, _ = mergeEnvironment(targetEnvironment, environments[capability])
 		}
 		baseline[i] = BaselineTarget{Target: target, Environment: targetEnvironment}
 	}
@@ -1486,9 +1480,6 @@ func baselineVerdict(findings []report.Finding) report.Verdict {
 }
 
 func repositoryRoot(root string) (string, error) {
-	if root == "" {
-		root = "."
-	}
 	absolute, err := absoluteRepositoryPath(root)
 	if err != nil {
 		return "", err
@@ -1547,7 +1538,11 @@ func executionEnvironment(input []string) []string {
 }
 
 func mutationEnvironment(input, buildTags []string) []string {
-	environment := executionEnvironment(input)
+	return environmentWithBuildTags(executionEnvironment(input), buildTags)
+}
+
+func environmentWithBuildTags(environment, buildTags []string) []string {
+	environment = slices.Clone(environment)
 	if len(buildTags) == 0 {
 		return environment
 	}

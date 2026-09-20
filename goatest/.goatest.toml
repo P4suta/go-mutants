@@ -7,6 +7,7 @@ contract = "standard-v1"
 
 [execution]
 build_tags = []
+timeout = "2m"
 
 [[acceptance]]
 id = '239afd2b864d0119'
@@ -947,5 +948,101 @@ owner = 'goatest'
 [[acceptance]]
 id = '72b13f9ef2b49c75'
 reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '5aeca061bf9a9c76'
+reason = 'the branch adds the gap in front of the first sequence, and a recording that opens at one has no gap, so answering true for it adds a zero; the guard says that a recording opening at one is the ordinary case rather than a gap of none'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '8888d8bfcc45d9b0'
+reason = 'the branch adds the gap in front of the first sequence, and a recording that opens at one has no gap, so answering true for it adds a zero; the guard says that a recording opening at one is the ordinary case rather than a gap of none'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '4f58d0670e9e272d'
+reason = 'every field of a trace event is a string, a number, a bool, a slice of those, or a pointer to a record of the same, so encoding/json has no value in an event that can fail to marshal'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'ffc67bb33a6041b7'
+reason = 'every field of a trace event is a string, a number, a bool, a slice of those, or a pointer to a record of the same, so encoding/json has no value in an event that can fail to marshal'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'd9328c488c37b719'
+reason = 'an overflow of none removes no events and adds a zero to the count, so a memory sink exactly at its capacity ends in the same state either way'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '1cd0672eadfdd77e'
+reason = 'the recorder reads this count only through a sink that does not keep its own, and every sink in the module keeps one; the branch is what a sink without a Dropper would be counted by'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '3da28d44093c4f16'
+reason = 'validateReadEvent runs on every event before this line and admits exactly one payload, the one its type names, so an event of type prepare has a prepare payload and an event with a prepare payload is of type prepare; the two halves of this conjunction are the same fact by the time the reader reaches them, and or and and agree wherever both halves agree'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '49ba93868d31079c'
+reason = 'the match this returns beside a non-nil error is never read: ApplyCandidates answers the error and stops'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '1d727bb04a73bb1a'
+reason = 'the match this returns beside a non-nil error is never read: ApplyCandidates answers the error and stops'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '416a9120e5acfb16'
+reason = 'the match this returns beside a non-nil error is never read: ApplyCandidates answers the error and stops'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '0a6bae29a609743c'
+reason = 'the atomicWrite that follows confines the same path under the same root, so skipping this check reaches the same failure by a longer route'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'dfc7493c7b487a5a'
+reason = 'the atomicWrite that follows confines the same path under the same root, so skipping this check reaches the same failure by a longer route'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '64662b9abee96c8d'
+reason = 'json.MarshalIndent is given a document of strings, byte slices and records of the same, so it has no value in it that can fail to marshal'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'f11ce548af036318'
+reason = 'normalize answers a path it rejects with the empty string, which ends in no _test.go and holds no testdata/fuzz segment, so the longer route reaches the same false'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '2ac97e834e88124c'
+reason = 'the selector names no test, and every caller of killerTests ranges over the slice it returns or reads its length, where nil and empty answer alike'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '9fe3871b196bac32'
+reason = 'no argument is a selector, and every caller of killerTests ranges over the slice it returns or reads its length, where nil and empty answer alike'
 expires = '2027-09-17T00:00:00Z'
 owner = 'goatest'

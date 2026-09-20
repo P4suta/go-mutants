@@ -47,9 +47,6 @@ var (
 
 func AttemptGeneratedRepairs(ctx context.Context, root string, findings []report.Finding, options GenerationOptions) (GenerationEvaluation, error) {
 	evaluation := GenerationEvaluation{Findings: slices.Clone(findings)}
-	if len(findings) == 0 {
-		return evaluation, nil
-	}
 	generate := options.Generate
 	if generate == nil && len(options.Command) != 0 {
 		generate = generationFromCommand(slices.Clone(options.Command), slices.Clone(options.ProviderEnvironment))

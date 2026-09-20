@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -38,6 +39,7 @@ const (
 
 	firstMutant   = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
 	firstDisplay  = "a1b2c3d4e5f60718293a"
+	shortDisplay  = "gom-0001"
 	secondMutant  = "b1c2d3e4f5061728394a5b6c7d8e9f01b1c2d3e4f5061728394a5b6c7d8e9f01"
 	secondDisplay = "b1c2d3e4f5061728394a"
 	thirdMutant   = "c1d2e3f405162738495a6b7c8d9e0f12c1d2e3f405162738495a6b7c8d9e0f12"
@@ -1292,5 +1294,82 @@ func TestAuditCountsAReusedRouteAsAClassOfItsOwn(t *testing.T) {
 	if len(result.violations) != 0 || len(result.unverifiable) != 0 {
 		t.Errorf("a reused route was audited: %d violations, %d unverifiable",
 			len(result.violations), len(result.unverifiable))
+	}
+}
+
+func TestEvidenceAnswersForATargetItNeverMeasured(t *testing.T) {
+	t.Parallel()
+	recorded, err := readEvidence(writeProfiles(t, map[string][]string{killerTarget: {ran(10, 2, 12, 16)}}), fixtureModule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coverage, known := recorded.coveredBy("TestAbsent", subjectPath); known || len(coverage.Blocks) != 0 {
+		t.Fatalf("coveredBy an unmeasured target = (%+v, %t)", coverage, known)
+	}
+	if blocks := recorded.instrumentedBy("TestAbsent", subjectPath); len(blocks.Blocks) != 0 {
+		t.Fatalf("instrumentedBy an unmeasured target = %+v", blocks)
+	}
+	if recorded.measured("TestAbsent") {
+		t.Fatal("an unmeasured target was reported as measured")
+	}
+	if _, known := recorded.coveredBy(killerTarget, subjectPath); !known {
+		t.Fatal("the measured target was not reported as measured")
+	}
+	if blocks := recorded.instrumentedBy(killerTarget, subjectPath); len(blocks.Blocks) == 0 {
+		t.Fatal("the measured target carried no instrumented blocks")
+	}
+}
+
+func TestAuditNamesTheLineItRefusedWhereverItFalls(t *testing.T) {
+	t.Parallel()
+
+	recorded := recordedEvidence(t, map[string][]string{killerTarget: {ran(10, 2, 12, 16)}})
+	sound := recordedTrace(t, measured(1, killerTarget), blockRoute(2, firstMutant, 11, 4, killerTarget))
+	stream := sound + "{\"seq\":3,\"type\":\"route\"\n"
+	malformed := fmt.Sprintf("line %d", strings.Count(sound, "\n")+1)
+
+	_, err := auditTrace(strings.NewReader(stream), recorded, nil, auditLayers(nil))
+	if err == nil {
+		t.Fatal("a malformed line after the first was accepted")
+	}
+	if !strings.Contains(err.Error(), malformed) {
+		t.Errorf("the error is %q, want it to name %q", err, malformed)
+	}
+}
+
+func TestAuditRefusesATruncatedRecordThatIsNotTheLastLine(t *testing.T) {
+	t.Parallel()
+
+	recorded := recordedEvidence(t, map[string][]string{killerTarget: {ran(10, 2, 12, 16)}})
+	stream := "{\"seq\":1,\"type\":\"route\",\"route\":{\n" +
+		recordedTrace(t, measured(2, killerTarget))
+
+	result, err := auditTrace(strings.NewReader(stream), recorded, nil, auditLayers(nil))
+	if err == nil {
+		t.Fatalf("a record that ends mid-document before the end of the recording was counted, "+
+			"truncated lines %d", result.truncatedLines)
+	}
+	if !strings.Contains(err.Error(), "line 1") {
+		t.Errorf("the error is %q, want it to name the line it refused", err)
+	}
+}
+
+func TestReadEvidenceReportsAProfileItCannotOpen(t *testing.T) {
+	t.Parallel()
+	directory := writeProfiles(t, map[string][]string{killerTarget: {ran(10, 2, 12, 16)}})
+	dangling := filepath.Join(directory, secondTarget+profileSuffix)
+	if err := os.Symlink(filepath.Join(directory, "absent"+profileSuffix), dangling); err != nil {
+		t.Skipf("symbolic links unavailable: %v", err)
+	}
+
+	_, err := readEvidence(directory, fixtureModule)
+	if err == nil {
+		t.Fatal("a profile that cannot be opened was accepted")
+	}
+	if !strings.Contains(err.Error(), dangling) {
+		t.Errorf("the error is %q, want it to name the profile it could not read", err)
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the error is %q, want it to say the profile is not there", err)
 	}
 }

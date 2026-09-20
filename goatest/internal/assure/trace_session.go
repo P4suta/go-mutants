@@ -45,6 +45,10 @@ func mutationTraceArguments(arguments []string) []string {
 
 func prepareMutationSession(ctx context.Context, workspace *mutationbridge.Workspace, options mutationbridge.PrepareOptions) (MutationSession, error) {
 	session, err := workspace.Prepare(ctx, options)
+	return mutationSessionResult(session, err)
+}
+
+func mutationSessionResult(session *gomutants.Session, err error) (MutationSession, error) {
 	if err != nil {
 		return nil, err
 	}

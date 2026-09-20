@@ -113,3 +113,15 @@ func TestPrepareMutationSessionReportsTheWorkspaceFailure(t *testing.T) {
 		t.Fatalf("production prepareSession = (%+v, %v)", session, err)
 	}
 }
+
+func TestMutationSessionResultPreservesNilOnFailureAndTheSessionOnSuccess(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("prepare failed")
+	if session, err := mutationSessionResult(nil, cause); session != nil || !errors.Is(err, cause) {
+		t.Fatalf("failure result = (%v, %v)", session, err)
+	}
+	prepared := new(gomutants.Session)
+	if session, err := mutationSessionResult(prepared, nil); session != prepared || err != nil {
+		t.Fatalf("success result = (%v, %v)", session, err)
+	}
+}
