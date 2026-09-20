@@ -72,7 +72,9 @@ func (store *Store) PendingCheckpoint() (bool, error) {
 	root := filepath.Join(store.root, "v1")
 	entries, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		if _, statErr := os.Stat(root); errors.Is(statErr, os.ErrNotExist) {
+			return false, nil
+		}
 	}
 	if err != nil {
 		return false, fmt.Errorf("goatest: inspect checkpoints: %w", err)

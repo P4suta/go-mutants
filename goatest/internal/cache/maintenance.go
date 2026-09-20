@@ -123,7 +123,10 @@ func inspectUnlocked(root string, ttl time.Duration, now time.Time) (Status, []c
 	versionRoot := filepath.Join(root, "v1")
 	versionInfo, err := os.Lstat(versionRoot)
 	if errors.Is(err, os.ErrNotExist) {
-		return Status{}, nil, nil
+		rootInfo, rootErr := os.Stat(root)
+		if errors.Is(rootErr, os.ErrNotExist) || rootErr == nil && rootInfo.IsDir() {
+			return Status{}, nil, nil
+		}
 	}
 	if err != nil {
 		return Status{}, nil, fmt.Errorf("goatest: inspect cache: %w", err)
