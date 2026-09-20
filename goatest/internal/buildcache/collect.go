@@ -59,7 +59,7 @@ func (layer Layer) collectLockedWithHooks(policy Policy, interval time.Duration,
 		return Collected{}, false, err
 	}
 	release, held, err := layer.holdCollectionWithHooks(hooks)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) && directoryIsAbsent(layer.collectionMarkerPath(), layer.Dir, hooks) {
 		return Collected{}, false, nil
 	}
 	if err != nil {
