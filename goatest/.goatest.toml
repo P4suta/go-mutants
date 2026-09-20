@@ -37,3 +37,219 @@ id = 'b23482003f7e2830'
 reason = 'a second Close with the guard open re-sets a flag that is already set and stops an active set that is already empty; the run it would repeat has nothing left in it'
 expires = '2027-09-17T00:00:00Z'
 owner = 'goatest'
+
+[[acceptance]]
+id = '2755a3e741964a8e'
+reason = 'every field a checkpoint journal record carries is a string, a bool, an int, or a slice of those, so encoding/json has no value in it that can fail; the checksum helper beside it discards the same error for the same reason'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'cf80c5c69c8c0210'
+reason = 'every field a checkpoint journal record carries is a string, a bool, an int, or a slice of those, so encoding/json has no value in it that can fail; the checksum helper beside it discards the same error for the same reason'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'b92f64bb71cd0fbd'
+reason = 'inspectUnlocked returns no entries on any failure and removeEntries returns before it opens anything when given none, so skipping this guard reaches the same state by a longer route; the failure it names is still reported by the inspection that follows'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '49642c09a61cce70'
+reason = 'inspectUnlocked returns no entries on any failure and removeEntries returns before it opens anything when given none, so skipping this guard reaches the same state by a longer route; the failure it names is still reported by the inspection that follows'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'e45b522ecfaf8ccd'
+reason = 'removeEntries can only fail where the cache changed between the inspection that listed it and the removal that follows, and both run under the same held lock, so no test can put a change between them without becoming a second process with write access to the cache'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '1646db7776905a22'
+reason = 'removeEntries can only fail where the cache changed between the inspection that listed it and the removal that follows, and both run under the same held lock, so no test can put a change between them without becoming a second process with write access to the cache'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '1b3b23c8ea582fcf'
+reason = 'removeEntries can only fail where the cache changed between the inspection that listed it and the removal that follows, and both run under the same held lock, so no test can put a change between them without becoming a second process with write access to the cache'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '391026c796f8ac93'
+reason = 'removeEntries can only fail where the cache changed between the inspection that listed it and the removal that follows, and both run under the same held lock, so no test can put a change between them without becoming a second process with write access to the cache'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '5900686ee1b8fbb6'
+reason = 'the entries of an absent cache are never inspected: every caller either ranges over them, where an empty slice and a nil slice are the same, or hands them to removeEntries, which returns before touching the filesystem for both'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '526d1adbd7a4a962'
+reason = 'os.ReadDir can only fail here after os.Lstat has said the same path is a directory, which leaves permission denial, and a test that removes its own read permission passes silently for a process running as root'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'cefa1ba05ec533fd'
+reason = 'os.ReadDir can only fail here after os.Lstat has said the same path is a directory, which leaves permission denial, and a test that removes its own read permission passes silently for a process running as root'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '3732a0b43087e48d'
+reason = 'os.ReadDir never yields "", "." or "..", and no filesystem this runs on admits a separator in a single directory entry, so the guard describes a name the operating system cannot hand it; it stays because it is what confines the removal that trusts the name'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'f563772b11c4161c'
+reason = 'os.ReadDir never yields "", "." or "..", and no filesystem this runs on admits a separator in a single directory entry, so the guard describes a name the operating system cannot hand it; it stays because it is what confines the removal that trusts the name'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'eb7cd88d75b150a6'
+reason = 'filepath.WalkDir reports an error for a directory it cannot read, which is permission denial again, and its other failures are the ones this walk already refuses by shape a line later'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '926c2920df1525f8'
+reason = 'filepath.WalkDir reports an error for a directory it cannot read, which is permission denial again, and its other failures are the ones this walk already refuses by shape a line later'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '3b0a26e2cd98e0a3'
+reason = 'fs.DirEntry.Info fails only for an entry removed between the walk that listed it and the call that describes it, which is a second process changing the cache under a held lock'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'f060019d20e424ac'
+reason = 'fs.DirEntry.Info fails only for an entry removed between the walk that listed it and the call that describes it, which is a second process changing the cache under a held lock'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'aa7281cf0788cdec'
+reason = 'os.Root.RemoveAll fails only on a directory the process may not empty, which is permission denial, after the Lstat above has already established that the entry is a confined directory'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '8e2c95e234f72d26'
+reason = 'os.Root.RemoveAll fails only on a directory the process may not empty, which is permission denial, after the Lstat above has already established that the entry is a confined directory'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'c8231e2f186efee2'
+reason = 'os.Root.RemoveAll fails only on a directory the process may not empty, which is permission denial, after the Lstat above has already established that the entry is a confined directory'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'ce5a0e8d0f2e82d5'
+reason = 'os.Root.RemoveAll fails only on a directory the process may not empty, which is permission denial, after the Lstat above has already established that the entry is a confined directory'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '043122e591050e66'
+reason = 'os.Root.OpenRoot fails here only after Lstat inside the same root has said the name is a directory that is the one the inspection vouched for, so reaching it means the cache changed under a held lock'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '21b3865cfa444c17'
+reason = 'os.Root.OpenRoot fails here only after Lstat inside the same root has said the name is a directory that is the one the inspection vouched for, so reaching it means the cache changed under a held lock'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '31e92de534851f09'
+reason = 'this is the second half of the same race: os.Root.Stat(".") on a root just opened, against a directory Lstat has already identified, cannot answer differently unless another process replaced it between the two calls'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '8cf4c9cb02741274'
+reason = 'this is the second half of the same race: os.Root.Stat(".") on a root just opened, against a directory Lstat has already identified, cannot answer differently unless another process replaced it between the two calls'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'fab47a0c58280573'
+reason = 'this is the second half of the same race: os.Root.Stat(".") on a root just opened, against a directory Lstat has already identified, cannot answer differently unless another process replaced it between the two calls'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '502b21f40494dfd5'
+reason = 'this is the second half of the same race: os.Root.Stat(".") on a root just opened, against a directory Lstat has already identified, cannot answer differently unless another process replaced it between the two calls'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '8eec715b9aab306b'
+reason = 'this is the second half of the same race: os.Root.Stat(".") on a root just opened, against a directory Lstat has already identified, cannot answer differently unless another process replaced it between the two calls'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '97141d0588b84556'
+reason = 'this is the second half of the same race: os.Root.Stat(".") on a root just opened, against a directory Lstat has already identified, cannot answer differently unless another process replaced it between the two calls'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'f85f64b0123a2cbc'
+reason = 'this is the second half of the same race: os.Root.Stat(".") on a root just opened, against a directory Lstat has already identified, cannot answer differently unless another process replaced it between the two calls'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '4d3613862fda9bdb'
+reason = 'this is the second half of the same race: os.Root.Stat(".") on a root just opened, against a directory Lstat has already identified, cannot answer differently unless another process replaced it between the two calls'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '1c459b60e2397eb4'
+reason = 'this is the second half of the same race: os.Root.Stat(".") on a root just opened, against a directory Lstat has already identified, cannot answer differently unless another process replaced it between the two calls'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '5cd496ebbd621ebd'
+reason = 'this returns true only for a writer that is a terminal, and a test process that has been given one has a controlling terminal the test did not create and cannot rely on; every rule it applies is decided by terminalInteractivity, which is measured against both answers'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '44f4d529c65eecba'
+reason = 'the same absent terminal: a test writes to a buffer or a pipe, so this probe has no true to return, and the rule that consumes it is measured against both answers'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '5dda53d6f080fd60'
+reason = 'on every platform but Windows this is the constant true, and on Windows it is true for any writer that is not a console handle, so no writer a test can supply distinguishes the two'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '59e4579e2e5863dd'
+reason = 'a finding that names no mutant would be filed under the empty identity, and no mutant disposition carries that identity, so the entry is never read; the guard says the attribution is deliberate rather than accidental'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'

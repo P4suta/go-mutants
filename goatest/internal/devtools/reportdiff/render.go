@@ -27,9 +27,6 @@ func renderComparison(beforePath, afterPath string, result comparison) string {
 	}
 	var lines []string
 	for _, block := range blocks {
-		if len(block) == 0 {
-			continue
-		}
 		if len(lines) > 0 {
 			lines = append(lines, "")
 		}

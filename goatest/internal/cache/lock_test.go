@@ -121,13 +121,17 @@ func TestAcquireStateMachine(t *testing.T) {
 			mkdirAll: func(string, os.FileMode) error { return nil },
 			openFile: func(string, int, os.FileMode) (*os.File, error) { return file, nil },
 			try:      func(*os.File) (bool, error) { return true, nil },
+			release:  func(*os.File) error { return nil },
 			wait:     panicWait,
 		})
-		if err != nil || lease == nil || lease.file != file {
-			t.Fatalf("Acquire = (%v, %v), want the opened file", lease, err)
+		if err != nil || lease == nil {
+			t.Fatalf("Acquire = (%v, %v), want a lease over the opened file", lease, err)
 		}
-		if err := file.Close(); err != nil {
+		if err := lease.Release(); err != nil {
 			t.Fatal(err)
+		}
+		if err := file.Close(); !errors.Is(err, os.ErrClosed) {
+			t.Fatalf("releasing the lease left its file open: %v", err)
 		}
 	})
 
@@ -230,5 +234,94 @@ func TestCacheAdvisoryLockExcludesAnotherProcessAndWaitIsInterruptible(t *testin
 	}
 	if err := lease.Release(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAcquireWaitsWithoutACallback(t *testing.T) {
+	t.Parallel()
+	file, err := os.CreateTemp(t.TempDir(), "lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := 0
+	waits := 0
+	lease, err := acquire(t.Context(), t.TempDir(), nil, lockOperations{
+		mkdirAll: func(string, os.FileMode) error { return nil },
+		openFile: func(string, int, os.FileMode) (*os.File, error) { return file, nil },
+		try: func(*os.File) (bool, error) {
+			attempts++
+			return attempts > 1, nil
+		},
+		wait: func(context.Context) error { waits++; return nil },
+	})
+	if err != nil || lease == nil || attempts != 2 || waits != 1 {
+		t.Fatalf("Acquire = (%v, %v), attempts %d, waits %d", lease, err, attempts, waits)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReleaseReportsTheFirstFailureOfTheTwoOperationsItRuns(t *testing.T) {
+	t.Parallel()
+	releaseFailure := errors.New("unlock refused")
+	closeFailure := errors.New("close refused")
+	for _, test := range []struct {
+		name       string
+		releaseErr error
+		closeErr   error
+		want       error
+	}{
+		{name: "both succeed"},
+		{name: "the unlock fails", releaseErr: releaseFailure, want: releaseFailure},
+		{name: "the close fails", closeErr: closeFailure, want: closeFailure},
+		{name: "both fail, the unlock is reported", releaseErr: releaseFailure, closeErr: closeFailure, want: releaseFailure},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			releases, closes := 0, 0
+			lease := &Lease{
+				release: func() error { releases++; return test.releaseErr },
+				close:   func() error { closes++; return test.closeErr },
+			}
+			err := lease.Release()
+			if test.want == nil && err != nil || test.want != nil && !errors.Is(err, test.want) {
+				t.Fatalf("Release = %v, want %v", err, test.want)
+			}
+			if again := lease.Release(); releases != 1 || closes != 1 {
+				t.Fatalf("second Release ran the operations again: releases %d closes %d (%v)", releases, closes, again)
+			}
+		})
+	}
+}
+
+func TestReleasingNoLeaseIsNotAFailure(t *testing.T) {
+	t.Parallel()
+	var absent *Lease
+	if err := absent.Release(); err != nil {
+		t.Fatalf("Release of no lease = %v", err)
+	}
+}
+
+func TestAcquiredLeaseReleasesTheAdvisoryLockItTook(t *testing.T) {
+	t.Parallel()
+	unlockFailure := errors.New("unlock refused")
+	file, err := os.CreateTemp(t.TempDir(), "lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unlocked *os.File
+	lease, err := acquire(t.Context(), t.TempDir(), nil, lockOperations{
+		mkdirAll: func(string, os.FileMode) error { return nil },
+		openFile: func(string, int, os.FileMode) (*os.File, error) { return file, nil },
+		try:      func(*os.File) (bool, error) { return true, nil },
+		release:  func(locked *os.File) error { unlocked = locked; return unlockFailure },
+		wait:     func(context.Context) error { panic("unexpected wait") },
+	})
+	if err != nil || lease == nil {
+		t.Fatalf("Acquire = (%v, %v)", lease, err)
+	}
+	if err := lease.Release(); !errors.Is(err, unlockFailure) || unlocked != file {
+		t.Fatalf("Release = %v over %v, want %v over the locked file", err, unlocked, unlockFailure)
 	}
 }

@@ -4,12 +4,14 @@
 package evidence
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func mutationFixture() MutationStore {
@@ -182,5 +184,177 @@ func TestLoadMutationReportsReadFailuresAndDecodeFailuresDistinctly(t *testing.T
 	got, ok, err = loadMutationWithHooks("mutation.json", "example/module", decodeHooks)
 	if err == nil || !strings.Contains(err.Error(), "decode mutation evidence") || ok || !reflect.DeepEqual(got, MutationStore{}) {
 		t.Fatalf("LoadMutation = %+v, ok %v, err %v", got, ok, err)
+	}
+}
+
+func TestInspectMutationNamesTheIdentityAndTheValidityItRefused(t *testing.T) {
+	t.Parallel()
+	valid := mutationStoreBytes(t)
+	for _, test := range []struct {
+		name    string
+		damage  func(store *MutationStore)
+		problem string
+	}{
+		{name: "a store that is whole"},
+		{
+			name:    "another schema",
+			damage:  func(store *MutationStore) { store.Schema = "goatest-mutation-evidence-v0" },
+			problem: ErrMutationIdentityMismatch.Error(),
+		},
+		{
+			name:    "no module path",
+			damage:  func(store *MutationStore) { store.ModulePath = "" },
+			problem: ErrMutationIdentityMismatch.Error(),
+		},
+		{
+			name:    "a record that does not validate",
+			damage:  func(store *MutationStore) { store.Records[0].Path = "" },
+			problem: "requires a path",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			data := valid
+			if test.damage != nil {
+				store := mutationFaultStore()
+				test.damage(&store)
+				encoded, err := json.Marshal(store)
+				if err != nil {
+					t.Fatal(err)
+				}
+				data = encoded
+			}
+			hooks := mutationHooks{
+				lstat:     func(string) (os.FileInfo, error) { return storedMutationInfo{size: int64(len(data))}, nil },
+				readStore: func(string) ([]byte, error) { return data, nil },
+			}
+			status, err := inspectMutationWithHooks("mutation.json", hooks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.problem == "" {
+				if !status.Valid || status.Problem != "" {
+					t.Fatalf("status = %+v, want a store reported as whole", status)
+				}
+				return
+			}
+			if status.Valid || !strings.Contains(status.Problem, test.problem) {
+				t.Fatalf("status = %+v, want a problem naming %q", status, test.problem)
+			}
+		})
+	}
+}
+
+func TestFlushMutationCarriesEveryFailureOfTheInspectionsAround(t *testing.T) {
+	t.Parallel()
+	failure := errors.New("inspection failure")
+	inspections := 0
+	hooks := mutationHooks{
+		lstat: func(string) (os.FileInfo, error) {
+			inspections++
+			if inspections == 1 {
+				return nil, failure
+			}
+			return storedMutationInfo{}, nil
+		},
+	}
+	if _, err := flushMutationWithHooks("mutation.json", hooks); !errors.Is(err, failure) {
+		t.Fatalf("flush over an unreadable path = %v, want %v", err, failure)
+	}
+
+	data := mutationStoreBytes(t)
+	inspections = 0
+	hooks = mutationHooks{
+		lstat: func(string) (os.FileInfo, error) {
+			inspections++
+			if inspections == 1 {
+				return storedMutationInfo{size: int64(len(data))}, nil
+			}
+			return nil, failure
+		},
+		readStore: func(string) ([]byte, error) { return data, nil },
+		remove:    func(string) error { return nil },
+	}
+	result, err := flushMutationWithHooks("mutation.json", hooks)
+	if !errors.Is(err, failure) || !result.Removed {
+		t.Fatalf("flush = (%+v, %v), want the removal kept and the second inspection reported", result, err)
+	}
+}
+
+type storedMutationInfo struct {
+	size int64
+}
+
+func (info storedMutationInfo) Name() string       { return "mutation.json" }
+func (info storedMutationInfo) Size() int64        { return info.size }
+func (info storedMutationInfo) Mode() os.FileMode  { return 0 }
+func (info storedMutationInfo) ModTime() time.Time { return time.Time{} }
+func (info storedMutationInfo) IsDir() bool        { return false }
+func (info storedMutationInfo) Sys() any           { return nil }
+
+const faultDigestWidth = 64
+
+func mutationFaultStore() MutationStore {
+	return MutationStore{
+		Schema: MutationSchemaV1, ModulePath: "example/module",
+		Records: []MutationRecord{{
+			MutantID: strings.Repeat("a", faultDigestWidth), Path: "value.go", Package: "example/module/pkg",
+			Outcome: MutationOutcomeKilled, Provenance: "snapshot=" + strings.Repeat("f", faultDigestWidth),
+			KilledBy: []TargetKey{{
+				Package: "example/module/pkg", Name: "TestKills", Kind: "test", Key: strings.Repeat("1", faultDigestWidth),
+			}},
+		}},
+	}
+}
+
+func mutationStoreBytes(t *testing.T) []byte {
+	t.Helper()
+	data, err := json.Marshal(mutationFaultStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestSaveMutationValidatesTheStoreItWasGivenAndTheOneItEncoded(t *testing.T) {
+	t.Parallel()
+	valid := mutationFaultStore()
+	invalid := mutationFaultStore()
+	invalid.Records[0].Path = ""
+	for _, test := range []struct {
+		name     string
+		offered  MutationStore
+		restored MutationStore
+		wrote    bool
+	}{
+		{name: "a store that does not validate is refused before it is encoded", offered: invalid, restored: valid},
+		{name: "a store that does not survive its own encoding is refused", offered: valid, restored: invalid},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			wrote := false
+			hooks := mutationHooks{
+				unmarshalStore: func([]byte, any) error { return nil },
+				createTemporary: func(string, string) (evidenceWritableFile, error) {
+					wrote = true
+					return nil, errors.New("a refused store reached the filesystem")
+				},
+			}
+			hooks.unmarshalStore = func(_ []byte, value any) error {
+				store, ok := value.(*MutationStore)
+				if !ok {
+					t.Fatalf("unmarshal target = %T", value)
+				}
+				*store = test.restored
+				return nil
+			}
+			err := saveMutationWithHooks(filepath.Join(t.TempDir(), "mutation.json"), test.offered, hooks)
+			if err == nil || !strings.Contains(err.Error(), "requires a path and a package") {
+				t.Fatalf("SaveMutation = %v, want the invalid store refused", err)
+			}
+			if wrote != test.wrote {
+				t.Fatalf("reached the filesystem = %t, want %t", wrote, test.wrote)
+			}
+		})
 	}
 }
