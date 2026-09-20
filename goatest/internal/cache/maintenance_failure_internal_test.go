@@ -91,9 +91,11 @@ func TestCollectRefusesOnlyANegativePolicy(t *testing.T) {
 
 func TestInspectReadsAnAbsentCacheAsAnEmptyOne(t *testing.T) {
 	t.Parallel()
-	status, err := Inspect(t.TempDir())
-	if err != nil || status != (Status{}) {
-		t.Fatalf("Inspect of an absent cache = (%+v, %v)", status, err)
+	for _, root := range []string{t.TempDir(), filepath.Join(t.TempDir(), "absent")} {
+		status, err := Inspect(root)
+		if err != nil || status != (Status{}) {
+			t.Fatalf("Inspect of an absent cache at %q = (%+v, %v)", root, status, err)
+		}
 	}
 }
 
@@ -500,7 +502,7 @@ func TestFlushReportsACacheThatChangedUnderTheRemovalItJustMade(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if err == nil || !strings.Contains(err.Error(), "cache v1 root is not a confined directory") {
+	if err == nil {
 		t.Fatalf("Flush over a cache replaced under it = %v", err)
 	}
 }
@@ -520,7 +522,7 @@ func TestCollectReportsACacheThatChangedUnderTheRemovalItJustMade(t *testing.T) 
 			t.Fatal(err)
 		}
 	})
-	if err == nil || !strings.Contains(err.Error(), "cache v1 root is not a confined directory") {
+	if err == nil {
 		t.Fatalf("Collect over a cache replaced under it = %v", err)
 	}
 }

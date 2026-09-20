@@ -56,7 +56,9 @@ func (sweep sweeper) sweep(parent string, prefixes []string) (Result, error) {
 	entries, err := os.ReadDir(parent)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return Result{}, nil
+			if _, statErr := os.Stat(parent); errors.Is(statErr, fs.ErrNotExist) {
+				return Result{}, nil
+			}
 		}
 		return Result{}, fmt.Errorf("reading %s: %w", parent, err)
 	}
