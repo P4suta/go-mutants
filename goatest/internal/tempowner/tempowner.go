@@ -151,7 +151,13 @@ func writeMarker(dir string, marker Marker) error {
 	return os.Rename(name, MarkerPath(dir))
 }
 
-func writeAndSync(file *os.File, data []byte) error {
+type syncingFile interface {
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+}
+
+func writeAndSync(file syncingFile, data []byte) error {
 	if _, err := file.Write(data); err != nil {
 		return errors.Join(err, file.Close())
 	}
@@ -162,11 +168,15 @@ func writeAndSync(file *os.File, data []byte) error {
 }
 
 func acquire(path string) (*os.File, bool, error) {
+	return acquireWith(path, advisorylock.Try)
+}
+
+func acquireWith(path string, try func(*os.File) (bool, error)) (*os.File, bool, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, lockPerm)
 	if err != nil {
 		return nil, false, err
 	}
-	held, err := advisorylock.Try(file)
+	held, err := try(file)
 	if err != nil || !held {
 		return nil, held, errors.Join(err, file.Close())
 	}

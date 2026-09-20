@@ -23,6 +23,34 @@ const goldenSampleName = "golden_sample.txt"
 
 var goldenSampleContents = []byte("sample golden fixture\n")
 
+func writeGoldenFixture(t *testing.T, name string, contents []byte) {
+	t.Helper()
+	path := testkit.GoldenPath(name)
+	if err := os.MkdirAll(filepath.Dir(path), filemode.ReadableDirectory); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, contents, filemode.ReadableFile); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func withoutUpdate(t *testing.T) {
+	t.Helper()
+	registered := flag.Lookup(testkit.UpdateFlagName)
+	if registered == nil {
+		t.Fatalf("%s is not registered", testkit.UpdateFlagName)
+	}
+	previous := registered.Value.String()
+	if err := registered.Value.Set("false"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := registered.Value.Set(previous); err != nil {
+			t.Fatalf("restore %s: %v", testkit.UpdateFlagName, err)
+		}
+	})
+}
+
 func TestGoldenPathResolvesUnderTestdata(t *testing.T) {
 	t.Parallel()
 	if got, want := testkit.GoldenPath(goldenSampleName), filepath.Join("testdata", goldenSampleName); got != want {
@@ -43,10 +71,9 @@ func TestUpdateReportsTheRegisteredFlag(t *testing.T) {
 }
 
 func TestGoldenAcceptsMatchingBytesAndReportsMismatches(t *testing.T) {
-	t.Parallel()
-	if testkit.Update() {
-		t.Skip("-update rewrites the sample fixture this test asserts on")
-	}
+	t.Chdir(t.TempDir())
+	writeGoldenFixture(t, goldenSampleName, goldenSampleContents)
+	withoutUpdate(t)
 
 	//nolint:thelper // the TB is a recording fake under test, not a test helper
 	matching := recordFailures(t, func(recorder testing.TB) {
@@ -278,4 +305,50 @@ func recordFailures(t *testing.T, call func(testing.TB)) (recorder *recordingTB)
 	}()
 	call(recorder)
 	return recorder
+}
+
+func TestGoldenRewritesItsFixtureOnlyWhenUpdateWasAskedFor(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeGoldenFixture(t, goldenSampleName, goldenSampleContents)
+	registered := flag.Lookup(testkit.UpdateFlagName)
+	if registered == nil {
+		t.Fatalf("%s is not registered", testkit.UpdateFlagName)
+	}
+	previous := registered.Value.String()
+	t.Cleanup(func() {
+		if err := registered.Value.Set(previous); err != nil {
+			t.Fatalf("restore %s: %v", testkit.UpdateFlagName, err)
+		}
+	})
+	if err := registered.Value.Set("true"); err != nil {
+		t.Fatal(err)
+	}
+	replacement := []byte("rewritten bytes\n")
+	//nolint:thelper // the TB is a recording fake under test, not a test helper
+	accepted := recordFailures(t, func(recorder testing.TB) {
+		testkit.Golden(recorder, goldenSampleName, replacement)
+	})
+	if len(accepted.errors) != 0 || len(accepted.fatals) != 0 {
+		t.Fatalf("an update reported %q %q", accepted.errors, accepted.fatals)
+	}
+	stored, err := os.ReadFile(testkit.GoldenPath(goldenSampleName))
+	if err != nil || string(stored) != string(replacement) {
+		t.Fatalf("stored fixture = (%q, %v), want %q", stored, err, replacement)
+	}
+}
+
+func TestCompareGoldenReportsAPathItCannotRead(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "occupied")
+	if err := os.MkdirAll(path, filemode.ReadableDirectory); err != nil {
+		t.Fatal(err)
+	}
+	err := testkit.CompareGolden(path, goldenSampleContents, false)
+	if err == nil || !strings.Contains(err.Error(), "reading golden file") {
+		t.Fatalf("CompareGolden over a directory = %v", err)
+	}
+	if err := testkit.CompareGolden(path, goldenSampleContents, true); err == nil ||
+		!strings.Contains(err.Error(), "reading golden file") {
+		t.Fatalf("CompareGolden over a directory under update = %v", err)
+	}
 }

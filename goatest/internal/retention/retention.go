@@ -147,24 +147,28 @@ func Keep(root string, keep int, protected func(name string) bool, now time.Time
 }
 
 func order(entries []entry) {
-	slices.SortFunc(entries, func(a, b entry) int {
-		if a.expired != b.expired {
-			if a.expired {
-				return -1
-			}
-			return 1
+	slices.SortFunc(entries, compareRetentionOrder)
+}
+
+func compareRetentionOrder(a, b entry) int {
+	if a.expired != b.expired {
+		if a.expired {
+			return -1
 		}
-		if compared := a.modified.Compare(b.modified); compared != 0 {
-			return compared
-		}
-		return strings.Compare(a.name, b.name)
-	})
+		return 1
+	}
+	if compared := a.modified.Compare(b.modified); compared != 0 {
+		return compared
+	}
+	return strings.Compare(a.name, b.name)
 }
 
 func inspect(root string, kind childKind, ttl time.Duration, now time.Time) (Status, []entry, error) {
 	children, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
-		return Status{}, []entry{}, nil
+		if _, statErr := os.Stat(root); errors.Is(statErr, os.ErrNotExist) {
+			return Status{}, nil, nil
+		}
 	}
 	if err != nil {
 		return Status{}, nil, fmt.Errorf("goatest: inspect retained artifacts: %w", err)

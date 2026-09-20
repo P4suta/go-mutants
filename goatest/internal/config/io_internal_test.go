@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/P4suta/go-mutants/goatest/internal/filemode"
@@ -144,19 +145,21 @@ func TestSaveRenameFallbackPreservesThePreviousConfiguration(t *testing.T) {
 	backupFailure := errors.New("backup rename")
 	restoreFailure := errors.New("restore rename")
 	for _, testCase := range []struct {
-		name       string
-		backupErr  error
-		retryErr   error
-		restoreErr error
-		want       []error
-		wantCalls  int
+		name        string
+		backupErr   error
+		retryErr    error
+		restoreErr  error
+		want        []error
+		wantCalls   int
+		wantRemoves int
+		wantRestore bool
 	}{
-		{name: "replace", wantCalls: 3},
+		{name: "replace", wantCalls: 3, wantRemoves: 1},
 		{name: "missing destination", backupErr: os.ErrNotExist, wantCalls: 3},
 		{name: "missing destination retry failure", backupErr: os.ErrNotExist, retryErr: retryFailure, want: []error{firstRename, retryFailure}, wantCalls: 3},
 		{name: "backup failure", backupErr: backupFailure, want: []error{firstRename, backupFailure}, wantCalls: 2},
 		{name: "retry failure restores backup", retryErr: retryFailure, want: []error{firstRename, retryFailure}, wantCalls: 4},
-		{name: "restore failure preserves backup", retryErr: retryFailure, restoreErr: restoreFailure, want: []error{firstRename, retryFailure, restoreFailure}, wantCalls: 4},
+		{name: "restore failure preserves backup", retryErr: retryFailure, restoreErr: restoreFailure, want: []error{firstRename, retryFailure, restoreFailure}, wantCalls: 4, wantRestore: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
@@ -166,8 +169,15 @@ func TestSaveRenameFallbackPreservesThePreviousConfiguration(t *testing.T) {
 			backup := temporary + ".backup"
 			file := &stubConfigFile{name: temporary}
 			renames := 0
+			removes := 0
 			hooks := configIOHooks{
 				create: func(string, string) (configWritableFile, error) { return file, nil },
+				remove: func(name string) error {
+					if name == backup {
+						removes++
+					}
+					return nil
+				},
 				rename: func(oldPath, newPath string) error {
 					renames++
 					switch renames {
@@ -208,6 +218,12 @@ func TestSaveRenameFallbackPreservesThePreviousConfiguration(t *testing.T) {
 			}
 			if renames != testCase.wantCalls {
 				t.Fatalf("rename calls = %d, want %d", renames, testCase.wantCalls)
+			}
+			if removes != testCase.wantRemoves {
+				t.Fatalf("backup removals = %d, want %d", removes, testCase.wantRemoves)
+			}
+			if said := err != nil && strings.Contains(err.Error(), "restore previous config"); said != testCase.wantRestore {
+				t.Fatalf("save error = %v, want it to name a failed restore %t", err, testCase.wantRestore)
 			}
 		})
 	}
