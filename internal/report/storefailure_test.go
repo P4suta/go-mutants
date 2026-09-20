@@ -738,6 +738,32 @@ func TestAClaimReadsBackTheMarkerThatWonTheRace(t *testing.T) {
 	}
 }
 
+func TestAClaimRejectsTheForeignMarkerThatWonTheRace(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, report.WorkspacesDirName, report.WorkspaceKey(fixtureDigest))
+	marker := filepath.Join(dir, report.MarkerFileName)
+	foreign := "go-mutants-workspace-v1\n" + strings.Repeat("cd", 32) + "\n"
+
+	restore := report.BeforeTempFile(0, func() {
+		if err := os.WriteFile(marker, []byte(foreign), 0o600); err != nil {
+			t.Fatalf("letting the foreign marker win the race: %v", err)
+		}
+	})
+	t.Cleanup(restore)
+	_, err := report.History{Root: root}.Claim(fixtureDigest)
+
+	if got := report.CodeOf(err); got != report.CodeForeignWorkspace {
+		t.Fatalf("Claim = %v (code %q), want %s", err, got, report.CodeForeignWorkspace)
+	}
+	got, readErr := os.ReadFile(marker)
+	if readErr != nil {
+		t.Fatalf("reading the winning marker: %v", readErr)
+	}
+	if string(got) != foreign {
+		t.Errorf("the claim rewrote the winning marker as %q, want %q", got, foreign)
+	}
+}
+
 func TestAClaimFallsBackWhenTheTemporaryFileIsSweptAway(t *testing.T) {
 	root := t.TempDir()
 
