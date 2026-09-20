@@ -211,6 +211,7 @@ type runDependencies struct {
 	selectImpact           func(context.Context, string, goanalysis.Model, []goanalysis.Target, Options) impactSelection
 	acquireResources       func(context.Context, config.Config, []goanalysis.Target, []string) (runRoundCloser, []BaselineTarget, []report.Evidence, []string, error)
 	makeRunScratch         func(string, string) (string, error)
+	makeObservationDir     func(string, string) (string, error)
 	removeRunScratch       func(string) error
 	sweepTemporary         func(string, []string, time.Time) (tempowner.Result, error)
 	openBuildCache         func(string, string, string, runScratch, int64) (runBuildCache, error)
@@ -411,7 +412,7 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 			mutationSources = newTargetKeySources(inputs, metadata.model, contract, options, readers)
 			if len(candidates) != 0 {
 				observationParent, observationPrefix, _ := scratch.subdirectory(repositoryObservationName)
-				observationDirectory, observationErr := os.MkdirTemp(observationParent, observationPrefix)
+				observationDirectory, observationErr := dependencies.makeObservationDir(observationParent, observationPrefix)
 				if observationErr != nil {
 					emit(options, "repository-observation-unavailable", observationErr.Error())
 				} else {

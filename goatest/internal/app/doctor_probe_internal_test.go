@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -132,21 +133,28 @@ func TestAProviderCommandIsLookedUpOrReadFromTheRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
-		name    string
-		command string
-		want    string
+		name       string
+		command    string
+		want       string
+		wantAbsent bool
 	}{
 		{name: "a name on the path", command: "go"},
 		{name: "a name nothing on the path answers", command: "goatest-no-such-command", want: "executable file not found"},
 		{name: "a path inside the repository", command: "./runnable"},
 		{name: "an absolute path", command: runnable},
-		{name: "a path that is not there", command: "./absent", want: "no such file"},
+		{name: "a path that is not there", command: "./absent", wantAbsent: true},
 		{name: "a path that is a directory", command: "./directory", want: "not a regular file"},
-		{name: "a path nothing can run", command: "./plain", want: "not executable"},
+		{name: "a path nothing can run", command: "./plain", want: nonExecutableProviderError()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			err := doctorProviderCommand(root, test.command)
+			if test.wantAbsent {
+				if !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("a provider named by %s reported %v, want a missing path", test.name, err)
+				}
+				return
+			}
 			if test.want == "" {
 				if err != nil {
 					t.Fatalf("a provider named by %s reported %v, want nothing", test.name, err)
@@ -158,6 +166,13 @@ func TestAProviderCommandIsLookedUpOrReadFromTheRepository(t *testing.T) {
 			}
 		})
 	}
+}
+
+func nonExecutableProviderError() string {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
+	return "not executable"
 }
 
 func TestTheDoctorStopsAtADirectoryItCannotWriteTo(t *testing.T) {

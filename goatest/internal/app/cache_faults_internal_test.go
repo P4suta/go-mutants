@@ -72,7 +72,7 @@ func TestACacheOperationStopsAtTheFirstThingItCannotRead(t *testing.T) {
 		},
 		{
 			name:    "a report directory that is a file",
-			blocked: func(root string) string { return filepath.Join(root, "reports") },
+			blocked: func(root string) string { return filepath.Join(root, "reports", "runs") },
 			actions: []string{"status", "gc"},
 		},
 	} {

@@ -6,7 +6,6 @@ package assure
 import (
 	"context"
 	"errors"
-	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -201,20 +200,19 @@ func TestRunCoordinatorCreatesRepositoryObserversOnlyInsideTheReusableEvidenceBo
 
 func TestRunCoordinatorReportsAnUnavailableRepositoryObservationDirectory(t *testing.T) {
 	harness := newRunCoordinatorHarness(t)
-	acquire := harness.dependencies.acquireResources
-	harness.dependencies.acquireResources = func(ctx context.Context, loaded config.Config, targets []goanalysis.Target, environment []string) (runRoundCloser, []BaselineTarget, []report.Evidence, []string, error) {
-		manager, baseline, evidenceItems, resourceEnvironment, err := acquire(ctx, loaded, targets, environment)
-		if removeErr := os.RemoveAll(harness.runScratch); removeErr != nil {
-			t.Fatal(removeErr)
+	cause := errors.New("repository observation directory unavailable")
+	harness.dependencies.makeObservationDir = func(parent, pattern string) (string, error) {
+		if parent != harness.runScratch || pattern != repositoryObservationName {
+			t.Fatalf("repository observation directory = (%q, %q)", parent, pattern)
 		}
-		return manager, baseline, evidenceItems, resourceEnvironment, err
+		return "", cause
 	}
 	result, err := harness.run(Options{})
 	if err != nil || result.Verdict != report.VerdictAssured || harness.baselineOptions.RepositoryObserver == nil {
 		t.Fatalf("run = (%+v, %v), observer=%#v", result, err, harness.baselineOptions.RepositoryObserver)
 	}
 	if !slices.ContainsFunc(harness.events, func(event Event) bool {
-		return event.Kind == "repository-observation-unavailable" && event.Detail != ""
+		return event.Kind == "repository-observation-unavailable" && strings.Contains(event.Detail, cause.Error())
 	}) {
 		t.Fatalf("events = %+v, want repository observation failure", harness.events)
 	}

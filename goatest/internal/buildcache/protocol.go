@@ -326,7 +326,7 @@ func summarizeWithHooks(scratch string, hooks layerHooks) (Stats, error) {
 	}
 	directory := filepath.Join(scratch, statsDirectory)
 	entries, err := hooks.readDir(directory)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) && directoryIsAbsent(directory, scratch, hooks) {
 		return Stats{}, nil
 	}
 	if err != nil {

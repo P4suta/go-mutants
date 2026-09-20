@@ -48,7 +48,7 @@ func TestCompleteRepositoryObservationScopePreservesStaticCandidates(t *testing.
 
 func TestRepositoryObserverConstructionHandlesEveryAbsolutePathResult(t *testing.T) {
 	t.Parallel()
-	const resolved = "/resolved/root"
+	resolved := filepath.Join(t.TempDir(), "resolved", "root")
 	cause := errors.New("absolute path failed")
 	for _, test := range []struct {
 		name     string
@@ -57,7 +57,7 @@ func TestRepositoryObserverConstructionHandlesEveryAbsolutePathResult(t *testing
 		err      error
 		want     string
 	}{
-		{name: "resolved", root: "root", absolute: resolved + "/.", want: resolved},
+		{name: "resolved", root: "root", absolute: resolved + string(filepath.Separator) + ".", want: resolved},
 		{name: "empty root", absolute: resolved},
 		{name: "resolution failure", root: "root", absolute: resolved, err: cause},
 	} {
@@ -289,7 +289,7 @@ func TestRepositoryRelativePathRejectsEveryInvalidBoundary(t *testing.T) {
 		{name: "relative failure", root: "root", path: "name", rel: func(string, string) (string, error) { return "inside", cause }},
 		{name: "parent", root: "root", path: "name", rel: func(string, string) (string, error) { return "..", nil }},
 		{name: "parent descendant", root: "root", path: "name", rel: func(string, string) (string, error) { return filepath.Join("..", "peer"), nil }},
-		{name: "absolute", root: "root", path: "name", rel: func(string, string) (string, error) { return filepath.Join(string(filepath.Separator), "inside"), nil }},
+		{name: "absolute", root: "root", path: "name", rel: func(string, string) (string, error) { return filepath.Join(t.TempDir(), "inside"), nil }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

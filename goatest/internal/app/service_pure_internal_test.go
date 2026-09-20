@@ -130,8 +130,8 @@ func TestACheckpointDigestIsThirtyTwoBytesWrittenInLowercaseHex(t *testing.T) {
 
 func TestANativeBuildCacheDirectoryReadsTheEnvironmentThenTheUserCache(t *testing.T) {
 	t.Parallel()
-	absolute := filepath.Join(string(filepath.Separator), "cache", "go-build")
-	userCache := filepath.Join(string(filepath.Separator), "home", "cache")
+	absolute := filepath.Join(t.TempDir(), "cache", "go-build")
+	userCache := filepath.Join(t.TempDir(), "home", "cache")
 	for _, test := range []struct {
 		name        string
 		environment []string

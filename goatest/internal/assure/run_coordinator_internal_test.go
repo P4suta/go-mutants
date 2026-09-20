@@ -265,6 +265,7 @@ func newRunCoordinatorHarness(t *testing.T) *runCoordinatorHarness {
 			harness.runScratch = directory
 			return directory, err
 		},
+		makeObservationDir: os.MkdirTemp,
 		removeRunScratch: func(directory string) error {
 			harness.runScratchRemovals++
 			if directory != harness.runScratch {

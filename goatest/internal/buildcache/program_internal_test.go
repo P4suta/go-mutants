@@ -137,7 +137,7 @@ func TestJoiningArgumentsQuotesOnlyWhatNeedsIt(t *testing.T) {
 
 func TestABaseDirectoryIsWhereTheConfigurationSaysOrTheFallback(t *testing.T) {
 	t.Parallel()
-	absolute := filepath.Join(string(filepath.Separator), "elsewhere", "cache")
+	absolute := filepath.Join(t.TempDir(), "elsewhere", "cache")
 	for _, test := range []struct {
 		name       string
 		configured string

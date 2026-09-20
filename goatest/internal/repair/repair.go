@@ -336,7 +336,9 @@ func ListCandidates(root string) ([]CandidateRecord, error) {
 	directory := filepath.Join(root, ".goatest", "candidates")
 	entries, err := os.ReadDir(directory)
 	if errors.Is(err, os.ErrNotExist) {
-		return []CandidateRecord{}, nil
+		if _, statErr := os.Stat(directory); errors.Is(statErr, os.ErrNotExist) {
+			return []CandidateRecord{}, nil
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("goatest: read repair candidates: %w", err)

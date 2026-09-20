@@ -526,7 +526,7 @@ func (layer Layer) walk(half string, hooks layerHooks) ([]storedFile, error) {
 	}
 	root := filepath.Join(layer.Dir, half)
 	prefixes, err := hooks.readDir(root)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) && directoryIsAbsent(root, layer.Dir, hooks) {
 		return nil, nil
 	}
 	if err != nil {
@@ -564,6 +564,14 @@ func (layer Layer) walk(half string, hooks layerHooks) ([]storedFile, error) {
 	}
 	slices.SortFunc(files, func(first, second storedFile) int { return strings.Compare(first.path, second.path) })
 	return files, nil
+}
+
+func directoryIsAbsent(path, parent string, hooks layerHooks) bool {
+	if _, err := hooks.stat(path); !errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	info, err := hooks.stat(parent)
+	return errors.Is(err, os.ErrNotExist) || err == nil && info.IsDir()
 }
 
 func (layer Layer) actionPath(actionID []byte) string {

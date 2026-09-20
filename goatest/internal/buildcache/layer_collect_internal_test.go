@@ -193,7 +193,7 @@ func TestACollectionSparesAnEntryTheIdleWindowStillCovers(t *testing.T) {
 		aged    time.Duration
 		spared  bool
 	}{
-		{name: "younger than the window", minIdle: oneHour, now: collectMoment, aged: oneHour - 1, spared: true},
+		{name: "younger than the window", minIdle: oneHour, now: collectMoment, aged: oneHour - time.Second, spared: true},
 		{name: "exactly as old as the window", minIdle: oneHour, now: collectMoment, aged: oneHour},
 		{name: "older than the window", minIdle: oneHour, now: collectMoment, aged: oneHour + 1},
 		{name: "no window at all", now: collectMoment, aged: 0},
@@ -225,9 +225,9 @@ func TestACollectionDropsAnActionExactlyAsOldAsItsTime(t *testing.T) {
 		aged    time.Duration
 		dropped bool
 	}{
-		{name: "one nanosecond inside its time", aged: oneHour - 1},
+		{name: "one second inside its time", aged: oneHour - time.Second},
 		{name: "exactly as old as its time", aged: oneHour, dropped: true},
-		{name: "one nanosecond past its time", aged: oneHour + 1, dropped: true},
+		{name: "one second past its time", aged: oneHour + time.Second, dropped: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
