@@ -166,7 +166,9 @@ func compareRetentionOrder(a, b entry) int {
 func inspect(root string, kind childKind, ttl time.Duration, now time.Time) (Status, []entry, error) {
 	children, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
-		return Status{}, nil, nil
+		if _, statErr := os.Stat(root); errors.Is(statErr, os.ErrNotExist) {
+			return Status{}, nil, nil
+		}
 	}
 	if err != nil {
 		return Status{}, nil, fmt.Errorf("goatest: inspect retained artifacts: %w", err)
