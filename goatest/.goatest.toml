@@ -13,3 +13,27 @@ id = '239afd2b864d0119'
 reason = 'EWOULDBLOCK and EAGAIN are one value on every platform this file builds for, so no error can tell the two halves of the disjunction apart; it is written out because POSIX permits them to differ and a platform where they do would need both'
 expires = '2027-09-17T00:00:00Z'
 owner = 'goatest'
+
+[[acceptance]]
+id = '11019ed811ed4ff2'
+reason = 'manager.shared is only ever read under the same spec.Shared that writes it, so making this half true reaches a map that the other half left empty for an unshared capability, and the lookup is nil either way'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '1bf4beeee5e08b5b'
+reason = 'the mirror of the acquire guard: registering an unshared instance in manager.shared is unobservable because the only read of that map is guarded by the same spec.Shared, which is false'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '545ce702e63e3c91'
+reason = 'deleting a key the map does not hold is a no-op and the extra notify wakes a waiter that re-checks its condition, so a target already removed cannot be told from one removed twice'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'b23482003f7e2830'
+reason = 'a second Close with the guard open re-sets a flag that is already set and stops an active set that is already empty; the run it would repeat has nothing left in it'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'

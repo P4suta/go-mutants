@@ -109,7 +109,6 @@ func attempted(o mutation.Outcome) bool {
 	case mutation.OutcomeKilled, mutation.OutcomeSurvived, mutation.OutcomeTimedOut:
 		return true
 	case mutation.OutcomeErrored, mutation.OutcomeInconclusive, mutation.OutcomeNotRun:
-		return false
 	}
 	return false
 }

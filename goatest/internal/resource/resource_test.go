@@ -43,6 +43,9 @@ func TestProviderHelper(t *testing.T) {
 	switch os.Getenv("GOATEST_RESOURCE_MODE") {
 	case "slow":
 		time.Sleep(resourceHelperDelay())
+	case "trailing-garbage":
+		_, _ = fmt.Fprintf(os.Stdout, `{"version":%d,"status":"ready","instance":"postgres-1"}{`+"\n", resource.ProtocolVersion)
+		return
 	case "invalid":
 		_ = encoder.Encode(resource.Response{Version: resource.ProtocolVersion + 1, Status: "ready"})
 		return
@@ -249,4 +252,141 @@ func acquireResource(t *testing.T, manager *resource.Manager, capability string)
 	ctx, cancel := context.WithTimeout(t.Context(), resourceAcquireDeadline)
 	defer cancel()
 	return manager.Acquire(ctx, capability)
+}
+
+func TestAProviderWithItsOwnEnvironmentDoesNotInheritOurs(t *testing.T) {
+	t.Setenv("GOATEST_RESOURCE_HELPER", "1")
+	t.Setenv("GOATEST_RESOURCE_LOG", filepath.Join(t.TempDir(), "provider.log"))
+	manager := resource.New(map[string]resource.Spec{
+		"postgres": {
+			Command:     []string{os.Args[0], "-test.run=^TestProviderHelper$"},
+			Timeout:     resourceFailureDeadline,
+			Environment: []string{"PATH=" + os.Getenv("PATH")},
+		},
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+
+	lease, err := acquireResource(t, manager, "postgres")
+	if err == nil {
+		_ = lease.Release()
+		t.Fatal("the provider started with an environment that does not name the helper; ours reached it")
+	}
+}
+
+func TestAProviderWithNoEnvironmentOfItsOwnInheritsOurs(t *testing.T) {
+	t.Setenv("GOATEST_RESOURCE_HELPER", "1")
+	t.Setenv("GOATEST_RESOURCE_LOG", filepath.Join(t.TempDir(), "provider.log"))
+	manager := resource.New(map[string]resource.Spec{
+		"postgres": {Command: []string{os.Args[0], "-test.run=^TestProviderHelper$"}, Timeout: resourceProviderDeadline},
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+
+	lease, err := acquireResource(t, manager, "postgres")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	if err := lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAnUnsharedCapabilityStartsOneProviderPerLease(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "provider.log")
+	t.Setenv("GOATEST_RESOURCE_HELPER", "1")
+	t.Setenv("GOATEST_RESOURCE_LOG", log)
+	manager := resource.New(map[string]resource.Spec{
+		"postgres": {Command: []string{os.Args[0], "-test.run=^TestProviderHelper$"}, Timeout: resourceProviderDeadline},
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+
+	first, err := acquireResource(t, manager, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := acquireResource(t, manager, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readLog(t, log); !slices.Equal(got, []string{"start", "start"}) {
+		t.Errorf("log after two unshared acquires = %v, want a provider each", got)
+	}
+	if err := first.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readLog(t, log); !slices.Equal(got, []string{"start", "start", "stop"}) {
+		t.Errorf("log after releasing one of two unshared leases = %v, want one stop", got)
+	}
+	if err := second.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readLog(t, log); !slices.Equal(got, []string{"start", "start", "stop", "stop"}) {
+		t.Errorf("log after releasing both = %v", got)
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readLog(t, log); !slices.Equal(got, []string{"start", "start", "stop", "stop"}) {
+		t.Errorf("log after closing a manager whose leases were all released = %v, want nothing more", got)
+	}
+}
+
+func TestClosingTwiceStopsEachProviderOnce(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "provider.log")
+	t.Setenv("GOATEST_RESOURCE_HELPER", "1")
+	t.Setenv("GOATEST_RESOURCE_LOG", log)
+	manager := resource.New(map[string]resource.Spec{
+		"postgres": {Command: []string{os.Args[0], "-test.run=^TestProviderHelper$"}, Timeout: resourceProviderDeadline},
+	})
+	if _, err := acquireResource(t, manager, "postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	if got := readLog(t, log); !slices.Equal(got, []string{"start", "stop"}) {
+		t.Errorf("log after closing twice = %v, want the provider stopped once", got)
+	}
+}
+
+func TestATrailingDecodeFailureIsReportedAsItself(t *testing.T) {
+	t.Setenv("GOATEST_RESOURCE_HELPER", "1")
+	t.Setenv("GOATEST_RESOURCE_LOG", filepath.Join(t.TempDir(), "provider.log"))
+	t.Setenv("GOATEST_RESOURCE_MODE", "trailing-garbage")
+	manager := resource.New(map[string]resource.Spec{
+		"postgres": {Command: []string{os.Args[0], "-test.run=^TestProviderHelper$"}, Timeout: resourceProviderDeadline},
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+
+	lease, err := acquireResource(t, manager, "postgres")
+	if err == nil {
+		_ = lease.Release()
+		t.Fatal("a response line with unparsable trailing bytes was accepted")
+	}
+	if strings.Contains(err.Error(), "trailing data") {
+		t.Errorf("acquire error = %v, want the decode failure itself rather than the well-formed-trailing-value message", err)
+	}
+}
+
+func TestAProviderThatSaidNothingDoesNotGainAnEmptyExplanation(t *testing.T) {
+	t.Setenv("GOATEST_RESOURCE_HELPER", "1")
+	t.Setenv("GOATEST_RESOURCE_LOG", filepath.Join(t.TempDir(), "provider.log"))
+	t.Setenv("GOATEST_RESOURCE_MODE", "slow")
+	t.Setenv("GOATEST_RESOURCE_DELAY", "10s")
+	manager := resource.New(map[string]resource.Spec{
+		"postgres": {Command: []string{os.Args[0], "-test.run=^TestProviderHelper$"}, Timeout: resourceFailureDeadline},
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+
+	lease, err := acquireResource(t, manager, "postgres")
+	if err == nil {
+		_ = lease.Release()
+		t.Fatal("a provider that never answered was accepted")
+	}
+	message := err.Error()
+	if strings.HasSuffix(message, ": ") || strings.Contains(message, ": \n") {
+		t.Errorf("acquire error = %q, which ends a sentence with nothing after the colon", message)
+	}
 }

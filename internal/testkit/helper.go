@@ -119,7 +119,6 @@ func (a coverAction) String() string {
 	case coverRefuse:
 		return "refuse, with the misuse status"
 	case coverNothing:
-		return "leave the coverage output alone"
 	}
 	return "leave the coverage output alone"
 }

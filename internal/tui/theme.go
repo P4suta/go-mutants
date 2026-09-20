@@ -73,7 +73,6 @@ func (t theme) outcome(o mutation.Outcome) lipgloss.Style {
 	case mutation.OutcomeSurvived:
 		return t.failed
 	case mutation.OutcomeErrored, mutation.OutcomeInconclusive, mutation.OutcomeNotRun:
-		return t.warning
 	}
 	return t.warning
 }

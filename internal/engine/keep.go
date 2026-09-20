@@ -30,7 +30,6 @@ func (k KeepTemp) String() string {
 	case KeepTempOnFailure:
 		return "on-failure"
 	case KeepTempNever:
-		return "never"
 	}
 	return "never"
 }
@@ -67,7 +66,6 @@ func keepsTemporaries(keep KeepTemp, err error) bool {
 	case KeepTempOnFailure:
 		return err != nil && !interrupted(err)
 	case KeepTempNever:
-		return false
 	}
 	return false
 }

@@ -293,7 +293,6 @@ func OutcomeLabel(o mutation.Outcome) string {
 	case mutation.OutcomeErrored:
 		return "ERROR"
 	case mutation.OutcomeNotRun:
-		return ""
 	}
 	return ""
 }

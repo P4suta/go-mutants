@@ -477,7 +477,6 @@ func exitCode(verdict report.Verdict) int {
 	case report.VerdictInsufficient:
 		return ExitInsufficient
 	case report.VerdictError:
-		return ExitError
 	}
 	return ExitError
 }

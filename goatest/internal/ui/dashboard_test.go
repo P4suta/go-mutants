@@ -20,6 +20,7 @@ const (
 	dashboardTickEveryNotes    = 16
 	concurrentDashboardNotes   = 64
 	dashboardWriteDeadline     = 5 * time.Second
+	dashboardQuietWindow       = 50 * time.Millisecond
 )
 
 type lockedBuffer struct {
@@ -129,7 +130,11 @@ func TestDashboardTicksKeepTheElapsedTimeMoving(t *testing.T) {
 	notes := ui.NewDashboard(buffer, ui.DashboardOptions{Now: clock.Now, Tick: tick})
 	defer notes.Close()
 	notes.Note("race", "3 packages")
-	<-buffer.write
+	select {
+	case <-buffer.write:
+	case <-time.After(dashboardWriteDeadline):
+		t.Fatalf("the first note never drew: %q", buffer.String())
+	}
 	clock.Advance(65 * time.Second)
 	tick <- clock.Now()
 	select {
@@ -161,9 +166,25 @@ func TestDashboardStopsWatchingWhenTheTickStreamCloses(t *testing.T) {
 	buffer := &lockedBuffer{}
 	tick := make(chan time.Time)
 	notes := ui.NewDashboard(buffer, ui.DashboardOptions{Now: newFixedClock().Now, Tick: tick})
+	defer notes.Close()
 	notes.Note("snapshot", "captured")
 	close(tick)
-	notes.Close()
+	settled := buffer.String()
+	<-time.After(dashboardQuietWindow)
+	if drawing := buffer.String(); drawing != settled {
+		t.Fatalf("the dashboard kept redrawing after its tick stream closed: %d bytes became %d",
+			len(settled), len(drawing))
+	}
+	closed := make(chan struct{})
+	go func() {
+		notes.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(dashboardWriteDeadline):
+		t.Fatal("Close did not return after the tick stream closed; the watch is still running")
+	}
 	before := buffer.String()
 	notes.Note("snapshot", "after close")
 	if after := buffer.String(); after != before {

@@ -287,7 +287,6 @@ func exitCodeOf(out RunOutcome) int {
 	case StatusInterrupted:
 		return int(mutation.ExitInterrupted)
 	case StatusFailed:
-		return int(mutation.ExitInfrastructure)
 	}
 	return int(mutation.ExitInfrastructure)
 }
@@ -1465,7 +1464,6 @@ func reportMemorySource(source MemorySource) report.MemorySource {
 	case MemorySourceDerived:
 		return report.MemoryDerived
 	case MemorySourceUnavailable:
-		return report.MemoryUnavailable
 	}
 	return report.MemoryUnavailable
 }
