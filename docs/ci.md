@@ -42,7 +42,8 @@ decision.
 | `artifacts` | `mise run package` | Exercises the packaging path on every run rather than for the first time on a tag, and smoke-tests that the version stamp reached its target |
 | `dogfood` | `mise run dogfood` — go-mutants against go-mutants | The gate on whether the tests *catch* anything. `--strict`, so one undeclared survivor fails it. The audit that reads this run's report against a recording of it is `mise run dogfood-audit`, and it is nightly rather than here — measured after it was wired up, it costs about a third again on the longest job in this workflow |
 | `action-smoke` | the composite action, over `fixtures/killable` | Builds this checkout onto `PATH` and passes `version: skip`, so what is measured is this source and not the last release. Asserts that every output arrived and that they agree with the report |
-| `ci-success` | nothing | Needs every job above, so branch protection names one check instead of seven |
+| `ci-success` | nothing | Needs every primitive job above and keeps their detailed verdicts in one aggregate |
+| `required` | nothing | Needs only `ci-success`, so every repository exposes the same terminal branch-protection check without a dependency cycle |
 
 ## The nightly searches
 
