@@ -16,6 +16,7 @@ const (
 	ciDoc          = "docs/ci.md"
 	workflowsDir   = ".github/workflows"
 	successJob     = "ci-success"
+	requiredJob    = "required"
 	ciWorkflow     = "ci.yml"
 	actionsDir     = ".github/actions"
 	actionFile     = "action.yml"
@@ -169,27 +170,36 @@ func TestCiDocNamesEveryMiseTaskItsJobsRun(t *testing.T) {
 	}
 }
 
-func TestTheAggregateJobWaitsForEveryOtherJob(t *testing.T) {
+func TestEveryPrimitiveJobReachesTheRequiredCheck(t *testing.T) {
 	t.Parallel()
 
 	root := Root(t)
 	jobs := jobsOf(t, root, ciWorkflow)
 	if !slices.Contains(jobs, successJob) {
-		t.Fatalf("%s has no `%s` job, so branch protection has to name every check by hand", ciWorkflow, successJob)
+		t.Fatalf("%s has no `%s` job, so the terminal check has no aggregate to wrap", ciWorkflow, successJob)
 	}
-	needs := needsOf(t, root, ciWorkflow, successJob)
-	var others []string
+	if !slices.Contains(jobs, requiredJob) {
+		t.Fatalf("%s has no `%s` job, so repositories cannot share one required check", ciWorkflow, requiredJob)
+	}
+	aggregateNeeds := needsOf(t, root, ciWorkflow, successJob)
+	var primitives []string
 	for _, job := range jobs {
-		if job != successJob {
-			others = append(others, job)
+		if job != successJob && job != requiredJob {
+			primitives = append(primitives, job)
 		}
 	}
-	slices.Sort(needs)
-	slices.Sort(others)
-	if !slices.Equal(needs, others) {
+	slices.Sort(aggregateNeeds)
+	slices.Sort(primitives)
+	if !slices.Equal(aggregateNeeds, primitives) {
 		t.Errorf("`%s` waits for %v and %s defines %v;\n"+
-			"\ta job the aggregate does not need is one branch protection does not wait for",
-			successJob, needs, ciWorkflow, others)
+			"\ta primitive job the aggregate does not need cannot reach the required check",
+			successJob, aggregateNeeds, ciWorkflow, primitives)
+	}
+	requiredNeeds := needsOf(t, root, ciWorkflow, requiredJob)
+	if !slices.Equal(requiredNeeds, []string{successJob}) {
+		t.Errorf("`%s` waits for %v, want only [%s];\n"+
+			"\tthe terminal check must wrap the existing aggregate without creating a cycle",
+			requiredJob, requiredNeeds, successJob)
 	}
 }
 
