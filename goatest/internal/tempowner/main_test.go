@@ -6,20 +6,13 @@ package tempowner_test
 import (
 	"os"
 	"testing"
-	"time"
 
 	"github.com/P4suta/go-mutants/goatest/internal/tempowner"
-	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/goatest/internal/testscratch"
 )
 
 func TestMain(m *testing.M) {
-	testkit.OwnedMain(m, func(root string) error {
-		owner, err := tempowner.Claim(root, tempowner.Marker{RunID: "tempowner-tests"}, time.Now())
-		if err != nil {
-			return err
-		}
-		return owner.Keep()
-	})
+	testscratch.Main(m)
 }
 
 func TestFixtureScratchRootIsKept(t *testing.T) {
