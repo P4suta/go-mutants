@@ -1341,6 +1341,7 @@ is the whole of what was asked for and a failure is an error.
 | `goatest/internal/tempowner` | Which run owns a temporary directory, and what a later sweep reads | implemented |
 | `goatest/internal/testargs` | The arguments a measured `go test` is given | test-only support |
 | `goatest/internal/testkit` | The runner's harness | test-only support |
+| `goatest/internal/testscratch` | Kept, process-owned scratch directories for runner tests | test-only support |
 | `goatest/internal/trace` | The runner's own trace vocabulary, which the engine's deliberately rejects | implemented |
 | `goatest/internal/ui` | The dashboard and the console a round renders into | implemented |
 
