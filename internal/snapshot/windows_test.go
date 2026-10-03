@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/P4suta/go-mutants/internal/glob"
+	"golang.org/x/sys/windows"
 )
 
 func mklinkJunction(t *testing.T, link, target string) {
@@ -118,15 +119,29 @@ func TestCreateAbandonsAPartialCopy(t *testing.T) {
 	src := t.TempDir()
 	writeTree(t, src, map[string]string{"a.go": "package a\n", "z.go": "package z\n"})
 
-	name, err := syscall.UTF16PtrFromString(filepath.Join(src, "z.go"))
+	lockedPath := filepath.Join(src, "z.go")
+	file, err := os.OpenFile(lockedPath, os.O_RDWR, 0)
 	if err != nil {
-		t.Fatalf("UTF16PtrFromString: %v", err)
+		t.Fatalf("open source fixture: %v", err)
 	}
-	handle, err := syscall.CreateFile(name, syscall.GENERIC_READ, 0, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
-	if err != nil {
-		t.Skipf("cannot open a source file exclusively on this machine (%v)", err)
+	t.Cleanup(func() {
+		if closeErr := file.Close(); closeErr != nil {
+			t.Errorf("close source fixture: %v", closeErr)
+		}
+	})
+	overlapped := new(windows.Overlapped)
+	flags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK | windows.LOCKFILE_FAIL_IMMEDIATELY)
+	if lockErr := windows.LockFileEx(windows.Handle(file.Fd()), flags, 0, 1, 0, overlapped); lockErr != nil {
+		t.Fatalf("lock source fixture: %v", lockErr)
 	}
-	defer func() { _ = syscall.CloseHandle(handle) }()
+	t.Cleanup(func() {
+		if unlockErr := windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, overlapped); unlockErr != nil {
+			t.Errorf("unlock source fixture: %v", unlockErr)
+		}
+	})
+	if _, readErr := os.ReadFile(ExtendedPath(lockedPath)); readErr == nil {
+		t.Fatal("the source fixture must reject reads while exclusively locked")
+	}
 
 	assertAbandoned(t, src, t.TempDir())
 }

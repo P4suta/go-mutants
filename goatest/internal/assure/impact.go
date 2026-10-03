@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/P4suta/go-mutants/goatest/internal/environment"
 	"github.com/P4suta/go-mutants/goatest/internal/evidence"
 	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
 
@@ -39,7 +40,7 @@ var (
 	gitNamesOutput     = func(ctx context.Context, root string, arguments []string) ([]byte, error) {
 		command := exec.CommandContext(ctx, "git", arguments...)
 		command.Dir = root
-		command.Env = os.Environ()
+		command.Env = environment.Git(nil)
 		return command.Output()
 	}
 )

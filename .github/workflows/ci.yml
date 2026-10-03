@@ -84,6 +84,7 @@ jobs:
           install: true
           cache: true
       - run: mise run build
+      - run: mise run release-assets-check
       - run: mise run test-cost
       - run: mise run test-cost-integration
       - name: The corpus is unchanged

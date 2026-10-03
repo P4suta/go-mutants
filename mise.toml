@@ -3,8 +3,12 @@
 
 [tools]
 go = "1.26.6"
+rust = { version = "1.99.0", profile = "minimal", components = [
+  "rustfmt",
+  "clippy",
+] }
 golangci-lint = "2.12.2"
-"ubi:goreleaser/goreleaser" = "2.17.1"
+goreleaser = "2.17.1"
 lefthook = "2.1.10"
 just = "1.57.0"
 actionlint = "1.7.12"
@@ -97,22 +101,23 @@ run = [
 description = "Check Go and TOML formatting without rewriting any file"
 run = [
   'test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }',
-  "taplo fmt --check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml",
+  "taplo fmt --check mise.toml .go-mutants.toml .ocomment.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml tools/release-assets/Cargo.toml",
 ]
 run_windows = [
   'pwsh -NoLogo -NoProfile -Command "$f = gofmt -l .; if ($f) { $f; exit 1 }"',
-  "taplo fmt --check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml",
+  "taplo fmt --check mise.toml .go-mutants.toml .ocomment.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml tools/release-assets/Cargo.toml",
 ]
 
 [tasks.lint]
 description = "Run the Go, spelling, TOML, workflow, YAML, secret, and doc linters"
+env = { GOLANGCI_LINT_CACHE = "{{config_root}}/dist/golangci-lint-cache" }
 
 run = [
   "go run ./cmd/gomutants-vet ./... ./goatest/...",
-  "git ls-files | grep -vE '^(fixtures/|vendor-assets/|LICENSES/)|/testdata/|[.]go$' | tr '\\n' '\\0' | xargs -0 ocomment check --policy legal",
+  "git ls-files | grep -vE '^(fixtures/|vendor-assets/|LICENSES/)|/testdata/|[.]go$|(^|/)go[.]mod$' | tr '\\n' '\\0' | xargs -0 mise exec cargo:ocomment -- ocomment check --config .ocomment.toml --policy legal",
   "golangci-lint run",
   "typos",
-  "taplo check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml",
+  "taplo check mise.toml .go-mutants.toml .ocomment.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml tools/release-assets/Cargo.toml",
   "actionlint",
   "yamllint .github lefthook.yml .golangci.yml",
   "gitleaks dir . --config .gitleaks.toml --no-banner --redact --verbose",
@@ -125,9 +130,18 @@ run = [
   "mise run fmt",
   "mise run build",
   "mise run build-published",
+  "mise run release-assets-check",
   "mise run test",
   "mise run lint",
 ]
+[tasks.release-assets-check]
+description = "Verify draft reconciliation through controlled GitHub API failures"
+run = [
+  "cargo fmt --manifest-path tools/release-assets/Cargo.toml -- --check",
+  "cargo clippy --locked --manifest-path tools/release-assets/Cargo.toml --all-targets -- -D warnings",
+  "cargo test --locked --manifest-path tools/release-assets/Cargo.toml",
+]
+
 [tasks.dogfood]
 description = "Mutation-test this repository with go-mutants itself"
 env = { RAPID_SEED = "1" }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
+	"github.com/P4suta/go-mutants/goatest/internal/testscratch"
 )
 
 const (
@@ -51,5 +52,5 @@ func TestMain(testingMain *testing.M) {
 		}
 		_, _ = fmt.Fprintf(os.Stdout, "%s: %s=%q\n", narrowedFilterMarker, assureTestRunEnvironment, pattern)
 	}
-	os.Exit(testingMain.Run())
+	testscratch.Main(testingMain)
 }

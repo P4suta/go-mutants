@@ -554,6 +554,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"./internal/testlog/...",
 				"./internal/tempowner/...",
 				"./internal/gitdiff/...",
+				"./internal/gitenv/...",
 				"./internal/snapshot/...",
 				"./internal/cache/...",
 				"./internal/validate/...",

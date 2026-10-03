@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/P4suta/go-mutants/goatest/internal/testkit"
 )
 
 const (
@@ -43,9 +45,9 @@ func TestNoGoFileCarriesACommentThatIsNotAllowed(t *testing.T) {
 func TestNoOtherFileCarriesACommentThatIsNotAllowed(t *testing.T) {
 	t.Parallel()
 
-	binary, err := exec.LookPath("ocomment")
+	binary, err := exec.LookPath("mise")
 	if err != nil {
-		t.Fatalf("ocomment is not on PATH: %v", err)
+		t.Fatalf("mise is not on PATH: %v", err)
 	}
 	if _, err := os.ReadFile(binary); err != nil {
 		t.Fatalf("read the comment gate's own tool: %v", err)
@@ -60,6 +62,17 @@ func TestNoOtherFileCarriesACommentThatIsNotAllowed(t *testing.T) {
 	}
 	var paths []string
 	for _, name := range listed {
+		if filepath.Base(name) == "go.mod" {
+			data, err := os.ReadFile(filepath.Join(root, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			offenders, err := moduleCommentOffenders(data)
+			if err != nil || len(offenders) != 0 {
+				t.Errorf("module comments in %s: %v; offenders: %v", name, err, offenders)
+			}
+			continue
+		}
 		if !strings.HasSuffix(name, ".go") {
 			paths = append(paths, name)
 		}
@@ -67,8 +80,15 @@ func TestNoOtherFileCarriesACommentThatIsNotAllowed(t *testing.T) {
 	if len(paths) == 0 {
 		t.Fatal("no file was offered to the comment gate")
 	}
-	command := exec.Command(binary, append([]string{"check", "--policy", "legal"}, paths...)...)
+	lookup := exec.CommandContext(t.Context(), binary, "which", "ocomment")
+	lookup.Dir, lookup.Env = root, testkit.GitEnvironment()
+	resolved, err := lookup.CombinedOutput()
+	if err != nil {
+		t.Fatalf("resolve the pinned comment gate: %v\n%s", err, resolved)
+	}
+	command := exec.CommandContext(t.Context(), strings.TrimSpace(string(resolved)), append([]string{"check", "--config", filepath.Join(root, ".ocomment.toml"), "--policy", "legal"}, paths...)...)
 	command.Dir = root
+	command.Env = testkit.GitEnvironment()
 	output, err := command.CombinedOutput()
 	if err == nil {
 		return
@@ -191,6 +211,7 @@ func itoa(n int) string {
 func trackedPaths(root string) ([]string, error) {
 	command := exec.Command("git", "ls-files", "-z")
 	command.Dir = root
+	command.Env = testkit.GitEnvironment()
 	listed, err := command.Output()
 	if err != nil {
 		return nil, err
