@@ -9,17 +9,34 @@ use uuid::Uuid;
 
 #[derive(Deserialize)]
 struct Workflow {
+    concurrency: Concurrency,
     jobs: BTreeMap<String, Job>,
 }
 
 #[derive(Deserialize)]
+struct Concurrency {
+    group: String,
+    #[serde(rename = "cancel-in-progress")]
+    cancel_in_progress: bool,
+}
+
+#[derive(Deserialize)]
+struct Environment {
+    name: String,
+}
+
+#[derive(Deserialize)]
 struct Job {
+    environment: Environment,
     #[serde(default)]
     steps: Vec<Step>,
 }
 
 #[derive(Deserialize)]
 struct Step {
+    uses: Option<String>,
+    #[serde(rename = "with", default)]
+    parameters: BTreeMap<String, serde_json::Value>,
     name: Option<String>,
     run: Option<String>,
 }
@@ -230,6 +247,46 @@ fn existing_draft_is_completed_before_publication() {
     assert_eq!(
         effects, "upload:checksums.txt\nupload:fixture.zip\npublish\n",
         "upload precedes publication"
+    );
+}
+
+#[test]
+fn publication_preserves_approval_tag_identity_and_exclusive_authority() {
+    let workflow: Workflow = serde_saphyr::from_str(include_str!(
+        "../../../.github/workflows/release-publish.yml"
+    ))
+    .expect("parse the production workflow");
+    let publisher = &workflow.jobs["publish"];
+    assert_eq!(
+        publisher.environment.name, "release",
+        "publication must enter the protected approval environment"
+    );
+    assert!(
+        !workflow.concurrency.group.is_empty() && !workflow.concurrency.group.contains("${{"),
+        "new publication and tag-based retries must share one publication group"
+    );
+    assert!(
+        !workflow.concurrency.cancel_in_progress,
+        "a retry must not interrupt an active publication"
+    );
+    let checkout = publisher
+        .steps
+        .iter()
+        .find(|step| {
+            step.uses
+                .as_deref()
+                .is_some_and(|action| action.starts_with("actions/checkout@"))
+        })
+        .expect("source checkout");
+    assert_eq!(
+        checkout.parameters.get("ref"),
+        Some(&json!("refs/tags/${{ steps.target.outputs.tag }}")),
+        "only the validated tag can select the release source"
+    );
+    assert_eq!(
+        checkout.parameters.get("persist-credentials"),
+        Some(&json!(false)),
+        "the publisher must not leave ambient Git write credentials"
     );
 }
 

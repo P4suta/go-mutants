@@ -14,7 +14,7 @@ name: Publish release
         type: string
 
 concurrency:
-  group: release-publish-${{ inputs.tag || github.ref }}
+  group: release-publish
   cancel-in-progress: false
 
 jobs:
@@ -68,8 +68,9 @@ jobs:
       - name: Checkout the immutable release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ steps.target.outputs.tag }}
+          ref: refs/tags/${{ steps.target.outputs.tag }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Verify source version matches the release tag
         shell: bash
