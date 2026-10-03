@@ -112,7 +112,7 @@ SPDX-License-Identifier = "Apache-2.0"
 # The copyright stays `2026 goatest contributors`. REUSE accepts both notices
 
 [[annotations]]
-path = ["goatest/go.mod", "goatest/go.sum", "goatest/.gitignore"]
+path = ["goatest/go.sum", "goatest/.gitignore"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 goatest contributors"
 SPDX-License-Identifier = "MIT OR Apache-2.0"

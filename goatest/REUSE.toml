@@ -8,7 +8,7 @@ SPDX-PackageDownloadLocation = "https://github.com/P4suta/go-mutants"
 
 
 [[annotations]]
-path = ["go.mod", "go.sum"]
+path = ["go.sum"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 goatest contributors"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
