@@ -11,12 +11,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/P4suta/go-mutants/goatest/internal/testkit"
 )
 
 func TestChangedFilesCannotSelectAnInheritedRepository(t *testing.T) {
-	binary := testkit.GitBinary(t)
+	binary, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
 	repository := func(name string) string {
 		t.Helper()
 		root := t.TempDir()
