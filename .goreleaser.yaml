@@ -55,5 +55,7 @@ release:
     owner: P4suta
     name: go-mutants
   mode: keep-existing
+  draft: true
+  use_existing_draft: true
   prerelease: true
-  replace_existing_artifacts: true
+  replace_existing_artifacts: false

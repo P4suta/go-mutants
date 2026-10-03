@@ -81,6 +81,16 @@ jobs:
           test "$version" = "$RELEASE_VERSION"
           grep -q "defaultVersion = \"$RELEASE_VERSION\"" internal/cli/root.go
 
+      - name: Require an unpublished draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --json isDraft \
+            | jq --exit-status '.isDraft == true'
+
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
         with:
           install: true
@@ -156,4 +166,10 @@ jobs:
             echo "no signature bundles found under dist" >&2
             exit 1
           fi
-          gh release upload "$RELEASE_TAG" "${evidence[@]}" --clobber
+          gh release upload "$RELEASE_TAG" "${evidence[@]}"
+
+      - name: Publish the complete draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.target.outputs.tag }}
+        run: gh release edit "$RELEASE_TAG" --draft=false
