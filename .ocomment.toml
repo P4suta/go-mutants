@@ -5,3 +5,9 @@ version = 1
 
 [policy]
 mode = "legal"
+
+[[overrides]]
+paths = ["internal/gitenv/env.go"]
+keep_regex = [
+  '^// Package gitenv isolates Git subprocesses from inherited repository selectors\.$',
+]

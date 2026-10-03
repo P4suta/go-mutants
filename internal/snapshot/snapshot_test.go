@@ -549,7 +549,12 @@ func TestCreateWithRelativeDestParent(t *testing.T) {
 
 func assertAbandoned(t *testing.T, src, dest string) {
 	t.Helper()
-	_, err := Create(src, Options{DestParent: dest})
+	snap, err := Create(src, Options{DestParent: dest})
+	if err == nil {
+		paths := relPaths(snap.Manifest)
+		cleanupErr := snap.Cleanup()
+		t.Fatalf("Create succeeded with files %v; cleanup: %v", paths, cleanupErr)
+	}
 	assertCode(t, err, CodeCopy)
 	assertEmptyDir(t, dest)
 }

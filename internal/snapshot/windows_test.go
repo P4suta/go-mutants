@@ -127,6 +127,10 @@ func TestCreateAbandonsAPartialCopy(t *testing.T) {
 		t.Skipf("cannot open a source file exclusively on this machine (%v)", err)
 	}
 	defer func() { _ = syscall.CloseHandle(handle) }()
+	if probe, openErr := os.Open(ExtendedPath(filepath.Join(src, "z.go"))); openErr == nil {
+		_ = probe.Close()
+		t.Fatal("the source fixture must reject reads while exclusively locked")
+	}
 
 	assertAbandoned(t, src, t.TempDir())
 }

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+// Package gitenv isolates Git subprocesses from inherited repository selectors.
 package gitenv
 
 import "strings"
