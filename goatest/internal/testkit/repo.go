@@ -165,7 +165,7 @@ func (repository *Repo) Git() *Repo {
 	git := GitBinary(repository.t)
 	date := strconv.Itoa(GitCommitUnixTime) + " +0000"
 
-	environment := append(os.Environ(),
+	environment := append(GitEnvironment(),
 		"GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_SYSTEM="+os.DevNull,
 		"GIT_AUTHOR_NAME="+GitUserName, "GIT_AUTHOR_EMAIL="+GitUserEmail,
 		"GIT_COMMITTER_NAME="+GitUserName, "GIT_COMMITTER_EMAIL="+GitUserEmail,

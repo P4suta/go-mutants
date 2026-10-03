@@ -1282,6 +1282,7 @@ is the whole of what was asked for and a failure is an error.
 | `internal/tempowner` | Temporary-directory lock, marker, and orphan sweep | implemented |
 | `internal/gocmd` | Locates the toolchain and composes its argument vectors | implemented |
 | `internal/gitdiff` | Which lines of the workspace changed since a ref, for `--changed` | implemented |
+| `internal/gitenv` | Isolates the selected repository from inherited Git hook context | implemented |
 | `internal/runner` | One process, timed, supervised and recorded; tree kill | implemented |
 | `internal/coverage` | covdata textfmt parsing, line overlap mapping per binary and per test | implemented |
 | `internal/probe` | the rule that turns an infection log into executions a run need not make | implemented |

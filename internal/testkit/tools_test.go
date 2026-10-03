@@ -210,6 +210,21 @@ func TestGitIgnoresTheRepositoryVariablesInTheEnvironment(t *testing.T) {
 	}
 }
 
+func TestGitEnvironmentCoversTheContractReportedByGit(t *testing.T) {
+	result := Exec(t, t.TempDir(), GitEnvironment(t), GitBinary(t), "rev-parse", "--local-env-vars")
+	RequireExit(t, result, 0, "query Git repository variables")
+	names := append(strings.Fields(string(result.Stdout)), "GIT_NAMESPACE")
+	for _, name := range names {
+		t.Setenv(name, "controlled-foreign-context")
+	}
+	for _, entry := range GitEnvironment(t) {
+		name, _, _ := strings.Cut(entry, "=")
+		if slices.Contains(names, name) {
+			t.Fatalf("fixture Git inherited repository variable %s", name)
+		}
+	}
+}
+
 func TestGitLeavesNothingInTheRepositoryItWasGiven(t *testing.T) {
 	t.Parallel()
 	GitBinary(t)

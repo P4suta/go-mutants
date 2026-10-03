@@ -27,6 +27,7 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/cache"
 	"github.com/P4suta/go-mutants/goatest/internal/cli"
 	"github.com/P4suta/go-mutants/goatest/internal/config"
+	"github.com/P4suta/go-mutants/goatest/internal/environment"
 	"github.com/P4suta/go-mutants/goatest/internal/repair"
 	"github.com/P4suta/go-mutants/goatest/internal/report"
 	"github.com/P4suta/go-mutants/goatest/internal/trace"
@@ -755,6 +756,7 @@ func gitOutputBytes(ctx context.Context, root string, arguments ...string) ([]by
 	defer cancel()
 	command := exec.CommandContext(bounded, "git", arguments...)
 	command.Dir = root
+	command.Env = environment.Git(nil)
 	output, err := command.Output()
 	if err != nil {
 		return nil, err

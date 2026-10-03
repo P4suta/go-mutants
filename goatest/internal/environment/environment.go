@@ -19,6 +19,11 @@ func Provider(input, allowed []string) []string {
 	return Select(input, names)
 }
 
+func Git(input []string) []string {
+	return Select(input, append(slices.Clone(providerLaunchNames),
+		"XDG_CONFIG_HOME", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"))
+}
+
 func Select(input, allowed []string) []string {
 	if input == nil {
 		input = os.Environ()

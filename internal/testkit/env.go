@@ -457,6 +457,7 @@ func setUnlessInherited(t testing.TB, cfg *envConfig, name, value string) {
 }
 
 func composeFrom(base []string, p policy, cfg *envConfig) []string {
+	base = withoutEntries(base, gitRepositoryVariables...)
 	pairs := policyPairs(p)
 	kept := make([]string, 0, len(base)+len(pairs))
 	for _, entry := range base {

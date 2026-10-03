@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -152,15 +151,20 @@ const (
 
 func gitCommand(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	argv := append([]string{"-C", dir}, args...)
-	command := exec.Command("git", argv...)
-	var stdout, stderr bytes.Buffer
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	if err := command.Run(); err != nil {
-		t.Fatalf("git %s: %v\n%s%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
+	return testkit.Git(t, dir, args...)
+}
+
+func TestGitCommandsCannotSelectAnInheritedRepository(t *testing.T) {
+	foreign := testkit.Copy(t, "simple")
+	testkit.GitInit(t, foreign)
+	root := testkit.Copy(t, "killable")
+	testkit.GitInit(t, root)
+	t.Setenv("GIT_DIR", filepath.Join(foreign, ".git"))
+	t.Setenv("GIT_COMMON_DIR", filepath.Join(foreign, ".git"))
+	t.Setenv("GIT_WORK_TREE", foreign)
+	if got := gitCommand(t, root, "rev-parse", "--show-toplevel"); !testkit.SamePath(got, root) {
+		t.Fatalf("Git selected %s instead of the fixture %s", got, root)
 	}
-	return strings.TrimSpace(stdout.String())
 }
 
 func neutralGitEnvironment(t *testing.T) {

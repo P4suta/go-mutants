@@ -135,6 +135,7 @@ func runGit(t *testing.T, root string, arguments ...string) string {
 	t.Helper()
 	command := exec.CommandContext(t.Context(), testkit.GitBinary(t), arguments...)
 	command.Dir = root
+	command.Env = testkit.GitEnvironment()
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", arguments, err, output)

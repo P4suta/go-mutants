@@ -78,16 +78,15 @@ func Git(t testing.TB, dir string, args ...string) string {
 	t.Helper()
 	git := toolPath(t, "git")
 	argv := append([]string{git, "-C", dir}, args...)
-	result := Exec(t, dir, gitEnv(t), argv...)
+	result := Exec(t, dir, GitEnvironment(t), argv...)
 	RequireExit(t, result, 0, "`git "+strings.Join(args, " ")+"`")
 	return strings.TrimSpace(string(result.Stdout))
 }
 
-func gitEnv(t testing.TB) []string {
+func GitEnvironment(t testing.TB) []string {
 	t.Helper()
 	global, system := absentGitConfig(t.TempDir())
-	base := withoutEntries(os.Environ(),
-		"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR")
+	base := withoutEntries(os.Environ(), gitRepositoryVariables...)
 	return withEntries(base,
 		"GIT_CONFIG_GLOBAL="+global,
 		"GIT_CONFIG_SYSTEM="+system,

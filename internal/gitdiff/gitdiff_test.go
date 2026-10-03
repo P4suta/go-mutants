@@ -38,7 +38,7 @@ func newRepo(t *testing.T) *repo {
 		t:      t,
 		binary: git,
 		dir:    dir,
-		env: append(os.Environ(),
+		env: append(testkit.GitEnvironment(t),
 			"GIT_CONFIG_GLOBAL="+filepath.Join(dir, "absent-global-config"),
 			"GIT_CONFIG_SYSTEM="+filepath.Join(dir, "absent-system-config"),
 			"GIT_AUTHOR_NAME="+testAuthor,
@@ -63,6 +63,27 @@ func (r *repo) git(args ...string) string {
 		r.t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func TestRootCannotBeChangedByAnInheritedGitContext(t *testing.T) {
+	foreign := newRepo(t)
+	foreign.write("foreign.go", "package foreign\n")
+	foreign.commit("foreign repository")
+	root := newRepo(t)
+	root.write("selected.go", "package selected\n")
+	want := root.commit("selected repository")
+	t.Setenv("GIT_DIR", filepath.Join(foreign.dir, ".git"))
+	t.Setenv("GIT_COMMON_DIR", filepath.Join(foreign.dir, ".git"))
+	t.Setenv("GIT_WORK_TREE", foreign.dir)
+	for _, environment := range [][]string{nil, os.Environ()} {
+		changed, err := gitdiff.Resolve(t.Context(), gitdiff.Options{Root: root.dir, Ref: "HEAD", Env: environment})
+		if err != nil {
+			t.Fatalf("resolve the selected repository: %v", err)
+		}
+		if changed.Base != want {
+			t.Fatalf("resolved %s, want selected repository %s", changed.Base, want)
+		}
+	}
 }
 
 func (r *repo) write(rel, content string) {

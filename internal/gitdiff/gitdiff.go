@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/P4suta/go-mutants/internal/gitenv"
 )
 
 const DefaultProgram = "git"
@@ -324,9 +326,9 @@ func (g git) command(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, g.program, argv...)
 	base := g.env
 	if base == nil {
-		base = os.Environ()
+		base = gitenv.Inherited(os.Environ())
 	}
-	cmd.Env = append(slices.Clone(base), "GIT_PAGER=cat", "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(gitenv.ForRoot(base), "GIT_PAGER=cat", "GIT_TERMINAL_PROMPT=0")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
