@@ -13,6 +13,8 @@ import (
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
+	"github.com/P4suta/go-mutants/goatest/internal/tempowner"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 const (
@@ -51,5 +53,11 @@ func TestMain(testingMain *testing.M) {
 		}
 		_, _ = fmt.Fprintf(os.Stdout, "%s: %s=%q\n", narrowedFilterMarker, assureTestRunEnvironment, pattern)
 	}
-	os.Exit(testingMain.Run())
+	testkit.OwnedMain(testingMain, func(root string) error {
+		owner, err := tempowner.Claim(root, tempowner.Marker{RunID: "assure-tests"}, time.Now())
+		if err != nil {
+			return err
+		}
+		return owner.Keep()
+	})
 }

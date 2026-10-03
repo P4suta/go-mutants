@@ -15,6 +15,14 @@ import (
 	"time"
 )
 
+func TestFixtureScratchRootIsKept(t *testing.T) {
+	t.Parallel()
+	marker := readMarker(t, os.TempDir())
+	if marker.Schema != Schema || !marker.Kept {
+		t.Fatalf("fixture scratch ownership = %+v, want a kept parent", marker)
+	}
+}
+
 func TestAcquireRefusesASecondHolderUntilTheFirstReleases(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

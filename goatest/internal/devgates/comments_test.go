@@ -80,7 +80,13 @@ func TestNoOtherFileCarriesACommentThatIsNotAllowed(t *testing.T) {
 	if len(paths) == 0 {
 		t.Fatal("no file was offered to the comment gate")
 	}
-	command := exec.Command(binary, append([]string{"exec", "cargo:ocomment", "--", "ocomment", "check", "--config", filepath.Join(root, ".ocomment.toml"), "--policy", "legal"}, paths...)...)
+	lookup := exec.CommandContext(t.Context(), binary, "which", "ocomment")
+	lookup.Dir, lookup.Env = root, testkit.GitEnvironment()
+	resolved, err := lookup.CombinedOutput()
+	if err != nil {
+		t.Fatalf("resolve the pinned comment gate: %v\n%s", err, resolved)
+	}
+	command := exec.CommandContext(t.Context(), strings.TrimSpace(string(resolved)), append([]string{"check", "--config", filepath.Join(root, ".ocomment.toml"), "--policy", "legal"}, paths...)...)
 	command.Dir = root
 	command.Env = testkit.GitEnvironment()
 	output, err := command.CombinedOutput()
