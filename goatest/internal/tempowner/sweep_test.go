@@ -51,6 +51,10 @@ func abandon(t *testing.T, dir string) {
 	if err := owner.Release(); err != nil {
 		t.Fatal(err)
 	}
+	marker, err := tempowner.ReadMarker(dir)
+	if err != nil || marker.Schema != tempowner.Schema || marker.Kept {
+		t.Fatalf("released fixture marker = %+v, error = %v", marker, err)
+	}
 }
 
 func TestSweepCollectsTheDirectoryOfARunThatWasKilled(t *testing.T) {
@@ -206,7 +210,8 @@ func TestSweepFinishesTheOthersWhenOneEntryCannotBeJudged(t *testing.T) {
 	}
 
 	if !slices.Equal(result.Removed, []string{dead}) || len(result.Errors) != 1 {
-		t.Fatalf("sweep = %+v, want the other directory collected and one failure reported", result)
+		marker, markerErr := tempowner.ReadMarker(unreadable)
+		t.Fatalf("sweep = %+v, want the other directory collected and one failure reported; marker = %+v, marker error = %v", result, marker, markerErr)
 	}
 	if _, err := os.Stat(unreadable); err != nil {
 		t.Fatalf("stat the directory that could not be judged = %v, want it spared", err)
@@ -241,7 +246,8 @@ func TestInspectClassifiesExactlyAsASweepAndRemovesNothing(t *testing.T) {
 	}
 
 	if !slices.Equal(result.Removed, []string{dead}) || result.Kept != 1 || result.RemovedBytes < 2048 {
-		t.Fatalf("inspect = %+v, want the abandoned directory named and the kept one counted", result)
+		marker, markerErr := tempowner.ReadMarker(dead)
+		t.Fatalf("inspect = %+v, want the abandoned directory named and the kept one counted; marker = %+v, marker error = %v", result, marker, markerErr)
 	}
 	if _, err := os.Stat(dead); err != nil {
 		t.Fatalf("stat the abandoned directory after an inspection = %v, want it still there", err)

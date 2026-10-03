@@ -11,9 +11,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/P4suta/go-mutants/goatest/internal/testkit"
 )
 
 func TestChangedFilesCannotSelectAnInheritedRepository(t *testing.T) {
+	binary := testkit.GitBinary(t)
 	repository := func(name string) string {
 		t.Helper()
 		root := t.TempDir()
@@ -27,7 +30,7 @@ func TestChangedFilesCannotSelectAnInheritedRepository(t *testing.T) {
 			"GIT_COMMITTER_NAME=fixture", "GIT_COMMITTER_EMAIL=fixture@example.invalid",
 		}
 		for _, args := range [][]string{{"init", "--quiet"}, {"add", "--all"}, {"commit", "--quiet", "--message", name}} {
-			command := exec.CommandContext(t.Context(), "git", args...)
+			command := exec.CommandContext(t.Context(), binary, args...)
 			command.Dir, command.Env = root, env
 			if output, err := command.CombinedOutput(); err != nil {
 				t.Fatalf("controlled Git fixture: %v\n%s", err, output)
