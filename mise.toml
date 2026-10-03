@@ -98,11 +98,11 @@ run = [
 description = "Check Go and TOML formatting without rewriting any file"
 run = [
   'test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }',
-  "taplo fmt --check mise.toml .go-mutants.toml .ocomment.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml",
+  "taplo fmt --check mise.toml .go-mutants.toml .ocomment.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml tools/release-assets/Cargo.toml",
 ]
 run_windows = [
   'pwsh -NoLogo -NoProfile -Command "$f = gofmt -l .; if ($f) { $f; exit 1 }"',
-  "taplo fmt --check mise.toml .go-mutants.toml .ocomment.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml",
+  "taplo fmt --check mise.toml .go-mutants.toml .ocomment.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml tools/release-assets/Cargo.toml",
 ]
 
 [tasks.lint]
@@ -114,7 +114,7 @@ run = [
   "git ls-files | grep -vE '^(fixtures/|vendor-assets/|LICENSES/)|/testdata/|[.]go$|(^|/)go[.]mod$' | tr '\\n' '\\0' | xargs -0 mise exec cargo:ocomment -- ocomment check --config .ocomment.toml --policy legal",
   "golangci-lint run",
   "typos",
-  "taplo check mise.toml .go-mutants.toml .ocomment.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml",
+  "taplo check mise.toml .go-mutants.toml .ocomment.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml tools/release-assets/Cargo.toml",
   "actionlint",
   "yamllint .github lefthook.yml .golangci.yml",
   "gitleaks dir . --config .gitleaks.toml --no-banner --redact --verbose",
