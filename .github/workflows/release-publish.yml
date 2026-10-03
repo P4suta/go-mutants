@@ -122,7 +122,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.target.outputs.tag }}
         run: >-
-          mise exec -- cargo run --locked --manifest-path tools/release-assets/Cargo.toml --
+          mise exec -- cargo run --locked
+          --manifest-path tools/release-assets/Cargo.toml --
           upload-draft --repo "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG"
           --artifacts dist --distribution-only --allow-other-assets
 
@@ -133,7 +134,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.target.outputs.tag }}
         run: >-
-          mise exec -- cargo run --locked --manifest-path tools/release-assets/Cargo.toml --
+          mise exec -- cargo run --locked
+          --manifest-path tools/release-assets/Cargo.toml --
           prepare-evidence --repo "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG"
           --artifacts dist --output "$GITHUB_OUTPUT"
 
@@ -157,8 +159,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.target.outputs.tag }}
         run: >-
-          mise exec -- cargo run --locked --manifest-path tools/release-assets/Cargo.toml --
-          verify-attestation --repo "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG" --artifacts dist
+          mise exec -- cargo run --locked
+          --manifest-path tools/release-assets/Cargo.toml --
+          verify-attestation --repo "$GITHUB_REPOSITORY"
+          --tag "$RELEASE_TAG" --artifacts dist
 
       - name: Upload signatures and attestation to the GitHub Release
         env:
@@ -166,12 +170,17 @@ jobs:
           RELEASE_TAG: ${{ steps.target.outputs.tag }}
         shell: bash
         run: |
-          mise exec -- cargo run --locked --manifest-path tools/release-assets/Cargo.toml -- \
-            upload-draft --repo "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG" \
-            --asset dist/*.tar.gz dist/*.zip dist/checksums.txt dist/*.sigstore.json
+          mise exec -- cargo run --locked \
+            --manifest-path tools/release-assets/Cargo.toml -- \
+            upload-draft --repo "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --asset dist/*.tar.gz dist/*.zip \
+            dist/checksums.txt dist/*.sigstore.json
 
       - name: Publish the complete draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.target.outputs.tag }}
-        run: gh release edit "$RELEASE_TAG" --draft=false --tag "$RELEASE_TAG" --verify-tag
+        run: >-
+          gh release edit "$RELEASE_TAG" --draft=false
+          --tag "$RELEASE_TAG" --verify-tag
