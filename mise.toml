@@ -106,6 +106,7 @@ run_windows = [
 
 [tasks.lint]
 description = "Run the Go, spelling, TOML, workflow, YAML, secret, and doc linters"
+env = { GOLANGCI_LINT_CACHE = "{{config_root}}/dist/golangci-lint-cache" }
 
 run = [
   "go run ./cmd/gomutants-vet ./... ./goatest/...",
