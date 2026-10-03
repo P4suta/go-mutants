@@ -117,34 +117,34 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: mise exec -- goreleaser release --clean
 
+      - name: Upload verified distribution files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.target.outputs.tag }}
+        run: >-
+          mise exec -- cargo run --locked --manifest-path tools/release-assets/Cargo.toml --
+          upload-draft --repo "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG"
+          --artifacts dist --distribution-only --allow-other-assets
+
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
-      - name: Sign and verify distribution files
-        shell: bash
-        run: |
-          set -euo pipefail
-          workflow_path=".github/workflows/release-publish.yml"
-          identity="https://github.com/${GITHUB_REPOSITORY}/${workflow_path}"
-          identity_regexp="^${identity}@refs/"
-          identity_regexp+="(heads/main|tags/v[0-9]+\\.[0-9]+\\.[0-9]+.*)$"
-          find dist -maxdepth 1 -type f \
-            \( -name '*.tar.gz' -o -name '*.zip' -o -name 'checksums.txt' \) \
-            -print0 > "$RUNNER_TEMP/release-files"
-          while IFS= read -r -d '' file; do
-            cosign sign-blob --yes --bundle "${file}.sigstore.json" "$file"
-            cosign verify-blob \
-              --bundle "${file}.sigstore.json" \
-              --certificate-oidc-issuer \
-              https://token.actions.githubusercontent.com \
-              --certificate-identity-regexp "$identity_regexp" \
-              "$file"
-          done < "$RUNNER_TEMP/release-files"
+      - id: prepare
+        name: Restore or create verified distribution evidence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.target.outputs.tag }}
+        run: >-
+          mise exec -- cargo run --locked --manifest-path tools/release-assets/Cargo.toml --
+          prepare-evidence --repo "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG"
+          --artifacts dist --output "$GITHUB_OUTPUT"
 
       - id: attest
+        if: steps.prepare.outputs.attestation_reused != 'true'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
           subject-checksums: dist/checksums.txt
 
       - name: Retain the GitHub attestation bundle
+        if: steps.prepare.outputs.attestation_reused != 'true'
         shell: bash
         env:
           BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
@@ -152,24 +152,26 @@ jobs:
           set -euo pipefail
           cp "$BUNDLE_PATH" dist/github-attestation.sigstore.json
 
+      - name: Verify distribution provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.target.outputs.tag }}
+        run: >-
+          mise exec -- cargo run --locked --manifest-path tools/release-assets/Cargo.toml --
+          verify-attestation --repo "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG" --artifacts dist
+
       - name: Upload signatures and attestation to the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.target.outputs.tag }}
         shell: bash
         run: |
-          set -euo pipefail
-          mapfile -d '' evidence < <(
-            find dist -maxdepth 1 -type f -name '*.sigstore.json' -print0
-          )
-          if (( ${#evidence[@]} == 0 )); then
-            echo "no signature bundles found under dist" >&2
-            exit 1
-          fi
-          gh release upload "$RELEASE_TAG" "${evidence[@]}"
+          mise exec -- cargo run --locked --manifest-path tools/release-assets/Cargo.toml -- \
+            upload-draft --repo "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG" \
+            --asset dist/*.tar.gz dist/*.zip dist/checksums.txt dist/*.sigstore.json
 
       - name: Publish the complete draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.target.outputs.tag }}
-        run: gh release edit "$RELEASE_TAG" --draft=false
+        run: gh release edit "$RELEASE_TAG" --draft=false --tag "$RELEASE_TAG" --verify-tag

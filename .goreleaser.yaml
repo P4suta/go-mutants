@@ -57,5 +57,6 @@ release:
   mode: keep-existing
   draft: true
   use_existing_draft: true
+  skip_upload: true
   prerelease: true
   replace_existing_artifacts: false

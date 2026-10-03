@@ -5,6 +5,7 @@ reports/mutation/
 **/reports/mutation/
 
 dist/
+tools/release-assets/target/
 bin/
 /go-mutants
 /testcost

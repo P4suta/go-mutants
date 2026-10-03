@@ -5,7 +5,7 @@
 version = 1
 
 [[annotations]]
-path = ["go.mod", "go.sum", "go.work.sum"]
+path = ["go.mod", "go.sum", "go.work.sum", "tools/release-assets/Cargo.lock"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 go-mutants contributors"
 SPDX-License-Identifier = "MIT OR Apache-2.0"

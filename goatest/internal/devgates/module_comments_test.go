@@ -54,16 +54,37 @@ func moduleCommentOffenders(data []byte) ([]string, error) {
 		}
 	}
 	if file.Module != nil && file.Module.Deprecated != "" {
-		var lines []string
 		comments := file.Module.Syntax.Comment()
-		for _, group := range [][]modfile.Comment{comments.Before, comments.Suffix} {
-			for _, comment := range group {
+		matched := false
+		var paragraph []modfile.Comment
+		matchParagraph := func() {
+			var lines []string
+			for _, comment := range paragraph {
 				lines = append(lines, strings.TrimSpace(strings.TrimPrefix(comment.Token, "//")))
 			}
+			text := strings.Join(lines, "\n")
+			message, deprecated := strings.CutPrefix(text, "Deprecated:")
+			if !matched && deprecated && strings.TrimLeft(message, " ") == file.Module.Deprecated {
+				for _, comment := range paragraph {
+					protected[comment.Start.Byte] = true
+				}
+				matched = true
+			}
+			paragraph = nil
 		}
-		if strings.Join(lines, "\n") == "Deprecated: "+file.Module.Deprecated {
-			protect(comments)
+		for _, group := range [][]modfile.Comment{comments.Before, comments.Suffix} {
+			for _, comment := range group {
+				if !strings.HasPrefix(comment.Token, "//") {
+					continue
+				}
+				if strings.TrimSpace(strings.TrimPrefix(comment.Token, "//")) == "" {
+					matchParagraph()
+				} else {
+					paragraph = append(paragraph, comment)
+				}
+			}
 		}
+		matchParagraph()
 	}
 	var offenders []string
 	check := func(comments *modfile.Comments) {
@@ -108,6 +129,11 @@ func TestModuleCommentRulesPreserveCompilerObservedMetadata(t *testing.T) {
 		{name: "block retraction reason", body: "module example.com/fixture\n// Broken API.\nretract (\nv0.1.0\n)\n"},
 		{name: "indirect dependency", body: "module example.com/fixture\nrequire example.com/dependency v1.0.0 // indirect\n"},
 		{name: "deprecation", body: "// Deprecated: Use example.com/replacement.\nmodule example.com/fixture\n"},
+		{name: "licensed deprecation", body: "// SPDX-License-Identifier: MIT\n//\n// Deprecated: Use example.com/replacement.\nmodule example.com/fixture\n"},
+		{name: "deprecation with observed suffix", body: "// Deprecated: Use example.com/replacement.\nmodule example.com/fixture // It preserves this API.\n"},
+		{name: "multiline licensed deprecation", body: "// SPDX-License-Identifier: MIT\n//\n// Deprecated:  Use example.com/replacement.\n// It preserves this API.\nmodule example.com/fixture\n"},
+		{name: "deprecation with history", body: "// Unneeded history.\n//\n// Deprecated: Use example.com/replacement.\n//\n// More history.\nmodule example.com/fixture\n", want: 2},
+		{name: "nonparagraph deprecation", body: "// SPDX-License-Identifier: MIT\n// Deprecated: Use example.com/replacement.\nmodule example.com/fixture\n", want: 1},
 		{name: "unobserved note", body: "// Unneeded history.\nmodule example.com/fixture\n", want: 1},
 		{name: "unobserved block history", body: "module example.com/fixture\n// Unneeded history.\nretract (\nv0.1.0 // Broken API.\n)\n", want: 1},
 		{name: "trailing note", body: "module example.com/fixture\n// Unneeded history.\n", want: 1},

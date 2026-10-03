@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 module github.com/P4suta/go-mutants/goatest
 
 go 1.26.0
