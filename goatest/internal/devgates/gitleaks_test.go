@@ -126,9 +126,9 @@ func TestTheLintTaskUsesTheScannerAllowlist(t *testing.T) {
 	if err := toml.Unmarshal(data, &manifest); err != nil {
 		t.Fatalf("decode %s: %v", miseManifest, err)
 	}
-	lint, ok := manifest.Tasks["lint"]
+	lint, ok := manifest.Tasks["lint-text"]
 	if !ok {
-		t.Fatalf("%s declares no lint task", miseManifest)
+		t.Fatalf("%s declares no text lint task", miseManifest)
 	}
 	steps := taskSteps(t, lint.Run)
 	var found bool
@@ -138,7 +138,7 @@ func TestTheLintTaskUsesTheScannerAllowlist(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("the lint task runs %v, none of which hands gitleaks %s", steps, gitleaksConfiguration)
+		t.Errorf("the text lint task runs %v, none of which hands gitleaks %s", steps, gitleaksConfiguration)
 	}
 }
 
