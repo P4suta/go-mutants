@@ -2,27 +2,30 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
 [tools]
-go = "1.26.6"
-rust = { version = "1.99.0", profile = "minimal", components = [
+go = { version = "1.26.6", lazy = true }
+rust = { version = "1.99.0", profile = "minimal", lazy = true, components = [
   "rustfmt",
   "clippy",
 ] }
-golangci-lint = "2.12.2"
-goreleaser = "2.17.1"
+golangci-lint = { version = "2.12.2", lazy = true }
+goreleaser = { version = "2.17.1", lazy = true }
 lefthook = "2.1.10"
 just = "1.57.0"
+jq = "1.8.2"
+python = { version = "3.13.16", lazy = true }
+uv = { version = "0.13.1", lazy = true }
 actionlint = "1.7.12"
 typos = "1.48.0"
 taplo = "0.10.0"
 "ubi:crate-ci/committed" = "1.1.11"
 gitleaks = "8.30.1"
-yamllint = "1.38.0"
+yamllint = { version = "1.38.0", lazy = true, lazy_bins = ["yamllint"] }
 rumdl = "0.2.43"
-"cargo:ocomment" = "0.1.0"
+"cargo:ocomment" = { version = "0.1.0", lazy = true, lazy_bins = ["ocomment"] }
 
 [tasks.bootstrap]
 description = "Install the pinned toolchain, download modules, and install hooks"
-run = ["mise install", "go mod download", "lefthook install"]
+run = ["mise install --include-lazy", "go mod download", "lefthook install"]
 
 [tasks.build]
 description = "Build every package and run the vet gate"
@@ -39,8 +42,8 @@ run = [
 ]
 
 [tasks.test]
-description = "Run the unit test suite"
-run = "go test -timeout 15m ./... ./goatest/..."
+description = "Run fresh unit tests, including subprocess-backed repository checks"
+run = "go test -count=1 -timeout 15m ./... ./goatest/..."
 
 [tasks.test-race]
 description = "Run the unit test suite under the race detector"
@@ -99,41 +102,88 @@ run = [
 
 [tasks.fmt]
 description = "Check Go and TOML formatting without rewriting any file"
-run = [
-  'test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }',
-  "taplo fmt --check mise.toml .go-mutants.toml .ocomment.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml tools/release-assets/Cargo.toml",
-]
+run = ["mise run fmt-go", "mise run fmt-toml"]
+
+[tasks.fmt-go]
+description = "Check Go formatting without rewriting source"
+run = '''
+set -eu
+files="$(gofmt -l .)"
+if [ -n "$files" ]; then
+  printf '%s\n' "$files"
+  exit 1
+fi
+'''
 run_windows = [
-  'pwsh -NoLogo -NoProfile -Command "$f = gofmt -l .; if ($f) { $f; exit 1 }"',
-  "taplo fmt --check mise.toml .go-mutants.toml .ocomment.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml tools/release-assets/Cargo.toml",
+  'pwsh -NoLogo -NoProfile -Command "$f = gofmt -l .; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; if ($f) { $f; exit 1 }"',
 ]
 
-[tasks.lint]
-description = "Run the Go, spelling, TOML, workflow, YAML, secret, and doc linters"
+[tasks.fmt-toml]
+description = "Check TOML formatting"
+run = "taplo fmt --check mise.toml repository.toml .go-mutants.toml .ocomment.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml tools/release-assets/Cargo.toml"
+
+[tasks.lint-go]
+description = "Run typed Go analysis and source comment checks"
 env = { GOLANGCI_LINT_CACHE = "{{config_root}}/dist/golangci-lint-cache" }
 
 run = [
   "go run ./cmd/gomutants-vet ./... ./goatest/...",
   "git ls-files | grep -vE '^(fixtures/|vendor-assets/|LICENSES/)|/testdata/|[.]go$|(^|/)go[.]mod$' | tr '\\n' '\\0' | xargs -0 mise exec cargo:ocomment -- ocomment check --config .ocomment.toml --policy legal",
   "golangci-lint run",
+]
+run_windows = [
+  "go run ./cmd/gomutants-vet ./... ./goatest/...",
+  '''pwsh -NoLogo -NoProfile -Command "$paths = @(git ls-files | Where-Object { $_ -notmatch '^(fixtures/|vendor-assets/|LICENSES/)|/testdata/|[.]go$|(^|/)go[.]mod$' }); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; if ($paths.Count -eq 0) { throw 'No files reached the comment gate' }; mise exec cargo:ocomment -- ocomment check --config .ocomment.toml --policy legal @paths; exit $LASTEXITCODE"''',
+  "golangci-lint run",
+]
+
+[tasks.lint-text]
+description = "Check spelling, TOML, workflows, YAML, secrets, and documentation"
+run = [
   "typos",
-  "taplo check mise.toml .go-mutants.toml .ocomment.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml tools/release-assets/Cargo.toml",
+  "taplo check mise.toml repository.toml .go-mutants.toml .ocomment.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml tools/release-assets/Cargo.toml",
   "actionlint",
   "yamllint .github lefthook.yml .golangci.yml",
   "gitleaks dir . --config .gitleaks.toml --no-banner --redact --verbose",
   "rumdl check .",
 ]
 
-[tasks.check]
-description = "Run every local gate that CI runs, in CI order"
+[tasks.lint]
+description = "Run the source and text linters"
+run = ["mise run lint-go", "mise run lint-text"]
+
+[tasks.check-source]
+description = "Check Go formatting, module builds, tests, and typed analysis"
 run = [
   "mise run fmt",
   "mise run build",
   "mise run build-published",
-  "mise run release-assets-check",
   "mise run test",
-  "mise run lint",
+  "mise run lint-go",
 ]
+
+[tasks.check]
+description = "Run the complete deterministic source and release checks"
+run = [
+  "mise run check-source",
+  "mise run release-assets-check",
+  "mise run lint-text",
+]
+
+[tasks.check-corpus]
+description = "Reject changes and generated outputs in the fixture corpus"
+run = '''
+set -eu
+changed="$(git status --porcelain --ignored -- fixtures)"
+if [ -n "$changed" ]; then
+  printf '%s\n' "$changed"
+  exit 1
+fi
+'''
+run_windows = '''
+pwsh -NoLogo -NoProfile -Command "$dirty = git status --porcelain --ignored -- fixtures; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; if ($dirty) { $dirty; exit 1 }"
+'''
+
 [tasks.release-assets-check]
 description = "Verify draft reconciliation through controlled GitHub API failures"
 run = [

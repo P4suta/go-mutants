@@ -82,6 +82,20 @@ fn fixture_binary() -> &'static PathBuf {
             }),
         )
         .expect("controlled signing fixture");
+        let jq = Command::new("mise")
+            .args(["which", "jq"])
+            .output()
+            .expect("resolve the pinned JSON tool");
+        assert!(
+            jq.status.success(),
+            "the pinned JSON tool must be installed"
+        );
+        let jq = String::from_utf8(jq.stdout).expect("JSON tool path");
+        fs::copy(
+            jq.trim(),
+            output.join(if cfg!(windows) { "jq.exe" } else { "jq" }),
+        )
+        .expect("controlled JSON tool without a mise shim");
         binary
     })
 }
@@ -202,6 +216,12 @@ impl Fixture {
             .args(["--noprofile", "--norc", "-c", &self.body])
             .output()
             .expect("execute the production algorithm against the Rust API fixture");
+        if !result.status.success() {
+            eprintln!(
+                "controlled workflow stderr:\n{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
         let attempt = Uuid::new_v4();
         fs::write(workspace.join(format!("{attempt}.stdout")), result.stdout)
             .expect("fixture stdout evidence");

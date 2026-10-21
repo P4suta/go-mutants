@@ -5,11 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Documentation
 
-**Status: this index names every page under `docs/`, and a test refuses one it
-does not name.** `internal/testkit/docsindex_test.go` keeps the set here, the
-set on disk, and the list in the repository's own README equal — and refuses a
-page that does not say, under its title, how much of what it describes is
-built.
+**Status: implemented.** `internal/testkit/docsindex_test.go` checks that this index links every page under `docs/`, the repository README links this index, and every page declares its implementation status.
 
 Every page opens with that **Status** line for one reason: a reader should
 never have to guess whether they are reading a description of something that
@@ -46,8 +42,7 @@ What go-mutants is, what it produces, and what it will refuse to do.
 
 - [Development](development.md) — the test harness, the two tiers, where a test
   writes, what a failure leaves behind, and how to read it
-- [Continuous integration](ci.md) — what runs on every push, what runs nightly,
-  and how to run any of it yourself
+- [Continuous integration](ci.md) — checks selected for pull requests, manual verification, and local commands
 - [Architecture decision records](adr/README.md) — the decisions that constrain
   code nobody has written yet
 - [Release checklist](release-checklist.md) — what has to be true, and proven by

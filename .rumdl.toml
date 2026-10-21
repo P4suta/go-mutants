@@ -4,3 +4,6 @@
 
 [global]
 exclude = [".release-please"]
+
+[MD013]
+paragraphs = false

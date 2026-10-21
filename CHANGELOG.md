@@ -4288,6 +4288,11 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+Verification selects source, native, packaging, and action checks by affected contracts so documentation changes do not rebuild every platform.
+Fuzzing, full mutation, and benchmark campaigns require an explicit request, while the required aggregate rejects missing or skipped selected checks.
+The short overview links the complete documentation index and uses the shared Renovate preset for dependency maintenance.
+Repository-contract tests use fresh verdicts, and controlled release fixtures resolve the pinned JSON tool without intercepting its Windows shim.
+
 - **`baseline_runs` buys what it says it buys.** The setting asks for that many
   timed runs of the test command; a plain `go test` gave one. `go test` keeps a
   passing result and reprints it, and in a fresh snapshot the first run misses

@@ -13,7 +13,6 @@ identities are deterministic**.
 
 ```console
 mise trust
-mise install
 mise run bootstrap
 mise run check
 mise run hooks
@@ -95,29 +94,25 @@ walkthrough, and [`docs/trace-v1.md`](docs/trace-v1.md) is the event contract.
 
 ## Expectations
 
-- Run `mise run check` before submitting; run `mise run test-integration` when
-  you touch snapshotting, the runner, or anything that shells out to `go`.
-- The suites' child `go` commands compile into a build cache of the harness's
-  own rather than into yours, because they key every entry on a path that exists
-  for a single run. `mise run test-cache-status` says where it is and how much
-  it holds; `mise run test-clean` empties it. `test-integration` and `dogfood`
-  run through a wrapper that empties it after a run that left it over 4 GiB.
-- Keep `internal/mutation`, `internal/interval`, and `internal/glob` pure: no
-  filesystem, no processes, no clock. That purity is what makes golden ID
-  vectors and property tests meaningful.
-- Never mutate a target workspace, including dirty and untracked files. New
-  filesystem code belongs behind `internal/snapshot`.
-- A new operator needs a stable name, a rule version, type evidence from
-  `go/types`, byte-preservation tests, and a row in `docs/operators.md`.
-  Changing what an existing rule emits requires a version bump, because the
-  version is part of every affected mutant ID.
-- Treat new configuration keys and JSON fields as compatibility work: update
-  `docs/configuration.md`, `docs/json-schema.md`, and the schemas together.
-- Add an SPDX header to every new file (`// SPDX-FileCopyrightText: 2026
-  go-mutants contributors` and `// SPDX-License-Identifier: MIT OR
-  Apache-2.0`). Files that cannot carry one are annotated in `REUSE.toml`.
-- Write LF line endings. `.gitattributes` pins `* -text`, and CRLF would change
-  every mutant ID.
+- Run `mise run lint-text` for documentation and metadata changes.
+  Run `mise run check-source` for Go changes and `mise run release-assets-check` for release tooling.
+  The pre-push hook also selects integration and race checks for native behavior, module dependencies, and verification configuration.
+  `mise run check` remains the complete deterministic check.
+  Full mutation, fuzz, packaging, and benchmark campaigns are explicit commands described in [the CI guide](docs/ci.md).
+- The suites' child `go` commands compile into a build cache of the harness's own rather than into yours, because they key every entry on a path that exists for a single run.
+  `mise run test-cache-status` says where it is and how much it holds; `mise run test-clean` empties it.
+  `test-integration` and `dogfood` run through a wrapper that empties it after a run that left it over 4 GiB.
+- Keep `internal/mutation`, `internal/interval`, and `internal/glob` pure: no filesystem, no processes, no clock.
+  That purity is what makes golden ID vectors and property tests meaningful.
+- Never mutate a target workspace, including dirty and untracked files.
+  New filesystem code belongs behind `internal/snapshot`.
+- A new operator needs a stable name, a rule version, type evidence from `go/types`, byte-preservation tests, and a row in `docs/operators.md`.
+  Changing what an existing rule emits requires a version bump, because the version is part of every affected mutant ID.
+- Treat new configuration keys and JSON fields as compatibility work: update `docs/configuration.md`, `docs/json-schema.md`, and the schemas together.
+- Add an SPDX header to every new file (`// SPDX-FileCopyrightText: 2026 go-mutants contributors` and `// SPDX-License-Identifier: MIT OR Apache-2.0`).
+  Files that cannot carry one are annotated in `REUSE.toml`.
+- Write LF line endings.
+  `.gitattributes` pins `* -text`, and CRLF would change every mutant ID.
 
 ## Commits and pull requests
 

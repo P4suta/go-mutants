@@ -28,7 +28,7 @@ fn run() -> Result<bool, Box<dyn std::error::Error>> {
     if matches!(executable.file_stem().and_then(|name| name.to_str()), Some("cargo" | "mise")) {
         let index = args.iter().rposition(|arg| arg == "--").ok_or("missing controlled command separator")?;
         if !matches!(args.get(index + 1).map(String::as_str), Some("upload-draft" | "prepare-evidence" | "verify-attestation")) {
-            return Err("unsupported fixture tool command".into());
+            return Err(format!("unsupported fixture tool command: {args:?}").into());
         }
         return Ok(Command::new(env::var_os("RELEASE_XTASK_BINARY").ok_or("missing fixture binary")?)
             .args(&args[index + 1..]).status()?.success());

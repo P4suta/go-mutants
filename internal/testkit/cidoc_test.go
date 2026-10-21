@@ -21,7 +21,7 @@ const (
 	actionsDir     = ".github/actions"
 	actionFile     = "action.yml"
 	gatesSection   = "The gates"
-	nightlySection = "The nightly searches"
+	nightlySection = "Manual verification"
 	actionSection  = "The composite action"
 )
 

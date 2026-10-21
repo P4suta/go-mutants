@@ -92,9 +92,15 @@ jobs:
           gh release view "$RELEASE_TAG" --json isDraft \
             | jq --exit-status '.isDraft == true'
 
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          install: true
+          version: v2026.10.13
+          sha256: >-
+            94c45523c7b6760b7da704f16051171ca32e8447a849a02266a439a4455e9a12
+          install_args: >-
+            go rust golangci-lint goreleaser cargo:ocomment actionlint typos
+            taplo ubi:crate-ci/committed gitleaks yamllint rumdl just lefthook
+            jq python uv
           cache: true
 
       - run: mise run check
