@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 
 const goModVersionMatchFields = 2
 
-func TestGoMutantsEvidenceVersionMatchesPinnedModule(t *testing.T) {
+func TestGoMutantsEvidenceVersionMatchesBuildMode(t *testing.T) {
 	_, source, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("test source path is unavailable")
@@ -31,6 +32,17 @@ func TestGoMutantsEvidenceVersionMatchesPinnedModule(t *testing.T) {
 	}
 	pinned := strings.TrimSpace(string(match[1]))
 	resolved, err := assure.GoMutantsVersion()
+	if info, available := debug.ReadBuildInfo(); available {
+		for _, dependency := range info.Deps {
+			if dependency == nil || dependency.Path != "github.com/P4suta/go-mutants" || dependency.Version != "(devel)" || dependency.Replace != nil {
+				continue
+			}
+			if resolved != "" || err == nil || !strings.Contains(err.Error(), "carries no auditable version") {
+				t.Fatalf("workspace version = (%q, %v); an unversioned module must be rejected", resolved, err)
+			}
+			return
+		}
+	}
 	if err != nil {
 		if !strings.Contains(err.Error(), "absent from build info") {
 			t.Fatal(err)
