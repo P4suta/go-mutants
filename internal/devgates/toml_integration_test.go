@@ -17,8 +17,8 @@ import (
 )
 
 var tomlGates = map[string]string{
-	"fmt":  "taplo fmt --check ",
-	"lint": "taplo check ",
+	"fmt-toml":  "taplo fmt --check ",
+	"lint-text": "taplo check ",
 }
 
 func TestTheTomlGateNamesEveryTomlFileGitTracks(t *testing.T) {

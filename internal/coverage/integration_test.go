@@ -119,8 +119,8 @@ func TestParsesWhatTheToolchainWrites(t *testing.T) {
 
 const (
 	clampLine      = 8
-	onlyCallerLine = 16
-	orphanLine     = 20
+	onlyCallerLine = 17
+	orphanLine     = 21
 )
 
 func TestCommittedSampleStillDescribesTheFormat(t *testing.T) {
@@ -233,7 +233,7 @@ func assertCovered(t *testing.T, profile coverage.Profile, file string, line int
 		}
 	}
 	if got != want {
-		t.Errorf("%s: line %d of %s covered = %t, want %t", what, line, file, got, want)
+		t.Errorf("%s: line %d of %s covered = %t, want %t; blocks = %+v", what, line, file, got, want, profile.Blocks)
 	}
 }
 

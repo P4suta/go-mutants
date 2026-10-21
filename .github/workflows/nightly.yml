@@ -2,12 +2,23 @@
 # SPDX-FileCopyrightText: 2026 go-mutants contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-name: Nightly fuzz and property
+name: Manual deep verification
 
 "on":
-  schedule:
-    - cron: "17 2 * * *"
   workflow_dispatch:
+    inputs:
+      check:
+        description: Verification to run
+        type: choice
+        required: true
+        default: bench
+        options:
+          - fuzz
+          - property
+          - race-integration
+          - dogfood-audit
+          - dogfood-runner
+          - bench
 
 permissions:
   contents: read
@@ -16,11 +27,26 @@ env:
   GO_MUTANTS_TEST_REQUIRE_TOOLS: "1"
 
 concurrency:
-  group: nightly-${{ github.workflow }}
+  group: manual-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  selection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - name: Validate the requested verification
+        env:
+          CHECK: ${{ inputs.check }}
+        run: >-
+          jq -en --arg check "$CHECK"
+          '$check | IN("fuzz", "property", "race-integration",
+          "dogfood-audit", "dogfood-runner", "bench")'
+
   fuzz:
+    needs: [selection]
+    if: inputs.check == 'fuzz'
     name: fuzz ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -66,9 +92,10 @@ jobs:
             echo "GO_MUTANTS_TEST_KEEP_DIR=$RUNNER_TEMP/go-mutants-kept"
           } >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          install: true
+          version: v2026.10.13
+          install_args: go jq
           cache: true
       - name: Fuzz for five minutes
         run: >-
@@ -76,21 +103,14 @@ jobs:
           -fuzztime=5m ${{ matrix.package }}
       - name: The corpus is unchanged
         if: success() || failure()
-        shell: bash
-        run: |
-          changed="$(git status --porcelain --ignored -- fixtures)"
-          if [ -n "$changed" ]; then
-            echo "::error::the test suite wrote into fixtures/:"
-            echo "$changed"
-            exit 1
-          fi
+        run: mise run check-corpus
       - name: Collect the failing input
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: fuzz-crasher-${{ matrix.target }}
           path: internal/*/testdata/fuzz/**
-          retention-days: 14
+          retention-days: 7
           if-no-files-found: warn
       - name: Upload what the failed tests kept
         if: failure()
@@ -98,10 +118,12 @@ jobs:
         with:
           name: kept-scratch-fuzz-${{ matrix.target }}
           path: ${{ runner.temp }}/go-mutants-kept
-          retention-days: 14
+          retention-days: 7
           if-no-files-found: ignore
 
   property:
+    needs: [selection]
+    if: inputs.check == 'property'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -116,9 +138,10 @@ jobs:
             echo "GO_MUTANTS_TEST_KEEP_DIR=$RUNNER_TEMP/go-mutants-kept"
           } >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          install: true
+          version: v2026.10.13
+          install_args: go jq
           cache: true
       - name: Property suites, deepened and repeated
         run: >-
@@ -127,21 +150,14 @@ jobs:
           ./internal/mutation/...
       - name: The corpus is unchanged
         if: success() || failure()
-        shell: bash
-        run: |
-          changed="$(git status --porcelain --ignored -- fixtures)"
-          if [ -n "$changed" ]; then
-            echo "::error::the test suite wrote into fixtures/:"
-            echo "$changed"
-            exit 1
-          fi
+        run: mise run check-corpus
       - name: Collect the shrunk failing case
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: rapid-failures
           path: internal/*/testdata/rapid/**
-          retention-days: 14
+          retention-days: 7
           if-no-files-found: warn
       - name: Upload what the failed tests kept
         if: failure()
@@ -149,10 +165,12 @@ jobs:
         with:
           name: kept-scratch-property
           path: ${{ runner.temp }}/go-mutants-kept
-          retention-days: 14
+          retention-days: 7
           if-no-files-found: ignore
 
   race-integration:
+    needs: [selection]
+    if: inputs.check == 'race-integration'
     runs-on: ubuntu-latest
     timeout-minutes: 100
     steps:
@@ -167,21 +185,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+          persist-credentials: false
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          install: true
+          version: v2026.10.13
+          install_args: go rust cargo:ocomment jq
           cache: true
       - run: mise run test-integration-race
       - name: The corpus is unchanged
         if: success() || failure()
-        shell: bash
-        run: |
-          changed="$(git status --porcelain --ignored -- fixtures)"
-          if [ -n "$changed" ]; then
-            echo "::error::the test suite wrote into fixtures/:"
-            echo "$changed"
-            exit 1
-          fi
+        run: mise run check-corpus
       - name: Test build cache
         if: success() || failure()
         continue-on-error: true
@@ -192,23 +205,29 @@ jobs:
         with:
           name: kept-scratch-race-integration
           path: ${{ runner.temp }}/go-mutants-kept
-          retention-days: 14
+          retention-days: 7
           if-no-files-found: ignore
 
   dogfood-audit:
+    needs: [selection]
+    if: inputs.check == 'dogfood-audit'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+          persist-credentials: false
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          install: true
+          version: v2026.10.13
+          install_args: go jq
           cache: true
       - run: mise run dogfood-audit
 
   dogfood-runner:
+    needs: [selection]
+    if: inputs.check == 'dogfood-runner'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -220,9 +239,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+          persist-credentials: false
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          install: true
+          version: v2026.10.13
+          install_args: go rust cargo:ocomment jq
           cache: true
       - name: The report the last run left
         shell: bash
@@ -242,7 +263,7 @@ jobs:
           name: assurance-report-full
           path: goatest/.goatest/latest-full.json
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 7
       - name: What moved since the last run
         if: always()
         shell: bash
@@ -256,6 +277,8 @@ jobs:
           mise run report-diff -- "$before" "$after" || true
 
   bench:
+    needs: [selection]
+    if: inputs.check == 'bench'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -265,26 +288,20 @@ jobs:
           echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
           >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          install: true
+          version: v2026.10.13
+          install_args: go jq
           cache: true
       - run: mise run bench
       - name: The corpus is unchanged
         if: always()
-        shell: bash
-        run: |
-          changed="$(git status --porcelain --ignored -- fixtures)"
-          if [ -n "$changed" ]; then
-            echo "::error::the test suite wrote into fixtures/:"
-            echo "$changed"
-            exit 1
-          fi
+        run: mise run check-corpus
       - name: Upload the benchmark output
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: bench
           path: bench.txt
-          retention-days: 14
+          retention-days: 7
           if-no-files-found: warn

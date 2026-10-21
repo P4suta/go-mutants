@@ -79,7 +79,7 @@ func TestEveryDocumentationPageDeclaresItsStatus(t *testing.T) {
 	}
 }
 
-func TestTheReadmeDocumentationListAndTheDocsIndexAgree(t *testing.T) {
+func TestTheReadmeLinksTheDocumentationIndex(t *testing.T) {
 	t.Parallel()
 
 	root := Root(t)
@@ -97,16 +97,8 @@ func TestTheReadmeDocumentationListAndTheDocsIndexAgree(t *testing.T) {
 		t.Fatalf("README.md's Documentation section links to no page")
 	}
 
-	var fromIndex []string
-	for _, target := range linksIn(t, filepath.Join(root, filepath.FromSlash(docsIndex))) {
-		fromIndex = append(fromIndex, filepath.ToSlash(filepath.Clean(filepath.Join(docsDir, target))))
-	}
-
-	slices.Sort(fromReadme)
-	slices.Sort(fromIndex)
-	if !slices.Equal(slices.Compact(fromReadme), slices.Compact(fromIndex)) {
-		t.Errorf("README.md's Documentation list and %s name different sets:\n\tREADME: %v\n\tindex:  %v",
-			docsIndex, fromReadme, fromIndex)
+	if !slices.Contains(fromReadme, docsIndex) {
+		t.Errorf("README.md's Documentation section does not link to %s", docsIndex)
 	}
 }
 

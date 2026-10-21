@@ -1,0 +1,18 @@
+name = "go-mutants"
+summary = "Mutation testing for Go modules"
+install = """
+git clone https://github.com/P4suta/go-mutants.git
+cd go-mutants
+go install ./cmd/go-mutants
+"""
+usage = """
+cd path/to/your-module
+go-mutants run
+"""
+documentation_index = true
+copyright = "2026 go-mutants contributors"
+license = "MIT OR Apache-2.0"
+
+[[consent]]
+contributor = "Yasunobu"
+evidence = "https://github.com/P4suta/go-mutants/commit/868d67d7bede06daa3dab9d18c3404ca82c32ad5"

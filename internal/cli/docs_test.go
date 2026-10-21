@@ -17,7 +17,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-var exitCodePages = []string{"README.md", commandLineDoc}
+var exitCodePages = []string{commandLineDoc}
 
 const exitCodeHeading = "## Exit codes"
 

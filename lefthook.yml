@@ -2,15 +2,18 @@
 # SPDX-FileCopyrightText: 2026 go-mutants contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
+glob_matcher: doublestar
+
 pre-commit:
   parallel: true
   commands:
     format:
-      run: mise run fmt
+      glob: "**/*.go"
+      run: mise run fmt-go
     typos:
       run: typos
     toml:
-      glob: "*.toml"
+      glob: "**/*.toml"
       run: taplo check {staged_files}
     workflows:
       glob: ".github/workflows/*.yml"
@@ -19,26 +22,58 @@ pre-commit:
 pre-push:
   piped: true
   commands:
-    1_check:
-      run: mise run check
-    2_published:
-      run: mise run build-published
+    1_text:
+      run: mise run lint-text
+    2_source:
+      glob: &code
+        - "**/*.go"
+        - "**/go.{mod,sum}"
+        - "go.work{,.sum}"
+        - "schema/**"
+        - "goatest/profiles/**"
+        - "internal/**/testdata/**"
+        - ".go-mutants.toml"
+        - "goatest/.goatest.toml"
+        - ".golangci.yml"
+        - "mise.toml"
+        - ".github/filters/ci.yml"
+        - ".github/workflows/ci.yml"
+      run: mise run check-source
     3_integration:
+      glob: &native
+        - "**/*.go"
+        - "**/go.{mod,sum}"
+        - "go.work{,.sum}"
+        - ".go-mutants.toml"
+        - "goatest/.goatest.toml"
+        - "mise.toml"
+        - ".github/filters/ci.yml"
+        - ".github/workflows/ci.yml"
+      exclude: &pure
+        - "internal/{mutation,interval,glob,devgates}/**/*.go"
+        - "internal/testkit/{docsindex_test,cidoc_test,devdocs_test,archdoc_test}.go"
       run: mise run test-cost-integration
     4_race:
+      glob: *native
+      exclude: *pure
       run: mise run test-race
-    5_dogfood:
-      run: mise run dogfood
-    6_package:
-      run: mise run package
-    7_corpus:
-      run: |
-        dirty=$(git status --porcelain --ignored -- fixtures)
-        if [ -n "$dirty" ]; then
-          printf '%s\n' "$dirty"
-          echo "a run left something behind in the corpus" >&2
-          exit 1
-        fi
+    5_release:
+      glob:
+        - ".goreleaser.{yml,yaml}"
+        - "tools/release-assets/**"
+        - "**/go.{mod,sum}"
+        - "go.work{,.sum}"
+        - "VERSION"
+        - "internal/cli/root.go"
+        - "release-please-config.json"
+        - ".release-please-manifest.json"
+        - ".github/workflows/release-*.yml"
+        - "mise.toml"
+        - ".github/filters/ci.yml"
+        - ".github/workflows/ci.yml"
+      run: mise run release-assets-check
+    6_corpus:
+      run: mise run check-corpus
 
 commit-msg:
   commands:

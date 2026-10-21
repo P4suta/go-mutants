@@ -2,6 +2,8 @@
 
 use std::{env, fs, io::Write, path::{Path, PathBuf}, process::{Command, ExitCode}};
 
+const OIDC_ISSUER: &str = "https://token.actions.githubusercontent.com";
+
 fn journal(root: &Path, name: &str, entry: &str) -> std::io::Result<()> {
     writeln!(fs::OpenOptions::new().append(true).open(root.join(name))?, "{entry}")
 }
@@ -20,7 +22,7 @@ fn run() -> Result<bool, Box<dyn std::error::Error>> {
         return match operation.as_str() {
             "sign-blob" => { fs::write(&bundle[1], expected)?; Ok(true) }
             "verify-blob" => Ok(fs::read(&bundle[1])? == expected
-                && args.windows(2).any(|pair| pair == ["--certificate-oidc-issuer", "https://token.actions.githubusercontent.com"])
+                && args.windows(2).any(|pair| pair == ["--certificate-oidc-issuer", OIDC_ISSUER])
                 && args.windows(2).any(|pair| pair[0] == "--certificate-identity-regexp" && pair[1].contains("release-publish[.]yml"))),
             _ => Err("unsupported signing operation".into()),
         };
@@ -28,7 +30,7 @@ fn run() -> Result<bool, Box<dyn std::error::Error>> {
     if matches!(executable.file_stem().and_then(|name| name.to_str()), Some("cargo" | "mise")) {
         let index = args.iter().rposition(|arg| arg == "--").ok_or("missing controlled command separator")?;
         if !matches!(args.get(index + 1).map(String::as_str), Some("upload-draft" | "prepare-evidence" | "verify-attestation")) {
-            return Err("unsupported fixture tool command".into());
+            return Err(format!("unsupported fixture tool command: {args:?}").into());
         }
         return Ok(Command::new(env::var_os("RELEASE_XTASK_BINARY").ok_or("missing fixture binary")?)
             .args(&args[index + 1..]).status()?.success());

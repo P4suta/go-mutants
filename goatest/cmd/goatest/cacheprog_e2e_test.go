@@ -194,11 +194,16 @@ func ageCacheFixture(t *testing.T, directory string) {
 func compileCacheFixture(t *testing.T, goBinary, fixture, base, scratch string, persist bool) {
 	t.Helper()
 	program := quoteCacheProgram(os.Args[0]) + " -test.run=^TestCacheProgramHelper$"
+	temporary := t.TempDir()
 	environment := []string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + t.TempDir(),
 		"GOPATH=" + t.TempDir(),
 		"GOCACHE=" + t.TempDir(),
+		"GOTMPDIR=" + temporary,
+		"TMPDIR=" + temporary,
+		"TMP=" + temporary,
+		"TEMP=" + temporary,
 
 		"GOFLAGS=-buildvcs=false",
 		"GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local", "GOTELEMETRY=off",

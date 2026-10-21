@@ -5,8 +5,7 @@
 name: CI
 
 "on":
-  push:
-    branches: [main]
+  merge_group:
   pull_request:
   workflow_dispatch:
 
@@ -15,6 +14,8 @@ permissions:
 
 env:
   GO_MUTANTS_TEST_REQUIRE_TOOLS: "1"
+  MISE_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  MISE_AUTO_INSTALL: "false"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -23,26 +24,48 @@ concurrency:
 jobs:
   quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.changes.outputs.code }}
+      native: ${{ steps.changes.outputs.native }}
+      release: ${{ steps.changes.outputs.release }}
+      action: ${{ steps.changes.outputs.action }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+          persist-credentials: false
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d
+        id: changes
         with:
-          install: true
+          base: >-
+            ${{ github.event.merge_group.base_sha ||
+            github.event.repository.default_branch }}
+          filters: .github/filters/ci.yml
+      - name: Validate selection outputs
+        env:
+          CODE_FILTER: ${{ steps.changes.outputs.code }}
+          NATIVE_FILTER: ${{ steps.changes.outputs.native }}
+          RELEASE_FILTER: ${{ steps.changes.outputs.release }}
+          ACTION_FILTER: ${{ steps.changes.outputs.action }}
+        run: >-
+          jq -en --arg code "$CODE_FILTER" --arg native "$NATIVE_FILTER"
+          --arg release "$RELEASE_FILTER" --arg action "$ACTION_FILTER"
+          '[$code, $native, $release, $action] |
+          all(. == "true" or . == "false")'
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
+        with:
+          version: v2026.10.13
+          sha256: >-
+            94c45523c7b6760b7da704f16051171ca32e8447a849a02266a439a4455e9a12
+          install_args: >-
+            actionlint typos taplo ubi:crate-ci/committed gitleaks yamllint
+            rumdl just lefthook jq python uv
           cache: true
-      - run: mise run check
-      - name: The corpus is unchanged
-        if: always()
-        shell: bash
-        run: |
-          changed="$(git status --porcelain --ignored -- fixtures)"
-          if [ -n "$changed" ]; then
-            echo "::error::the test suite wrote into fixtures/:"
-            echo "$changed"
-            exit 1
-          fi
+      - run: mise run lint-text
       - name: committed (pull request range)
         if: >-
           github.event_name == 'pull_request' &&
@@ -60,7 +83,35 @@ jobs:
             committed HEAD
           fi
 
+  checks:
+    needs: [quality]
+    if: >-
+      needs.quality.outputs.code == 'true' ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
+        with:
+          version: v2026.10.13
+          sha256: >-
+            94c45523c7b6760b7da704f16051171ca32e8447a849a02266a439a4455e9a12
+          install_args: go rust golangci-lint cargo:ocomment taplo jq
+          cache: true
+      - run: mise run check-source
+      - name: The corpus is unchanged
+        if: always()
+        run: mise run check-corpus
+
   platform-tests:
+    needs: [quality]
+    if: >-
+      needs.quality.outputs.native == 'true' ||
+      github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -79,24 +130,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+          persist-credentials: false
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          install: true
+          version: v2026.10.13
+          install_args: go rust cargo:ocomment jq
           cache: true
       - run: mise run build
-      - run: mise run release-assets-check
-      - run: mise run test-cost
       - run: mise run test-cost-integration
       - name: The corpus is unchanged
         if: success() || failure()
-        shell: bash
-        run: |
-          changed="$(git status --porcelain --ignored -- fixtures)"
-          if [ -n "$changed" ]; then
-            echo "::error::the test suite wrote into fixtures/:"
-            echo "$changed"
-            exit 1
-          fi
+        run: mise run check-corpus
       - name: Test build cache
         if: success() || failure()
         continue-on-error: true
@@ -107,10 +151,14 @@ jobs:
         with:
           name: kept-scratch-${{ matrix.os }}
           path: ${{ runner.temp }}/go-mutants-kept
-          retention-days: 14
+          retention-days: 7
           if-no-files-found: ignore
 
   race:
+    needs: [quality]
+    if: >-
+      needs.quality.outputs.native == 'true' ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -125,157 +173,70 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+          persist-credentials: false
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          install: true
+          version: v2026.10.13
+          sha256: >-
+            94c45523c7b6760b7da704f16051171ca32e8447a849a02266a439a4455e9a12
+          install_args: go rust cargo:ocomment jq
           cache: true
       - run: mise run test-race
       - name: The corpus is unchanged
         if: success() || failure()
-        shell: bash
-        run: |
-          changed="$(git status --porcelain --ignored -- fixtures)"
-          if [ -n "$changed" ]; then
-            echo "::error::the test suite wrote into fixtures/:"
-            echo "$changed"
-            exit 1
-          fi
+        run: mise run check-corpus
       - name: Upload what the failed tests kept
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: kept-scratch-race
           path: ${{ runner.temp }}/go-mutants-kept
-          retention-days: 14
-          if-no-files-found: ignore
-
-  coverage:
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 100
-    steps:
-      - name: Point the test build cache and the kept scratch at the runner
-        shell: bash
-        run: |
-          {
-            echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
-            echo "GO_MUTANTS_TEST_KEEP=1"
-            echo "GO_MUTANTS_TEST_KEEP_DIR=$RUNNER_TEMP/go-mutants-kept"
-          } >> "$GITHUB_ENV"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
-        with:
-          install: true
-          cache: true
-      - name: Measure coverage
-        id: coverage
-        continue-on-error: true
-        run: mise run cover-integration
-      - name: The corpus is unchanged
-        if: success() || failure()
-        shell: bash
-        run: |
-          changed="$(git status --porcelain --ignored -- fixtures)"
-          if [ -n "$changed" ]; then
-            echo "::error::the test suite wrote into fixtures/:"
-            echo "$changed"
-            exit 1
-          fi
-      - name: Upload the coverage profile and its rendering
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: coverage
-          path: |
-            cover.out
-            cover.html
-          retention-days: 14
-          if-no-files-found: warn
-      - name: Test build cache
-        if: success() || failure()
-        continue-on-error: true
-        run: mise run test-cache-status
-      - name: Upload what the failed tests kept
-        if: failure() || steps.coverage.outcome == 'failure'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: kept-scratch-coverage
-          path: ${{ runner.temp }}/go-mutants-kept
-          retention-days: 14
+          retention-days: 7
           if-no-files-found: ignore
 
   artifacts:
+    needs: [quality]
+    if: >-
+      needs.quality.outputs.release == 'true' ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+          persist-credentials: false
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          install: true
+          version: v2026.10.13
+          install_args: go rust goreleaser jq
           cache: true
+      - run: mise run release-assets-check
       - run: mise run package
       - name: Upload the snapshot artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: dist-snapshot
           path: dist/
-          retention-days: 14
+          retention-days: 7
           if-no-files-found: error
 
-  dogfood:
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - name: Point the test build cache at the runner's temporary directory
-        shell: bash
-        run: >-
-          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
-          >> "$GITHUB_ENV"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
-        with:
-          install: true
-          cache: true
-      - run: mise run dogfood
-      - name: The corpus is unchanged
-        if: always()
-        shell: bash
-        run: |
-          changed="$(git status --porcelain --ignored -- fixtures)"
-          if [ -n "$changed" ]; then
-            echo "::error::the test suite wrote into fixtures/:"
-            echo "$changed"
-            exit 1
-          fi
-      - name: Test build cache
-        if: success() || failure()
-        continue-on-error: true
-        run: mise run test-cache-status
-      - name: Upload the mutation report
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: mutation-report
-          path: reports/mutation/
-          retention-days: 14
-          if-no-files-found: warn
-
   action-smoke:
+    needs: [quality]
+    if: >-
+      needs.quality.outputs.action == 'true' ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+          persist-credentials: false
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          install: true
+          version: v2026.10.13
+          install_args: go jq
           cache: true
       - name: Build the go-mutants under test and put it on PATH
         shell: bash
@@ -331,39 +292,41 @@ jobs:
   ci-success:
     needs:
       - quality
+      - checks
       - platform-tests
       - race
-      - coverage
       - artifacts
-      - dogfood
       - action-smoke
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Every gate succeeded or was skipped by design
+      - name: Every selected check succeeded
         shell: bash
         env:
           RESULTS: ${{ toJSON(needs) }}
+          CODE_SELECTED: ${{ needs.quality.outputs.code }}
+          NATIVE_SELECTED: ${{ needs.quality.outputs.native }}
+          RELEASE_SELECTED: ${{ needs.quality.outputs.release }}
+          ACTION_SELECTED: ${{ needs.quality.outputs.action }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          passed='.value.result == "success" or .value.result == "skipped"'
-          # One entry, rendered. It is a line and not a whole pipeline because
-          # it is used on both an object and an already-filtered list: the
-          # first version began with to_entries and was applied to the output
-          # of map(select(...)), which is entries already -- so jq indexed the
-          # array and every failure this job exists to name printed as
-          # `0: null`. The one line a reader needs was the one line that broke.
-          line='"\(.key): \(.value.result)"'
-          entries="to_entries | .[] | $line"
-          failed=$(printf '%s' "$RESULTS" |
-            jq -r "to_entries | map(select($passed | not)) | .[] | $line")
-          if [ -n "$failed" ]; then
-            echo "::error::gates that did not pass:"
-            printf '%s\n' "$failed"
-            exit 1
-          fi
-          printf '%s' "$RESULTS" | jq -r "$entries"
+          jq -e --arg code "$CODE_SELECTED" --arg native "$NATIVE_SELECTED" \
+            --arg release "$RELEASE_SELECTED" --arg action "$ACTION_SELECTED" \
+            --arg event "$EVENT_NAME" '
+            def expected($selected):
+              if $selected == "true" or $event == "workflow_dispatch"
+              then "success" else "skipped" end;
+            ([$code, $native, $release, $action] |
+              all(. == "true" or . == "false")) and
+            .quality.result == "success" and
+            (.checks.result == expected($code)) and
+            (."platform-tests".result == expected($native)) and
+            (.race.result == expected($native)) and
+            (.artifacts.result == expected($release)) and
+            (."action-smoke".result == expected($action))
+            ' <<< "$RESULTS"
 
   required:
     name: required
@@ -373,9 +336,7 @@ jobs:
     timeout-minutes: 5
     permissions: {}
     steps:
-      - name: Fail unless every needed job succeeded or was skipped
+      - name: Require the aggregate to succeed
         env:
-          RESULTS: ${{ toJSON(needs.*.result) }}
-        run: |
-          echo "${RESULTS}"
-          jq -e 'all(.[]; IN("success", "skipped"))' <<< "${RESULTS}"
+          RESULT: ${{ needs['ci-success'].result }}
+        run: test "$RESULT" = success

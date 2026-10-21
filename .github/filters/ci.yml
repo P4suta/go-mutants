@@ -1,0 +1,58 @@
+---
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+code:
+  - '**/*.go'
+  - '**/go.{mod,sum}'
+  - 'go.work{,.sum}'
+  - 'schema/**'
+  - 'goatest/profiles/**'
+  - 'internal/**/testdata/**'
+  - '.go-mutants.toml'
+  - 'goatest/.goatest.toml'
+  - '.golangci.yml'
+  - 'mise.toml'
+  - '.github/filters/ci.yml'
+  - '.github/workflows/ci.yml'
+
+native:
+  - '*.go'
+  - '!(internal)/**/*.go'
+  - 'internal/!(mutation|interval|glob|devgates|testkit)/**/*.go'
+  - 'internal/testkit/!(docsindex_test|cidoc_test|devdocs_test|archdoc_test).go'
+  - 'internal/testkit/*/**/*.go'
+  - '**/go.{mod,sum}'
+  - 'go.work{,.sum}'
+  - '.go-mutants.toml'
+  - 'goatest/.goatest.toml'
+  - 'mise.toml'
+  - '.github/filters/ci.yml'
+  - '.github/workflows/ci.yml'
+
+release:
+  - '.goreleaser.{yml,yaml}'
+  - 'tools/release-assets/**'
+  - '**/go.{mod,sum}'
+  - 'go.work{,.sum}'
+  - 'VERSION'
+  - 'internal/cli/root.go'
+  - 'release-please-config.json'
+  - '.release-please-manifest.json'
+  - '.github/workflows/release-*.yml'
+  - 'mise.toml'
+  - '.github/filters/ci.yml'
+  - '.github/workflows/ci.yml'
+
+action:
+  - '.github/actions/go-mutants/**'
+  - '*.go'
+  - '!(goatest|internal)/**/*.go'
+  - 'internal/!(testkit)/**/*.go'
+  - 'internal/testkit/!(docsindex_test|cidoc_test|devdocs_test|archdoc_test).go'
+  - 'internal/testkit/*/**/*.go'
+  - '**/go.{mod,sum}'
+  - 'go.work{,.sum}'
+  - 'mise.toml'
+  - '.github/filters/ci.yml'
+  - '.github/workflows/ci.yml'

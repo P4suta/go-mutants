@@ -12,6 +12,9 @@ SPDX-License-Identifier = "MIT OR Apache-2.0"
 
 [[annotations]]
 path = [
+  "README.md",
+  "repository.toml",
+  "renovate.json",
   "VERSION",
   "release-please-config.json",
   ".release-please-manifest.json",
