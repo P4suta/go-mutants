@@ -5,6 +5,7 @@ package runner_test
 
 import (
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -286,16 +287,17 @@ func TestABurstThatOutrunsTheSamplerIsStillMeasured(t *testing.T) {
 
 func TestPeakMemoryBelongsToTheChildAndNotTheParent(t *testing.T) {
 	const parentGrowth = 256 << 20
+	footprint := helperFootprint(t)
 	ballast := make([]byte, parentGrowth)
 	for i := 0; i < len(ballast); i += 4096 {
 		ballast[i] = 1
 	}
-	defer func() { _ = ballast[0] }()
 
 	result := runner.Run(t.Context(), runner.Spec{
 		Argv: helperCommand(t, "sleep", milliseconds(3*runner.MemorySampleInterval)),
 		Env:  helperEnviron(),
 	})
+	runtime.KeepAlive(ballast)
 	if result.Err != nil || result.ExitCode != 0 {
 		t.Fatalf("Err = %v, ExitCode = %d, want a clean exit; output: %s", result.Err, result.ExitCode, result.Output)
 	}
@@ -303,9 +305,9 @@ func TestPeakMemoryBelongsToTheChildAndNotTheParent(t *testing.T) {
 		t.Fatalf("PeakMemory = %d for a measured child that lived %s, want the peak this platform observed",
 			result.PeakMemory, 3*runner.MemorySampleInterval)
 	}
-	if result.PeakMemory >= parentGrowth/2 {
-		t.Errorf("PeakMemory = %d for a child that only slept, while its parent holds %d: the measurement "+
-			"is the parent's high-water mark, not the child's", result.PeakMemory, parentGrowth)
+	if growth := result.PeakMemory - footprint; growth >= parentGrowth/2 {
+		t.Errorf("PeakMemory grew by %d from the child's baseline %d, while its parent holds %d: the measurement "+
+			"is the parent's high-water mark, not the child's", growth, footprint, parentGrowth)
 	}
 }
 
