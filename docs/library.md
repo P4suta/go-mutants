@@ -1603,16 +1603,12 @@ one of the two would be picking a version rather than reading one. In both
 cases `Version` is `""`, `Version()` says `"unknown"`, and `Auditable` is
 false.
 
-**A test binary names no dependency at all**, and a consumer will meet this
-before anything else on this page. The go command fills build information in
-before a test binary's imports are known, so `go version -m` on one shows its
-main module and no `dep` lines — which means that from inside a consumer's own
-`go test`, go-mutants is *absent*: `ok` is true, the `BuildInfo` is the zero
-value, and `Version()` says `"unknown"`, however firmly that consumer's go.mod
-requires the engine. Only a built program names what it linked. A consumer
-recording which engine produced its evidence therefore reads the identity in
-the program that does the measuring, and a test asserting anything about the
-engine's identity from inside a test binary is asserting about nothing.
+Test binaries may omit dependency records, depending on the toolchain.
+When go-mutants is absent, `ok` is true, `BuildInfo` is the zero value, and `Version()` says `"unknown"`.
+When the toolchain records the dependency, the API returns that metadata.
+A local replacement stays unauditable even when its required version is present.
+Consumers must inspect `Auditable` before using a version as an evidence identity.
+Read the identity in the program that performs the measurement rather than assuming what a test binary records.
 
 | Field | What it says |
 |---|---|
@@ -1623,14 +1619,9 @@ engine's identity from inside a test binary is asserting about nothing.
 | `VCSRevision`, `VCSModified` | the `vcs.revision` and `vcs.modified` build settings, read **only** when `Main`, because build settings describe the main module and no other. Both are zero under `-buildvcs=false`, and a `vcs.modified` value that will not parse counts as modified |
 | `Auditable` | `Version` names one immutable set of sources: a tag or pseudo-version that is not replaced, or a main module with a clean revision. A version carrying build metadata — anything after a `+` other than `+incompatible` — is never one, whatever the settings beside it say |
 
-**Which builds still say `"(devel)"`**, now that a VCS checkout is stamped: a
-test binary, which the go command never stamps; a build with `-buildvcs=false`;
-a tree under no version control; and a build from a git **worktree**, because
-the go command wants `.git` to be a directory and in a worktree it is a file.
-The dirty case is the one to watch: `go build` in an edited checkout stamps
-something like `v0.0.0-20260906202401-5950bb89fe10+dirty`, which looks exactly
-like a pseudo-version, is served by no proxy, and is why `Auditable` refuses
-build metadata outright rather than trusting `vcs.modified` beside it.
+**Which builds can still say `"(devel)"`**, now that a VCS checkout is stamped: a test binary; a build with `-buildvcs=false`;
+a tree under no version control; and a build from a git **worktree**, because the go command wants `.git` to be a directory and in a worktree it is a file.
+The dirty case is the one to watch: `go build` in an edited checkout stamps something like `v0.0.0-20260906202401-5950bb89fe10+dirty`, which looks exactly like a pseudo-version, is served by no proxy, and is why `Auditable` refuses build metadata outright rather than trusting `vcs.modified` beside it.
 
 `Version()` is the same string with `"unknown"` for the empty case. It is the
 label to print in a header or a log line, never the value to decide on:

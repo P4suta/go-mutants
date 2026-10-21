@@ -38,6 +38,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"testing"
 	"time"
 
@@ -309,17 +310,7 @@ func TestConsumerClassifiesEveryEngineFailure(t *testing.T) {
 	}
 }
 
-// TestTheEngineIsAbsentFromAConsumerTestBinary is the surprise, pinned where a
-// consumer will meet it.
-//
-// The go command fills build information in before a test binary's imports are
-// known, so a test binary records its main module and no dep lines at all --
-// go version -m on one proves it. From inside this consumer's own go test,
-// therefore, the engine it requires and links is simply not named: the reading
-// succeeds, the answer is the zero value, and Version() says "unknown". A
-// consumer that wants to record which engine produced its evidence has to read
-// it from a built program, which the engine module's own suite does.
-func TestTheEngineIsAbsentFromAConsumerTestBinary(t *testing.T) {
+func TestConsumerBuildInformationMatchesTheLinkedEngine(t *testing.T) {
 	if gomutants.ModulePath != "github.com/P4suta/go-mutants" {
 		t.Errorf("ModulePath = %q; a consumer scanning build info for it would find nothing", gomutants.ModulePath)
 	}
@@ -327,11 +318,31 @@ func TestTheEngineIsAbsentFromAConsumerTestBinary(t *testing.T) {
 	if !ok {
 		t.Fatal("a test binary the go command built carries no build information at all")
 	}
-	if info != (gomutants.BuildInfo{}) {
-		t.Errorf("a test binary named the engine: %+v", info)
+	raw, available := debug.ReadBuildInfo()
+	if !available {
+		t.Fatal("the toolchain's build information is unavailable")
 	}
-	if got := gomutants.Version(); got != "unknown" {
-		t.Errorf("Version() = %q, want unknown", got)
+	var linked *debug.Module
+	for _, dependency := range raw.Deps {
+		if dependency != nil && dependency.Path == gomutants.ModulePath {
+			linked = dependency
+		}
+	}
+	if linked == nil {
+		if info != (gomutants.BuildInfo{}) || gomutants.Version() != "unknown" {
+			t.Fatalf("an unrecorded engine acquired an identity: %+v, %q", info, gomutants.Version())
+		}
+		return
+	}
+	if linked.Replace == nil {
+		t.Fatal("the consumer fixture lost its local engine replacement")
+	}
+	want := gomutants.BuildInfo{
+		Version: "v0.0.0", Replaced: true,
+		ReplacePath: linked.Replace.Path, ReplaceVersion: "(devel)",
+	}
+	if info != want || gomutants.Version() != want.Version {
+		t.Fatalf("linked engine = %+v, %q; want %+v", info, gomutants.Version(), want)
 	}
 }
 

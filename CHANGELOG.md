@@ -4289,6 +4289,8 @@ Entries say *why* a change was made, not only what changed.
 ### Changed
 
 Verification selects source, native, packaging, and action checks by affected contracts so documentation changes do not rebuild every platform.
+Verification fixtures follow the toolchain's actual build information and measure coverage on executable statements.
+Git subprocesses and fixtures exclude legacy repository selectors on supported Linux distributions.
 Fuzzing, full mutation, and benchmark campaigns require an explicit request, while the required aggregate rejects missing or skipped selected checks.
 The short overview links the complete documentation index and uses the shared Renovate preset for dependency maintenance.
 Repository-contract tests use fresh verdicts, and controlled release fixtures resolve the pinned JSON tool without intercepting its Windows shim.
