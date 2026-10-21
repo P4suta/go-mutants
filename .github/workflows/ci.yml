@@ -14,6 +14,8 @@ permissions:
 
 env:
   GO_MUTANTS_TEST_REQUIRE_TOOLS: "1"
+  MISE_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  MISE_AUTO_INSTALL: "false"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
