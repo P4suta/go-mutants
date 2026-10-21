@@ -213,7 +213,7 @@ func TestGitIgnoresTheRepositoryVariablesInTheEnvironment(t *testing.T) {
 func TestGitEnvironmentCoversTheContractReportedByGit(t *testing.T) {
 	result := Exec(t, t.TempDir(), GitEnvironment(t), GitBinary(t), "rev-parse", "--local-env-vars")
 	RequireExit(t, result, 0, "query Git repository variables")
-	names := append(strings.Fields(string(result.Stdout)), "GIT_NAMESPACE")
+	names := append(strings.Fields(string(result.Stdout)), "GIT_NAMESPACE", "GIT_INTERNAL_SUPER_PREFIX")
 	for _, name := range names {
 		t.Setenv(name, "controlled-foreign-context")
 	}

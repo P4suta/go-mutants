@@ -16,7 +16,7 @@ func TestGitReportedRepositoryVariablesCannotBeInherited(t *testing.T) {
 		t.Fatalf("query Git's repository environment contract: %v", err)
 	}
 	input := []string{"PATH=controlled", "GIT_CONFIG_GLOBAL=controlled"}
-	for _, name := range append(strings.Fields(string(output)), "GIT_NAMESPACE", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0") {
+	for _, name := range append(strings.Fields(string(output)), "GIT_NAMESPACE", "GIT_INTERNAL_SUPER_PREFIX", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0") {
 		input = append(input, name+"=foreign")
 	}
 	if got := Inherited(input); !slices.Equal(got, input[:2]) {
@@ -25,7 +25,7 @@ func TestGitReportedRepositoryVariablesCannotBeInherited(t *testing.T) {
 }
 
 func TestExplicitConfigurationCannotRedirectTheRepository(t *testing.T) {
-	input := []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=marker", "GIT_CONFIG_VALUE_0=controlled", "git_dir=foreign", "GIT_COMMON_DIR=foreign"}
+	input := []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=marker", "GIT_CONFIG_VALUE_0=controlled", "git_dir=foreign", "GIT_COMMON_DIR=foreign", "git_internal_super_prefix=foreign"}
 	if got := ForRoot(input); !slices.Equal(got, input[:3]) {
 		t.Fatalf("explicit environment = %q, want configuration without repository selectors", got)
 	}
