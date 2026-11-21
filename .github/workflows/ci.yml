@@ -58,9 +58,9 @@ jobs:
           all(. == "true" or . == "false")'
       - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          version: v2026.10.13
+          version: v2026.11.9
           sha256: >-
-            94c45523c7b6760b7da704f16051171ca32e8447a849a02266a439a4455e9a12
+            f13f3e5ec88807e0161669b3aa07a91d84478cdf1e95b5b92b63f85a25d42395
           install_args: >-
             actionlint typos taplo ubi:crate-ci/committed gitleaks yamllint
             rumdl just lefthook jq python uv
@@ -97,9 +97,9 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          version: v2026.10.13
+          version: v2026.11.9
           sha256: >-
-            94c45523c7b6760b7da704f16051171ca32e8447a849a02266a439a4455e9a12
+            f13f3e5ec88807e0161669b3aa07a91d84478cdf1e95b5b92b63f85a25d42395
           install_args: go rust golangci-lint cargo:ocomment taplo jq
           cache: true
       - run: mise run check-source
@@ -133,7 +133,7 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          version: v2026.10.13
+          version: v2026.11.9
           install_args: go rust cargo:ocomment jq
           cache: true
       - run: mise run build
@@ -176,9 +176,9 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          version: v2026.10.13
+          version: v2026.11.9
           sha256: >-
-            94c45523c7b6760b7da704f16051171ca32e8447a849a02266a439a4455e9a12
+            f13f3e5ec88807e0161669b3aa07a91d84478cdf1e95b5b92b63f85a25d42395
           install_args: go rust cargo:ocomment jq
           cache: true
       - run: mise run test-race
@@ -208,7 +208,7 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          version: v2026.10.13
+          version: v2026.11.9
           install_args: go rust goreleaser jq
           cache: true
       - run: mise run release-assets-check
@@ -235,7 +235,7 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          version: v2026.10.13
+          version: v2026.11.9
           install_args: go jq
           cache: true
       - name: Build the go-mutants under test and put it on PATH

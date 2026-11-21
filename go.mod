@@ -3,9 +3,9 @@ module github.com/P4suta/go-mutants
 go 1.26.0
 
 retract (
-	v0.1.0 // Tagged on a branch that never reached main.
-	v0.1.1 // Tagged on a branch that never reached main.
 	v0.1.2 // Tagged on a branch that never reached main.
+	v0.1.1 // Tagged on a branch that never reached main.
+	v0.1.0 // Tagged on a branch that never reached main.
 )
 
 require (
@@ -13,7 +13,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/charmbracelet/x/ansi v0.11.8
+	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/google/go-cmp v0.7.0
 	github.com/mattn/go-isatty v0.0.24
@@ -21,10 +21,10 @@ require (
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/mod v0.41.0
-	golang.org/x/sync v0.23.0
-	golang.org/x/sys v0.48.0
-	golang.org/x/tools v0.50.0
+	golang.org/x/mod v0.43.0
+	golang.org/x/sync v0.25.0
+	golang.org/x/sys v0.50.0
+	golang.org/x/tools v0.53.0
 	pgregory.net/rapid v1.3.0
 )
 
@@ -35,9 +35,9 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
+	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
-	github.com/mattn/go-runewidth v0.0.24 // indirect
+	github.com/mattn/go-runewidth v0.0.27 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect

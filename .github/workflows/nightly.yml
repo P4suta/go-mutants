@@ -94,7 +94,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          version: v2026.10.13
+          version: v2026.11.9
           install_args: go jq
           cache: true
       - name: Fuzz for five minutes
@@ -140,7 +140,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          version: v2026.10.13
+          version: v2026.11.9
           install_args: go jq
           cache: true
       - name: Property suites, deepened and repeated
@@ -188,7 +188,7 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          version: v2026.10.13
+          version: v2026.11.9
           install_args: go rust cargo:ocomment jq
           cache: true
       - run: mise run test-integration-race
@@ -220,7 +220,7 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          version: v2026.10.13
+          version: v2026.11.9
           install_args: go jq
           cache: true
       - run: mise run dogfood-audit
@@ -242,7 +242,7 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          version: v2026.10.13
+          version: v2026.11.9
           install_args: go rust cargo:ocomment jq
           cache: true
       - name: The report the last run left
@@ -290,7 +290,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          version: v2026.10.13
+          version: v2026.11.9
           install_args: go jq
           cache: true
       - run: mise run bench
