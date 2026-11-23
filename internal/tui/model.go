@@ -6,8 +6,8 @@ package tui
 import (
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/P4suta/go-mutants/internal/engine"
 	"github.com/P4suta/go-mutants/internal/mutation"
@@ -88,7 +88,7 @@ func newModel(o options) model {
 		height:  defaultHeight,
 		started: now,
 		clock:   now,
-		feed:    viewport.New(defaultWidth, 1),
+		feed:    viewport.New(viewport.WithWidth(defaultWidth), viewport.WithHeight(1)),
 		follow:  true,
 	}
 	m.relayout()
@@ -105,7 +105,7 @@ func tick(d time.Duration) tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.key(msg)
 
 	case tea.WindowSizeMsg:
@@ -132,8 +132,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyCtrlC {
+func (m model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if msg.Keystroke() == "ctrl+c" {
 		if m.stopping {
 			return m, tea.Quit
 		}

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/P4suta/go-mutants/internal/engine"
 	"github.com/P4suta/go-mutants/internal/mutation"
@@ -54,7 +54,7 @@ var dashboardFrames = []struct {
 		name: "after-one-interrupt", width: 100, height: 24,
 		build: func(t *testing.T) *harness {
 			h := runInFlight(t)
-			h.send(t, tea.KeyMsg{Type: tea.KeyCtrlC})
+			h.send(t, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 			return h
 		},
 	},

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/P4suta/go-mutants/internal/engine"
 	"github.com/P4suta/go-mutants/internal/mutation"

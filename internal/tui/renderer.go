@@ -9,7 +9,7 @@ import (
 	"os"
 	"sync"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/term"
 
 	"github.com/P4suta/go-mutants/internal/engine"
@@ -35,7 +35,6 @@ func (r *Renderer) Run(ctx context.Context, events <-chan engine.Event) error {
 	_ = ctx
 
 	options := []tea.ProgramOption{
-		tea.WithAltScreen(),
 		tea.WithOutput(r.out),
 		tea.WithInput(keyboard(r.in)),
 		tea.WithoutSignalHandler(),
