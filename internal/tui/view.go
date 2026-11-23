@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
@@ -27,7 +28,7 @@ const (
 	ellipsis       = "..."
 )
 
-func (m model) View() string {
+func (m model) View() tea.View {
 	width, height := m.frame()
 	head, workers, feedTitle, feedHeight := m.sections(width, height)
 
@@ -47,7 +48,7 @@ func (m model) View() string {
 		lines = lines[:height-1]
 	}
 	lines = append(lines, m.helpLine(width))
-	return strings.Join(lines, "\n")
+	return tea.View{Content: strings.Join(lines, "\n"), AltScreen: true}
 }
 
 func (m model) frame() (width, height int) {
@@ -57,8 +58,8 @@ func (m model) frame() (width, height int) {
 func (m *model) relayout() {
 	width, height := m.frame()
 	_, _, _, feedHeight := m.sections(width, height)
-	m.feed.Width = width
-	m.feed.Height = max(feedHeight, 1)
+	m.feed.SetWidth(width)
+	m.feed.SetHeight(max(feedHeight, 1))
 	m.feed.SetContent(m.feedContent(width))
 	if m.follow {
 		m.feed.GotoBottom()

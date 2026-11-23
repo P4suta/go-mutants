@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/P4suta/go-mutants/internal/engine"
 	"github.com/P4suta/go-mutants/internal/mutation"
@@ -311,7 +311,7 @@ func TestCtrlCCancelsTheRunAndWaitsForIt(t *testing.T) {
 	h.events(t, planned(2)...)
 	h.events(t, started(killedResult))
 
-	cmd := h.send(t, tea.KeyMsg{Type: tea.KeyCtrlC})
+	cmd := h.send(t, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if h.cancelled != 1 {
 		t.Fatalf("the run was cancelled %d times, want 1", h.cancelled)
 	}
@@ -337,8 +337,8 @@ func TestASecondCtrlCQuitsImmediately(t *testing.T) {
 	h := newHarness(t)
 	h.events(t, planned(2)...)
 
-	h.send(t, tea.KeyMsg{Type: tea.KeyCtrlC})
-	cmd := h.send(t, tea.KeyMsg{Type: tea.KeyCtrlC})
+	h.send(t, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	cmd := h.send(t, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if !isQuit(cmd) {
 		t.Fatal("the second ctrl+c did not quit")
 	}
@@ -412,7 +412,7 @@ func TestUnknownEventsAreIgnored(t *testing.T) {
 	h := newHarness(t)
 	h.events(t, planned(2)...)
 	h.events(t, engine.Validated{Accepted: 5, Rejected: 1})
-	before := h.model.View()
+	before := h.model.View().Content
 
 	h.events(t,
 		engine.PhaseCompleted{Phase: engine.PhaseDiscover, Duration: 250 * time.Millisecond},
@@ -426,7 +426,7 @@ func TestUnknownEventsAreIgnored(t *testing.T) {
 		engine.MemoryDerived{Limit: 1 << 30, Source: engine.MemorySourceDerived, Peak: 200 << 20},
 		engine.MemoryDerived{Source: engine.MemorySourceUnavailable},
 	)
-	if got := h.model.View(); got != before {
+	if got := h.model.View().Content; got != before {
 		t.Errorf("an ignored event redrew the dashboard:\n%s\nwant\n%s", got, before)
 	}
 	if h.model.done {

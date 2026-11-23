@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
@@ -22,7 +22,7 @@ import (
 func rawFrame(t *testing.T, h *harness, width, height int) string {
 	t.Helper()
 	h.send(t, tea.WindowSizeMsg{Width: width, Height: height})
-	return h.model.View()
+	return h.model.View().Content
 }
 
 func frame(t *testing.T, h *harness, width, height int) []string {
@@ -266,9 +266,9 @@ func TestResizingRecomputesTheFeed(t *testing.T) {
 	h := runInFlight(t)
 
 	frame(t, h, 80, 24)
-	tall := h.model.feed.Height
+	tall := h.model.feed.Height()
 	frame(t, h, 80, 40)
-	taller := h.model.feed.Height
+	taller := h.model.feed.Height()
 	if taller <= tall {
 		t.Errorf("feed height %d on a 40-line terminal, want more than the %d it had on 24", taller, tall)
 	}
@@ -288,7 +288,7 @@ func TestTheHelpLineSaysWhatCtrlCDidLastTime(t *testing.T) {
 		t.Errorf("help line missing before ctrl+c\n%s", got)
 	}
 
-	h.send(t, tea.KeyMsg{Type: tea.KeyCtrlC})
+	h.send(t, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	view := strings.Join(frame(t, h, 80, 24), "\n")
 	for _, s := range []string{"stopping", "ctrl+c again"} {
 		if !strings.Contains(view, s) {
