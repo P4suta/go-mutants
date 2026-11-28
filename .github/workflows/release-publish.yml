@@ -94,9 +94,9 @@ jobs:
 
       - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde
         with:
-          version: v2026.10.13
+          version: v2026.11.14
           sha256: >-
-            94c45523c7b6760b7da704f16051171ca32e8447a849a02266a439a4455e9a12
+            6fa596291e9758106f761fea4f8e7fac6c3e7ff4714d5c0b9a76e16068db14f6
           install_args: >-
             go rust golangci-lint goreleaser cargo:ocomment actionlint typos
             taplo ubi:crate-ci/committed gitleaks yamllint rumdl just lefthook
